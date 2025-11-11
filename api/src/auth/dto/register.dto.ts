@@ -1,10 +1,12 @@
 import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { Trim } from '../../common/transforms';
 
 export class RegisterDto {
   @IsEmail({}, { message: 'email must be a valid email address' })
   @MaxLength(254)
   email: string;
 
+  @Trim()
   @IsString()
   @IsNotEmpty({ message: 'name is required' })
   @MaxLength(100)
