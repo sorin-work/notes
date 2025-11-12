@@ -58,6 +58,9 @@
     "transform": {
       "^.+\\.ts$": "ts-jest"
     },
+    "setupFiles": [
+      "reflect-metadata"
+    ],
     "collectCoverageFrom": [
       "**/*.ts",
       "!main.ts",
