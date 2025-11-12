@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,6 +52,14 @@ export class AuthService {
       throw new UnauthorizedException('Email or password is incorrect');
     }
     return this.issue(user);
+  }
+
+  async me(userId: string): Promise<PublicUser> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return toPublicUser(user);
   }
 
   private async issue(user: User): Promise<AuthResult> {
