@@ -1,7 +1,9 @@
+import { Transform } from 'class-transformer';
 import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 import { Trim } from '../../common/transforms';
 
 export class RegisterDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
   @IsEmail({}, { message: 'email must be a valid email address' })
   @MaxLength(254)
   email: string;
