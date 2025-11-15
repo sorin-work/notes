@@ -1,0 +1,39 @@
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { AuthUser, CurrentUser } from '../common/current-user.decorator';
+import { CreateNoteDto, UpdateNoteDto } from './dto/note.dto';
+import { NotesService, NoteSummary, NoteView } from './notes.service';
+
+@Controller('notes')
+export class NotesController {
+  constructor(private readonly notes: NotesService) {}
+
+  @Get()
+  list(@CurrentUser() user: AuthUser): Promise<NoteSummary[]> {
+    return this.notes.list(user.id);
+  }
+
+  @Post()
+  create(@CurrentUser() user: AuthUser, @Body() dto: CreateNoteDto): Promise<NoteView> {
+    return this.notes.create(user.id, dto);
+  }
+
+  @Get(':id')
+  get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
+    return this.notes.get(user.id, id);
+  }
+
+  @Patch(':id')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateNoteDto,
+  ): Promise<NoteView> {
+    return this.notes.update(user.id, id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.notes.remove(user.id, id);
+  }
+}
