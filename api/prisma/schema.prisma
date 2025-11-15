@@ -15,5 +15,44 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  notebooks Notebook[]
+  notes     Note[]
+
   @@map("users")
+}
+
+/// Notebooks nest one level deep: a notebook either has no parent or its
+/// parent is a top-level notebook. The service enforces this.
+model Notebook {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  parentId  String?  @map("parent_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   Notebook?  @relation("NotebookChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children Notebook[] @relation("NotebookChildren")
+  notes    Note[]
+
+  @@index([userId])
+  @@index([parentId])
+  @@map("notebooks")
+}
+
+model Note {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  notebookId String?  @map("notebook_id") @db.Uuid
+  title      String
+  content    String   @default("")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @map("updated_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notebook Notebook? @relation(fields: [notebookId], references: [id], onDelete: SetNull)
+
+  @@index([notebookId])
+  @@map("notes")
 }
