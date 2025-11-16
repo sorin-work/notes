@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
+import { excerpt } from '../common/text';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNoteDto, UpdateNoteDto } from './dto/note.dto';
@@ -13,12 +14,13 @@ type NoteWithRelations = Prisma.NoteGetPayload<{ include: typeof noteInclude }>;
 export interface NoteSummary {
   id: string;
   title: string;
+  excerpt: string;
   notebookId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface NoteView extends NoteSummary {
+export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   content: string;
   notebook: { id: string; name: string; parentId: string | null } | null;
 }
@@ -27,6 +29,7 @@ function toSummary(note: NoteWithRelations): NoteSummary {
   return {
     id: note.id,
     title: note.title,
+    excerpt: excerpt(note.content),
     notebookId: note.notebookId,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
