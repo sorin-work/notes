@@ -1,4 +1,5 @@
 import { IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
+import { PaginationQuery } from '../../common/pagination';
 
 export const MAX_TITLE_LENGTH = 200;
 /** About 500 pages of text. */
@@ -36,3 +37,5 @@ export class UpdateNoteDto {
   @IsUUID()
   notebookId?: string | null;
 }
+
+export class ListNotesQuery extends PaginationQuery {}

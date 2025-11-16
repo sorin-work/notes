@@ -1,6 +1,19 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { CreateNoteDto, UpdateNoteDto } from './dto/note.dto';
+import type { Page } from '../common/pagination';
+import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
 import { NotesService, NoteSummary, NoteView } from './notes.service';
 
 @Controller('notes')
@@ -8,8 +21,8 @@ export class NotesController {
   constructor(private readonly notes: NotesService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser): Promise<NoteSummary[]> {
-    return this.notes.list(user.id);
+  list(@CurrentUser() user: AuthUser, @Query() query: ListNotesQuery): Promise<Page<NoteSummary>> {
+    return this.notes.list(user.id, query);
   }
 
   @Post()

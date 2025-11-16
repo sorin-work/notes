@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
+import { Page, skipFor } from '../common/pagination';
 import { excerpt } from '../common/text';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateNoteDto, UpdateNoteDto } from './dto/note.dto';
+import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
 
 export const noteInclude = {
   notebook: { select: { id: true, name: true, parentId: true } },
@@ -57,13 +58,22 @@ export class NotesService {
     private readonly notebooks: NotebooksService,
   ) {}
 
-  async list(userId: string): Promise<NoteSummary[]> {
+  async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
     const where: Prisma.NoteWhereInput = { userId };
 
     const orderBy: Prisma.NoteOrderByWithRelationInput[] = [{ updatedAt: 'desc' }, { id: 'asc' }];
 
-    const notes = await this.prisma.note.findMany({ where, orderBy, include: noteInclude });
-    return notes.map(toSummary);
+    const [notes, total] = await this.prisma.$transaction([
+      this.prisma.note.findMany({
+        where,
+        orderBy,
+        skip: skipFor(query),
+        take: query.pageSize,
+        include: noteInclude,
+      }),
+      this.prisma.note.count({ where }),
+    ]);
+    return { items: notes.map(toSummary), total, page: query.page, pageSize: query.pageSize };
   }
 
   async get(userId: string, id: string): Promise<NoteView> {
