@@ -1,5 +1,6 @@
 import { IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
+import { Trim } from '../../common/transforms';
 
 export const MAX_TITLE_LENGTH = 200;
 /** About 500 pages of text. */
@@ -7,6 +8,7 @@ export const MAX_CONTENT_LENGTH = 1_000_000;
 
 export class CreateNoteDto {
   @IsOptional()
+  @Trim()
   @IsString()
   @MaxLength(MAX_TITLE_LENGTH)
   title?: string;
@@ -23,6 +25,7 @@ export class CreateNoteDto {
 
 export class UpdateNoteDto {
   @IsOptional()
+  @Trim()
   @IsString()
   @MaxLength(MAX_TITLE_LENGTH)
   title?: string;
