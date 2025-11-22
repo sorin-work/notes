@@ -126,4 +126,10 @@ describe('NotebooksService', () => {
       await expect(service.remove(USER, 'nope')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  it('idsWithChildren includes the notebooks nested inside', async () => {
+    prisma.notebook.findFirst.mockResolvedValue(notebook('work'));
+    prisma.notebook.findMany.mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+    await expect(service.idsWithChildren(USER, 'work')).resolves.toEqual(['work', 'a', 'b']);
+  });
 });

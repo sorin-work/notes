@@ -70,7 +70,8 @@ export class NotesService {
     if (query.notebookId === 'none') {
       where.notebookId = null;
     } else if (query.notebookId) {
-      where.notebookId = query.notebookId;
+      // A top-level notebook shows the notes of the notebooks inside it too.
+      where.notebookId = { in: await this.notebooks.idsWithChildren(userId, query.notebookId) };
     }
     if (query.pinned !== undefined) where.pinned = query.pinned;
     if (query.favorite !== undefined) where.favorite = query.favorite;

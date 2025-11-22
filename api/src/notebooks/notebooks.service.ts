@@ -78,6 +78,13 @@ export class NotebooksService {
     return notebook;
   }
 
+  /** The notebook and, for a top-level notebook, the ids of the notebooks inside it. */
+  async idsWithChildren(userId: string, id: string): Promise<string[]> {
+    await this.findOwned(userId, id);
+    const children = await this.prisma.notebook.findMany({ where: { userId, parentId: id }, select: { id: true } });
+    return [id, ...children.map((child) => child.id)];
+  }
+
   private async view(userId: string, id: string): Promise<NotebookView> {
     const notebook = await this.prisma.notebook.findFirstOrThrow({
       where: { id, userId },
