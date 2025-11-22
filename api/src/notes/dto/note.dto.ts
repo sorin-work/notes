@@ -1,6 +1,6 @@
-import { IsBoolean, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateIf } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
-import { Trim } from '../../common/transforms';
+import { ToBoolean, Trim } from '../../common/transforms';
 
 export const MAX_TITLE_LENGTH = 200;
 /** About 500 pages of text. */
@@ -57,4 +57,32 @@ export class UpdateNoteDto {
   favorite?: boolean;
 }
 
-export class ListNotesQuery extends PaginationQuery {}
+export const NOTE_SORTS = ['updated', 'created', 'title'] as const;
+export type NoteSort = (typeof NOTE_SORTS)[number];
+
+export class ListNotesQuery extends PaginationQuery {
+  /** A notebook id, or "none" for notes that are not in a notebook. */
+  @IsOptional()
+  @Matches(/^(none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i, {
+    message: 'notebookId must be a notebook id or "none"',
+  })
+  notebookId?: string;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  pinned?: boolean;
+
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  favorite?: boolean;
+
+  @IsOptional()
+  @IsIn(NOTE_SORTS)
+  sort: NoteSort = 'updated';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  order?: 'asc' | 'desc';
+}

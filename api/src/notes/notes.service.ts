@@ -67,7 +67,22 @@ export class NotesService {
   async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
     const where: Prisma.NoteWhereInput = { userId };
 
-    const orderBy: Prisma.NoteOrderByWithRelationInput[] = [{ updatedAt: 'desc' }, { id: 'asc' }];
+    if (query.notebookId === 'none') {
+      where.notebookId = null;
+    } else if (query.notebookId) {
+      where.notebookId = query.notebookId;
+    }
+    if (query.pinned !== undefined) where.pinned = query.pinned;
+    if (query.favorite !== undefined) where.favorite = query.favorite;
+
+    const order = query.order ?? (query.sort === 'title' ? 'asc' : 'desc');
+    const sortField = { updated: 'updatedAt', created: 'createdAt', title: 'title' } as const;
+    const orderBy: Prisma.NoteOrderByWithRelationInput[] = [
+      // Pinned notes stay at the top whatever the sort.
+      { pinned: 'desc' },
+      { [sortField[query.sort]]: order },
+      { id: 'asc' },
+    ];
 
     const [notes, total] = await this.prisma.$transaction([
       this.prisma.note.findMany({
