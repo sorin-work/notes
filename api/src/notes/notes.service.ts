@@ -17,6 +17,8 @@ export interface NoteSummary {
   title: string;
   excerpt: string;
   notebookId: string | null;
+  pinned: boolean;
+  favorite: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,6 +34,8 @@ function toSummary(note: NoteWithRelations): NoteSummary {
     title: note.title,
     excerpt: excerpt(note.content),
     notebookId: note.notebookId,
+    pinned: note.pinned,
+    favorite: note.favorite,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   };
@@ -44,6 +48,8 @@ function toView(note: NoteWithRelations): NoteView {
     content: note.content,
     notebookId: note.notebookId,
     notebook: note.notebook,
+    pinned: note.pinned,
+    favorite: note.favorite,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   };
@@ -96,6 +102,8 @@ export class NotesService {
           title: dto.title || DEFAULT_TITLE,
           content,
           notebookId: dto.notebookId ?? null,
+          pinned: dto.pinned ?? false,
+          favorite: dto.favorite ?? false,
         },
       });
       return tx.note.findUniqueOrThrow({ where: { id: created.id }, include: noteInclude });
@@ -117,6 +125,8 @@ export class NotesService {
       if (dto.notebookId !== undefined) {
         data.notebook = dto.notebookId ? { connect: { id: dto.notebookId } } : { disconnect: true };
       }
+      if (dto.pinned !== undefined) data.pinned = dto.pinned;
+      if (dto.favorite !== undefined) data.favorite = dto.favorite;
       data.updatedAt = new Date();
 
       return tx.note.update({ where: { id }, data, include: noteInclude });
