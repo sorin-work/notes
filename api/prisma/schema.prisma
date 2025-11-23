@@ -50,6 +50,8 @@ model Note {
   pinned     Boolean  @default(false)
   favorite   Boolean  @default(false)
   createdAt  DateTime @default(now()) @map("created_at")
+  /// Only bumped when the title, content, notebook or tags change, so
+  /// pinning a note does not move it to the top of "recently edited".
   updatedAt  DateTime @default(now()) @map("updated_at")
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)

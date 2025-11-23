@@ -135,6 +135,8 @@ export class NotesService {
 
     const title = dto.title === undefined ? note.title : dto.title || DEFAULT_TITLE;
     const content = dto.content ?? note.content;
+    const textChanged = title !== note.title || content !== note.content;
+    const notebookChanged = dto.notebookId !== undefined && dto.notebookId !== note.notebookId;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const data: Prisma.NoteUpdateInput = { title, content };
@@ -143,7 +145,8 @@ export class NotesService {
       }
       if (dto.pinned !== undefined) data.pinned = dto.pinned;
       if (dto.favorite !== undefined) data.favorite = dto.favorite;
-      data.updatedAt = new Date();
+      // Pinning or favouriting is not an edit.
+      if (textChanged || notebookChanged) data.updatedAt = new Date();
 
       return tx.note.update({ where: { id }, data, include: noteInclude });
     });
