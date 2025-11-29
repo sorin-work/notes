@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
 import { ToBoolean, Trim } from '../../common/transforms';
+import { MAX_TAG_LENGTH } from '../../tags/tag-name';
 
 export const MAX_TITLE_LENGTH = 200;
 /** About 500 pages of text. */
@@ -87,6 +88,11 @@ export class ListNotesQuery extends PaginationQuery {
     message: 'notebookId must be a notebook id or "none"',
   })
   notebookId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_TAG_LENGTH)
+  tag?: string;
 
   @IsOptional()
   @ToBoolean()

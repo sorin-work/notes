@@ -4,6 +4,7 @@ import { Page, skipFor } from '../common/pagination';
 import { excerpt } from '../common/text';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { normalizeTagName } from '../tags/tag-name';
 import { TagsService } from '../tags/tags.service';
 import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
 
@@ -78,6 +79,9 @@ export class NotesService {
     } else if (query.notebookId) {
       // A top-level notebook shows the notes of the notebooks inside it too.
       where.notebookId = { in: await this.notebooks.idsWithChildren(userId, query.notebookId) };
+    }
+    if (query.tag) {
+      where.tags = { some: { tag: { name: normalizeTagName(query.tag) ?? query.tag } } };
     }
     if (query.pinned !== undefined) where.pinned = query.pinned;
     if (query.favorite !== undefined) where.favorite = query.favorite;
