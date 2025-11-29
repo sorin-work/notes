@@ -17,6 +17,7 @@ model User {
 
   notebooks Notebook[]
   notes     Note[]
+  tags      Tag[]
 
   @@map("users")
 }
@@ -56,7 +57,33 @@ model Note {
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   notebook Notebook? @relation(fields: [notebookId], references: [id], onDelete: SetNull)
+  tags     NoteTag[]
 
   @@index([notebookId])
   @@map("notes")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notes NoteTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model NoteTag {
+  noteId String @map("note_id") @db.Uuid
+  tagId  String @map("tag_id") @db.Uuid
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, tagId])
+  @@index([tagId])
+  @@map("note_tags")
 }

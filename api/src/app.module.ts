@@ -8,9 +8,10 @@ import { HealthController } from './health/health.controller';
 import { NotebooksModule } from './notebooks/notebooks.module';
 import { NotesModule } from './notes/notes.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { TagsModule } from './tags/tags.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, AuthModule, NotebooksModule, NotesModule],
+  imports: [ConfigModule, PrismaModule, AuthModule, NotebooksModule, NotesModule, TagsModule],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: PrismaExceptionFilter }],
 })

@@ -4,9 +4,11 @@ import { Page, skipFor } from '../common/pagination';
 import { excerpt } from '../common/text';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TagsService } from '../tags/tags.service';
 import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
 
 export const noteInclude = {
+  tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } },
   notebook: { select: { id: true, name: true, parentId: true } },
 } satisfies Prisma.NoteInclude;
 
@@ -17,6 +19,7 @@ export interface NoteSummary {
   title: string;
   excerpt: string;
   notebookId: string | null;
+  tags: string[];
   pinned: boolean;
   favorite: boolean;
   createdAt: Date;
@@ -34,6 +37,7 @@ function toSummary(note: NoteWithRelations): NoteSummary {
     title: note.title,
     excerpt: excerpt(note.content),
     notebookId: note.notebookId,
+    tags: note.tags.map((noteTag) => noteTag.tag.name),
     pinned: note.pinned,
     favorite: note.favorite,
     createdAt: note.createdAt,
@@ -48,6 +52,7 @@ function toView(note: NoteWithRelations): NoteView {
     content: note.content,
     notebookId: note.notebookId,
     notebook: note.notebook,
+    tags: note.tags.map((noteTag) => noteTag.tag.name),
     pinned: note.pinned,
     favorite: note.favorite,
     createdAt: note.createdAt,
@@ -62,6 +67,7 @@ export class NotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notebooks: NotebooksService,
+    private readonly tags: TagsService,
   ) {}
 
   async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
@@ -122,6 +128,9 @@ export class NotesService {
           favorite: dto.favorite ?? false,
         },
       });
+      if (dto.tags?.length) {
+        await this.tags.setNoteTags(tx, userId, created.id, dto.tags);
+      }
       return tx.note.findUniqueOrThrow({ where: { id: created.id }, include: noteInclude });
     });
     return toView(note);
@@ -139,6 +148,11 @@ export class NotesService {
     const notebookChanged = dto.notebookId !== undefined && dto.notebookId !== note.notebookId;
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      const tagsChanged = dto.tags !== undefined;
+      if (dto.tags !== undefined) {
+        await this.tags.setNoteTags(tx, userId, id, dto.tags);
+      }
+
       const data: Prisma.NoteUpdateInput = { title, content };
       if (dto.notebookId !== undefined) {
         data.notebook = dto.notebookId ? { connect: { id: dto.notebookId } } : { disconnect: true };
@@ -146,7 +160,7 @@ export class NotesService {
       if (dto.pinned !== undefined) data.pinned = dto.pinned;
       if (dto.favorite !== undefined) data.favorite = dto.favorite;
       // Pinning or favouriting is not an edit.
-      if (textChanged || notebookChanged) data.updatedAt = new Date();
+      if (textChanged || notebookChanged || tagsChanged) data.updatedAt = new Date();
 
       return tx.note.update({ where: { id }, data, include: noteInclude });
     });

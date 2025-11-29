@@ -1,4 +1,14 @@
-import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateIf } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
 import { ToBoolean, Trim } from '../../common/transforms';
 
@@ -21,6 +31,11 @@ export class CreateNoteDto {
   @IsOptional()
   @IsUUID()
   notebookId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @IsOptional()
   @IsBoolean()
@@ -47,6 +62,11 @@ export class UpdateNoteDto {
   @ValidateIf((_, value) => value !== null && value !== undefined)
   @IsUUID()
   notebookId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @IsOptional()
   @IsBoolean()
