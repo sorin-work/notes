@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -35,7 +36,9 @@ export class CreateNoteDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MaxLength(MAX_TAG_LENGTH, { each: true })
   tags?: string[];
 
   @IsOptional()
@@ -66,7 +69,9 @@ export class UpdateNoteDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
   @IsString({ each: true })
+  @MaxLength(MAX_TAG_LENGTH, { each: true })
   tags?: string[];
 
   @IsOptional()
