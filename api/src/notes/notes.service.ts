@@ -152,9 +152,13 @@ export class NotesService {
     const notebookChanged = dto.notebookId !== undefined && dto.notebookId !== note.notebookId;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const tagsChanged = dto.tags !== undefined;
+      let tagsChanged = false;
       if (dto.tags !== undefined) {
-        await this.tags.setNoteTags(tx, userId, id, dto.tags);
+        const before = (await tx.noteTag.findMany({ where: { noteId: id }, include: { tag: true } }))
+          .map((noteTag) => noteTag.tag.name)
+          .sort();
+        const after = (await this.tags.setNoteTags(tx, userId, id, dto.tags)).sort();
+        tagsChanged = before.join('\n') !== after.join('\n');
       }
 
       const data: Prisma.NoteUpdateInput = { title, content };
