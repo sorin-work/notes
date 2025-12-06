@@ -87,8 +87,71 @@ code {
   border-radius: 4px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* States */
+
+.spinner {
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.spinner-dot {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .full-page-center {
   display: grid;
   place-items: center;
   min-height: 100%;
+}
+
+.error-box {
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+
+.error-box p {
+  margin: 0 0 0.4rem;
+}
+
+.error-box p:last-child {
+  margin: 0;
+}
+
+ul.error-box {
+  padding-left: 1.6rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1.5rem;
+}
+
+.empty-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
 }
