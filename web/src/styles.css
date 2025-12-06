@@ -96,6 +96,66 @@ code {
   white-space: nowrap;
 }
 
+.muted {
+  color: var(--muted);
+}
+
+/* Buttons */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.button.wide {
+  width: 100%;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.field > span {
+  font-size: 0.85rem;
+  font-weight: 550;
+}
+
 /* States */
 
 .spinner {
@@ -154,4 +214,30 @@ ul.error-box {
   font-weight: 600;
   font-size: 1.05rem;
   margin: 0 0 0.5rem;
+}
+
+/* Auth and shared pages */
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 1rem;
+}
+
+.auth-card {
+  width: min(24rem, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.75rem;
+}
+
+.auth-card h1 {
+  margin-bottom: 0.4rem;
+}
+
+.auth-card p {
+  margin: 0;
+  text-align: center;
 }
