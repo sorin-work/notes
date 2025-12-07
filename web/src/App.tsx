@@ -1,5 +1,6 @@
-import { Route, Routes } from 'react-router';
+import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
+import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { RegisterPage } from './pages/RegisterPage';
@@ -24,13 +25,14 @@ export function App() {
         }
       />
       <Route
-        path="/"
         element={
           <RequireAuth>
-            <p className="full-page-center">Signed in.</p>
+            <Layout />
           </RequireAuth>
         }
-      />
+      >
+        <Route index element={<Navigate to="/notes" replace />} />
+      </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
