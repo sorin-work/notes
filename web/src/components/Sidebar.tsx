@@ -47,6 +47,7 @@ export function Sidebar() {
           <div className="nav-heading">
             <span>Notebooks</span>
           </div>
+          {notebooks.data?.length === 0 && <p className="nav-empty">No notebooks yet.</p>}
           <ul className="notebook-tree">
             {tree.map((parent) => (
               <li key={parent.id}>
