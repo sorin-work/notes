@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
+import { NotesPage } from './pages/NotesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { RegisterPage } from './pages/RegisterPage';
 
@@ -32,6 +33,8 @@ export function App() {
         }
       >
         <Route index element={<Navigate to="/notes" replace />} />
+        <Route path="/notes" element={<NotesPage />} />
+        <Route path="/notes/:noteId" element={<NotesPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
