@@ -38,6 +38,7 @@ export function NotesPage() {
 
   const notes = useQuery({ queryKey: ['notes', filters], queryFn: () => listNotes(filters) });
   const items = notes.data?.items ?? [];
+  const total = notes.data?.total ?? 0;
 
   return (
     <div className="notes-page">
@@ -45,6 +46,7 @@ export function NotesPage() {
         <header className="list-header">
           <div>
             <h1>{heading}</h1>
+            <span className="muted">{notes.isSuccess && `${total} ${total === 1 ? 'note' : 'notes'}`}</span>
           </div>
         </header>
         <div className="list-scroll">
