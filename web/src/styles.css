@@ -366,6 +366,16 @@ code {
   color: #e2a400;
 }
 
+.note-item-excerpt {
+  margin: 0.15rem 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .note-item-meta {
   display: flex;
   flex-wrap: wrap;
