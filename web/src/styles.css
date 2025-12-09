@@ -352,6 +352,10 @@ code {
   background: var(--surface-2);
 }
 
+.note-item.active {
+  background: var(--accent-soft);
+}
+
 .note-item-header {
   display: flex;
   align-items: center;
