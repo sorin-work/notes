@@ -262,6 +262,12 @@ code {
   padding-left: 1.4rem;
 }
 
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .count {
   font-size: 0.75rem;
   color: var(--muted);
