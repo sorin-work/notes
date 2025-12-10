@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
 import { listNotes, NoteFilters } from '../api/notes';
+import { NoteEditor } from '../components/NoteEditor';
 import { NoteList } from '../components/NoteList';
 import { EmptyState, ErrorMessage, Spinner } from '../components/States';
 import { notebookLabel } from '../lib/notebooks';
@@ -58,7 +59,7 @@ export function NotesPage() {
       </section>
 
       <section className="editor-pane">
-        <EmptyState title="Pick a note, or start a new one" />
+        {noteId ? <NoteEditor noteId={noteId} /> : <EmptyState title="Pick a note, or start a new one" />}
       </section>
     </div>
   );

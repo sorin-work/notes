@@ -1,5 +1,5 @@
-import { api, withQuery } from './client';
-import type { NoteSummary, Page } from './types';
+import { api, json, withQuery } from './client';
+import type { Note, NoteChanges, NoteSummary, Page } from './types';
 
 export interface NoteFilters {
   notebookId?: string;
@@ -11,3 +11,7 @@ export interface NoteFilters {
 }
 
 export const listNotes = (filters: NoteFilters = {}) => api<Page<NoteSummary>>(withQuery('/notes', { ...filters }));
+
+export const getNote = (id: string) => api<Note>(`/notes/${id}`);
+
+export const updateNote = (id: string, changes: NoteChanges) => api<Note>(`/notes/${id}`, json('PATCH', changes));
