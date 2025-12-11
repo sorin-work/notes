@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getNote, updateNote } from '../api/notes';
 import type { Note } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
@@ -44,6 +44,14 @@ function LoadedEditor({ note }: { note: Note }) {
     if (next.content !== undefined) setContent(next.content);
     autosave.schedule(draft);
   };
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (autosave.hasPending()) event.preventDefault();
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [autosave]);
 
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
