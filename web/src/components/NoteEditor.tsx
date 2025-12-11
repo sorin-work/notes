@@ -69,6 +69,12 @@ function LoadedEditor({ note }: { note: Note }) {
         value={title}
         maxLength={200}
         onChange={(event) => change({ title: event.target.value })}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            textareaRef.current?.focus();
+          }
+        }}
       />
 
       <div className="editor-panes">
