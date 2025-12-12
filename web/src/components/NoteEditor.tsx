@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiError } from '../api/client';
 import { getNote, updateNote } from '../api/notes';
 import type { Note } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
@@ -15,7 +16,14 @@ export function NoteEditor({ noteId }: { noteId: string }) {
   const note = useQuery({ queryKey: ['note', noteId], queryFn: () => getNote(noteId) });
   if (note.isLoading) return <Spinner />;
   if (note.error) {
-    return <ErrorMessage error={note.error} onRetry={() => void note.refetch()} />;
+    const missing = note.error instanceof ApiError && note.error.status === 404;
+    return missing ? (
+      <div className="editor-missing">
+        <p>This note does not exist, or it was deleted for good.</p>
+      </div>
+    ) : (
+      <ErrorMessage error={note.error} onRetry={() => void note.refetch()} />
+    );
   }
   if (!note.data) return null;
   return <LoadedEditor note={note.data} />;

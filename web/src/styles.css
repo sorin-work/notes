@@ -473,6 +473,11 @@ code {
   color: var(--danger);
 }
 
+.editor-missing {
+  padding: 2rem;
+  color: var(--muted);
+}
+
 .form {
   display: flex;
   flex-direction: column;
