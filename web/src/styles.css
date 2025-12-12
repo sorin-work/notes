@@ -362,6 +362,14 @@ code {
   gap: 0.35rem;
 }
 
+.note-item-title {
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .flag {
   font-size: 0.8rem;
 }
