@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import { useParams, useSearchParams } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
-import { listNotes, NoteFilters } from '../api/notes';
+import { createNote, listNotes, NoteFilters } from '../api/notes';
 import { NoteEditor } from '../components/NoteEditor';
 import { NoteList } from '../components/NoteList';
 import { EmptyState, ErrorMessage, Spinner } from '../components/States';
@@ -12,6 +12,8 @@ const PAGE_SIZE = 50;
 export function NotesPage() {
   const { noteId } = useParams();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const view = params.get('view') ?? 'all';
   const notebookId = params.get('notebook');
@@ -41,6 +43,21 @@ export function NotesPage() {
   const items = notes.data?.items ?? [];
   const total = notes.data?.total ?? 0;
 
+  const newNote = useMutation({
+    mutationFn: () =>
+      createNote({
+        notebookId: notebookId ?? null,
+        tags: tag ? [tag] : undefined,
+        pinned: view === 'pinned' || undefined,
+        favorite: view === 'favorites' || undefined,
+      }),
+    onSuccess: (note) => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
+      navigate({ pathname: `/notes/${note.id}`, search: params.toString() });
+    },
+  });
+
   return (
     <div className="notes-page">
       <section className="list-pane" aria-label="Notes">
@@ -53,7 +70,13 @@ export function NotesPage() {
         <div className="list-scroll">
           {notes.isLoading && <Spinner />}
           {notes.error && <ErrorMessage error={notes.error} onRetry={() => void notes.refetch()} />}
-          {notes.isSuccess && items.length === 0 && <EmptyState title="No notes here yet" />}
+          {notes.isSuccess && items.length === 0 && (
+            <EmptyState title="No notes here yet">
+              <button type="button" className="button button-primary" onClick={() => newNote.mutate()}>
+                Create a note
+              </button>
+            </EmptyState>
+          )}
           <NoteList notes={items} activeId={noteId} />
         </div>
       </section>

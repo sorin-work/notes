@@ -14,4 +14,6 @@ export const listNotes = (filters: NoteFilters = {}) => api<Page<NoteSummary>>(w
 
 export const getNote = (id: string) => api<Note>(`/notes/${id}`);
 
+export const createNote = (note: NoteChanges = {}) => api<Note>('/notes', json('POST', note));
+
 export const updateNote = (id: string, changes: NoteChanges) => api<Note>(`/notes/${id}`, json('PATCH', changes));

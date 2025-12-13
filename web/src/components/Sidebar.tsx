@@ -1,12 +1,15 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
+import { createNote } from '../api/notes';
 import { useAuth } from '../auth/AuthContext';
 import { notebookTree, totalNotes } from '../lib/notebooks';
 
 export function Sidebar() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
@@ -15,6 +18,20 @@ export function Sidebar() {
   const onNotes = location.pathname.startsWith('/notes');
   const view = onNotes ? (params.get('view') ?? (params.get('notebook') || params.get('tag') ? '' : 'all')) : '';
   const activeNotebook = onNotes ? params.get('notebook') : null;
+
+  const newNote = useMutation({
+    mutationFn: () =>
+      createNote({
+        notebookId: activeNotebook,
+        pinned: view === 'pinned' || undefined,
+        favorite: view === 'favorites' || undefined,
+      }),
+    onSuccess: (note) => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
+      navigate({ pathname: `/notes/${note.id}`, search: onNotes ? location.search : '' });
+    },
+  });
 
   const filterLink = (search: string, active: boolean, label: string, count?: number, className = '') => (
     <Link
@@ -33,6 +50,15 @@ export function Sidebar() {
         <Link to="/notes" className="brand">
           <img src="/favicon.svg" alt="" width={22} height={22} /> Notes
         </Link>
+        <button
+          type="button"
+          className="button button-primary new-note"
+          onClick={() => newNote.mutate()}
+          disabled={newNote.isPending}
+          title="New note"
+        >
+          + New note
+        </button>
       </div>
 
       <div className="sidebar-scroll">
