@@ -5,7 +5,12 @@ import { getNote, updateNote } from '../api/notes';
 import type { Note } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { formatRelative } from '../lib/dates';
+import { MarkdownPreview } from './MarkdownPreview';
 import { ErrorMessage, Spinner } from './States';
+
+const MODES = ['edit', 'split', 'preview'] as const;
+type Mode = (typeof MODES)[number];
+const MODE_LABELS: Record<Mode, string> = { edit: 'Edit', split: 'Split', preview: 'Preview' };
 
 interface Draft {
   title: string;
@@ -35,6 +40,7 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
+  const [mode, setMode] = useState<Mode>('split');
 
   const saveDraft = useCallback(
     async (draft: Draft) => {
@@ -69,7 +75,23 @@ function LoadedEditor({ note }: { note: Note }) {
   }[autosave.status];
 
   return (
-    <article className="editor" aria-label="Note editor">
+    <article className={`editor editor-${mode}`} aria-label="Note editor">
+      <div className="editor-toolbar">
+        <div className="toolbar-group" role="group" aria-label="View">
+          {MODES.map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={mode === value ? 'segment active' : 'segment'}
+              aria-pressed={mode === value}
+              onClick={() => setMode(value)}
+            >
+              {MODE_LABELS[value]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <input
         className="title-input"
         aria-label="Title"
@@ -86,16 +108,23 @@ function LoadedEditor({ note }: { note: Note }) {
       />
 
       <div className="editor-panes">
-        <div className="editor-source">
-          <textarea
-            ref={textareaRef}
-            aria-label="Note content"
-            placeholder="Write in Markdown."
-            value={content}
-            spellCheck
-            onChange={(event) => change({ content: event.target.value })}
-          />
-        </div>
+        {mode !== 'preview' && (
+          <div className="editor-source">
+            <textarea
+              ref={textareaRef}
+              aria-label="Note content"
+              placeholder="Write in Markdown."
+              value={content}
+              spellCheck
+              onChange={(event) => change({ content: event.target.value })}
+            />
+          </div>
+        )}
+        {mode !== 'edit' && (
+          <div className="editor-preview" aria-label="Preview">
+            <MarkdownPreview content={content} />
+          </div>
+        )}
       </div>
 
       <footer className="editor-footer">
