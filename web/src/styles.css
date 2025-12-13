@@ -157,6 +157,11 @@ code {
   opacity: 0.4;
 }
 
+.icon-button.toggled {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .link-button {
   border: none;
   background: none;
@@ -428,6 +433,10 @@ code {
   border-bottom: 1px solid var(--border);
 }
 
+.notebook-select {
+  max-width: 14rem;
+}
+
 .toolbar-group {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -450,6 +459,10 @@ code {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 550;
+}
+
+.toolbar-spacer {
+  flex: 1;
 }
 
 .title-input {

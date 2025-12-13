@@ -1,12 +1,14 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/client';
+import { listNotebooks } from '../api/notebooks';
 import { getNote, updateNote } from '../api/notes';
-import type { Note } from '../api/types';
+import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
+import { NotebookSelect } from './NotebookSelect';
 import { ErrorMessage, Spinner } from './States';
 
 const MODES = ['edit', 'split', 'preview'] as const;
@@ -43,6 +45,11 @@ function LoadedEditor({ note }: { note: Note }) {
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
 
+  const refreshLists = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    void queryClient.invalidateQueries({ queryKey: ['tags'] });
+  }, [queryClient]);
+
   const saveDraft = useCallback(
     async (draft: Draft) => {
       const saved = await updateNote(note.id, draft);
@@ -68,6 +75,22 @@ function LoadedEditor({ note }: { note: Note }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [autosave]);
 
+  // Pin, favourite, notebook and tags save straight away.
+  const updateMeta = useMutation({
+    mutationFn: (changes: NoteChanges) => updateNote(note.id, changes),
+    onMutate: (changes) => {
+      queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, ...changes } : old));
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Note>(['note', note.id], (old) =>
+        old ? { ...saved, title: old.title, content: old.content } : saved,
+      );
+      refreshLists();
+    },
+    onError: () => void queryClient.invalidateQueries({ queryKey: ['note', note.id] }),
+  });
+
+  const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
@@ -78,6 +101,11 @@ function LoadedEditor({ note }: { note: Note }) {
   return (
     <article className={`editor editor-${mode}`} aria-label="Note editor">
       <div className="editor-toolbar">
+        <NotebookSelect
+          notebooks={notebooks.data ?? []}
+          value={note.notebookId}
+          onChange={(notebookId) => updateMeta.mutate({ notebookId })}
+        />
         <div className="toolbar-group" role="group" aria-label="View">
           {MODES.map((value) => (
             <button
@@ -91,6 +119,27 @@ function LoadedEditor({ note }: { note: Note }) {
             </button>
           ))}
         </div>
+        <div className="toolbar-spacer" />
+        <button
+          type="button"
+          className={note.pinned ? 'icon-button toggled' : 'icon-button'}
+          aria-pressed={note.pinned}
+          aria-label={note.pinned ? 'Unpin' : 'Pin'}
+          title={note.pinned ? 'Unpin' : 'Pin to the top'}
+          onClick={() => updateMeta.mutate({ pinned: !note.pinned })}
+        >
+          📌
+        </button>
+        <button
+          type="button"
+          className={note.favorite ? 'icon-button toggled' : 'icon-button'}
+          aria-pressed={note.favorite}
+          aria-label={note.favorite ? 'Remove from favourites' : 'Add to favourites'}
+          title={note.favorite ? 'Remove from favourites' : 'Add to favourites'}
+          onClick={() => updateMeta.mutate({ favorite: !note.favorite })}
+        >
+          {note.favorite ? '★' : '☆'}
+        </button>
       </div>
 
       <input
