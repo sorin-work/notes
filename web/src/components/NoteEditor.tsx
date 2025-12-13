@@ -4,6 +4,7 @@ import { ApiError } from '../api/client';
 import { getNote, updateNote } from '../api/notes';
 import type { Note } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
+import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ErrorMessage, Spinner } from './States';
@@ -40,7 +41,7 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
-  const [mode, setMode] = useState<Mode>('split');
+  const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
 
   const saveDraft = useCallback(
     async (draft: Draft) => {
