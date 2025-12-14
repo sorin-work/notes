@@ -30,6 +30,8 @@ export function TagInput({ tags, onChange, disabled }: TagInputProps) {
     if (event.key === 'Enter' || event.key === ',') {
       event.preventDefault();
       add(draft);
+    } else if (event.key === 'Backspace' && draft === '' && tags.length > 0) {
+      onChange(tags.slice(0, -1));
     }
   };
 
