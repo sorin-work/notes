@@ -1,9 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { listNotebooks } from '../api/notebooks';
+import { deleteNotebook, listNotebooks } from '../api/notebooks';
 import { createNote } from '../api/notes';
+import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { notebookTree, totalNotes } from '../lib/notebooks';
+import { ConfirmDialog } from './Modal';
+import { NotebookDialog } from './NotebookDialog';
+
+type NotebookAction =
+  | { kind: 'create'; parentId: string | null }
+  | { kind: 'edit'; notebook: Notebook }
+  | { kind: 'delete'; notebook: Notebook };
 
 export function Sidebar() {
   const { user, logout } = useAuth();
@@ -11,6 +20,7 @@ export function Sidebar() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
+  const [action, setAction] = useState<NotebookAction | null>(null);
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tree = notebookTree(notebooks.data ?? []);
@@ -30,6 +40,19 @@ export function Sidebar() {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
       navigate({ pathname: `/notes/${note.id}`, search: onNotes ? location.search : '' });
+    },
+  });
+
+  const removeNotebook = useMutation({
+    mutationFn: (id: string) => deleteNotebook(id),
+    onSuccess: (_result, id) => {
+      for (const key of ['notebooks', 'notes', 'trash', 'tags']) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      setAction(null);
+      if (activeNotebook === id || tree.some((n) => n.id === id && n.children.some((c) => c.id === activeNotebook))) {
+        navigate('/notes');
+      }
     },
   });
 
@@ -72,6 +95,15 @@ export function Sidebar() {
         <div className="nav-section">
           <div className="nav-heading">
             <span>Notebooks</span>
+            <button
+              type="button"
+              className="icon-button small"
+              aria-label="New notebook"
+              title="New notebook"
+              onClick={() => setAction({ kind: 'create', parentId: null })}
+            >
+              +
+            </button>
           </div>
           {notebooks.data?.length === 0 && <p className="nav-empty">No notebooks yet.</p>}
           <ul className="notebook-tree">
@@ -79,6 +111,13 @@ export function Sidebar() {
               <li key={parent.id}>
                 <div className="nav-row">
                   {filterLink(`?notebook=${parent.id}`, activeNotebook === parent.id, parent.name, totalNotes(parent))}
+                  <NotebookMenu
+                    notebook={parent}
+                    canNest
+                    onAction={(kind) =>
+                      setAction(kind === 'create' ? { kind, parentId: parent.id } : { kind, notebook: parent })
+                    }
+                  />
                 </div>
                 {parent.children.length > 0 && (
                   <ul>
@@ -91,6 +130,10 @@ export function Sidebar() {
                           child.noteCount,
                           'nested',
                         )}
+                        <NotebookMenu
+                          notebook={child}
+                          onAction={(kind) => kind !== 'create' && setAction({ kind, notebook: child })}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -111,6 +154,80 @@ export function Sidebar() {
           </button>
         </div>
       </div>
+
+      {(action?.kind === 'create' || action?.kind === 'edit') && (
+        <NotebookDialog
+          notebooks={notebooks.data ?? []}
+          notebook={action.kind === 'edit' ? action.notebook : undefined}
+          parentId={action.kind === 'create' ? action.parentId : undefined}
+          onClose={() => setAction(null)}
+          onSaved={(saved) => {
+            if (action.kind === 'create') navigate(`/notes?notebook=${saved.id}`);
+          }}
+        />
+      )}
+      {action?.kind === 'delete' && (
+        <ConfirmDialog
+          title={`Delete “${action.notebook.name}”?`}
+          message={
+            <p>
+              The notebook
+              {tree.some((n) => n.id === action.notebook.id && n.children.length > 0) &&
+                ' and the notebooks inside it'}{' '}
+              will be deleted. Its notes move to the trash, where you can restore them for 30 days.
+            </p>
+          }
+          confirmLabel="Delete notebook"
+          danger
+          busy={removeNotebook.isPending}
+          onConfirm={() => removeNotebook.mutate(action.notebook.id)}
+          onCancel={() => setAction(null)}
+        />
+      )}
     </nav>
+  );
+}
+
+function NotebookMenu({
+  notebook,
+  canNest,
+  onAction,
+}: {
+  notebook: Notebook;
+  canNest?: boolean;
+  onAction(kind: 'create' | 'edit' | 'delete'): void;
+}) {
+  return (
+    <span className="nav-actions">
+      {canNest && (
+        <button
+          type="button"
+          className="icon-button small"
+          aria-label={`New notebook inside ${notebook.name}`}
+          title="New notebook inside"
+          onClick={() => onAction('create')}
+        >
+          +
+        </button>
+      )}
+      <button
+        type="button"
+        className="icon-button small"
+        aria-label={`Edit ${notebook.name}`}
+        title="Rename or move"
+        onClick={() => onAction('edit')}
+      >
+        ✎
+      </button>
+      <button
+        type="button"
+        className="icon-button small"
+        aria-label={`Delete ${notebook.name}`}
+        title="Delete"
+        onClick={() => onAction('delete')}
+      >
+        🗑
+      </button>
+    </span>
   );
 }

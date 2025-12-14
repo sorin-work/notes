@@ -157,6 +157,12 @@ code {
   opacity: 0.4;
 }
 
+.icon-button.small {
+  font-size: 0.85rem;
+  padding: 0.15rem 0.35rem;
+  color: var(--muted);
+}
+
 .icon-button.toggled {
   background: var(--accent-soft);
   color: var(--accent);
@@ -284,6 +290,21 @@ code {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.nav-row {
+  display: flex;
+  align-items: center;
+}
+
+.nav-actions {
+  display: none;
+  flex-shrink: 0;
+}
+
+.nav-row:hover > .nav-actions,
+.nav-row:focus-within > .nav-actions {
+  display: flex;
 }
 
 .sidebar-bottom {
