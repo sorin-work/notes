@@ -26,6 +26,12 @@ export interface Notebook {
   updatedAt: string;
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  noteCount: number;
+}
+
 export interface NoteSummary {
   id: string;
   title: string;

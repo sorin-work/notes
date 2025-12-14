@@ -307,6 +307,28 @@ code {
   display: flex;
 }
 
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0 0.4rem;
+}
+
+.tag-link {
+  font-size: 0.82rem;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+}
+
+.tag-link.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .sidebar-bottom {
   border-top: 1px solid var(--border);
   padding: 0.5rem;
@@ -497,6 +519,42 @@ code {
 
 .title-input:focus-visible {
   outline: none;
+}
+
+.tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0 0.6rem;
+}
+
+.tag-input input {
+  border: none;
+  background: transparent;
+  padding: 0.2rem;
+  min-width: 8rem;
+  flex: 1;
+  font-size: 0.88rem;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.05rem 0.25rem 0.05rem 0.55rem;
+  font-size: 0.83rem;
+}
+
+.tag-chip button {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 0.2rem;
 }
 
 .editor-panes {

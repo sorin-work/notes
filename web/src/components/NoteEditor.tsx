@@ -10,6 +10,7 @@ import { formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
 import { NotebookSelect } from './NotebookSelect';
 import { ErrorMessage, Spinner } from './States';
+import { TagInput } from './TagInput';
 
 const MODES = ['edit', 'split', 'preview'] as const;
 type Mode = (typeof MODES)[number];
@@ -156,6 +157,7 @@ function LoadedEditor({ note }: { note: Note }) {
           }
         }}
       />
+      <TagInput tags={note.tags} onChange={(next) => updateMeta.mutate({ tags: next })} />
 
       <div className="editor-panes">
         {mode !== 'preview' && (

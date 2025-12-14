@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
 import { createNote } from '../api/notes';
+import { listTags } from '../api/tags';
 import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { notebookTree, totalNotes } from '../lib/notebooks';
@@ -23,16 +24,19 @@ export function Sidebar() {
   const [action, setAction] = useState<NotebookAction | null>(null);
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
+  const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
   const tree = notebookTree(notebooks.data ?? []);
 
   const onNotes = location.pathname.startsWith('/notes');
   const view = onNotes ? (params.get('view') ?? (params.get('notebook') || params.get('tag') ? '' : 'all')) : '';
   const activeNotebook = onNotes ? params.get('notebook') : null;
+  const activeTag = onNotes ? params.get('tag') : null;
 
   const newNote = useMutation({
     mutationFn: () =>
       createNote({
         notebookId: activeNotebook,
+        tags: activeTag ? [activeTag] : undefined,
         pinned: view === 'pinned' || undefined,
         favorite: view === 'favorites' || undefined,
       }),
@@ -142,6 +146,26 @@ export function Sidebar() {
             ))}
           </ul>
         </div>
+
+        {tags.data && tags.data.length > 0 && (
+          <div className="nav-section">
+            <div className="nav-heading">
+              <span>Tags</span>
+            </div>
+            <div className="tag-cloud">
+              {tags.data.map((tag) => (
+                <Link
+                  key={tag.id}
+                  to={`/notes?tag=${encodeURIComponent(tag.name)}`}
+                  className={activeTag === tag.name ? 'tag-link active' : 'tag-link'}
+                >
+                  #{tag.name}
+                  <span className="count">{tag.noteCount}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="sidebar-bottom">
