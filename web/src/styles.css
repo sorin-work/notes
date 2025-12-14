@@ -634,6 +634,13 @@ code {
   font-weight: 550;
 }
 
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 /* States */
 
 .spinner {
@@ -692,6 +699,48 @@ ul.error-box {
   font-weight: 600;
   font-size: 1.05rem;
   margin: 0 0 0.5rem;
+}
+
+/* Dialogs */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 40%);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--surface);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  width: min(30rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.9rem 1.1rem 0.5rem;
+}
+
+.modal-header h2 {
+  margin: 0;
+}
+
+.modal-body {
+  padding: 0.25rem 1.1rem 1.1rem;
+  overflow-y: auto;
+}
+
+.confirm-message p {
+  margin-top: 0;
 }
 
 /* Auth and shared pages */
