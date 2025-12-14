@@ -15,10 +15,12 @@ interface Props {
   onSaved?(notebook: Notebook): void;
 }
 
-export function NotebookDialog({ notebook, parentId = null, onClose, onSaved }: Props) {
+export function NotebookDialog({ notebooks, notebook, parentId = null, onClose, onSaved }: Props) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(notebook?.name ?? '');
-  const parent = notebook ? notebook.parentId : parentId;
+  const [parent, setParent] = useState<string | null>(notebook ? notebook.parentId : parentId);
+  const hasChildren = notebook ? notebooks.some((item) => item.parentId === notebook.id) : false;
+  const parents = notebooks.filter((item) => item.parentId === null && item.id !== notebook?.id);
 
   const save = useMutation({
     mutationFn: () =>
@@ -41,6 +43,22 @@ export function NotebookDialog({ notebook, parentId = null, onClose, onSaved }: 
         <label className="field">
           <span>Name</span>
           <input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required />
+        </label>
+        <label className="field">
+          <span>Inside</span>
+          <select
+            value={parent ?? ''}
+            onChange={(event) => setParent(event.target.value || null)}
+            disabled={hasChildren}
+          >
+            <option value="">Top level</option>
+            {parents.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+          {hasChildren && <small className="muted">Notebooks with notebooks inside them stay at the top level.</small>}
         </label>
         {save.error && <ErrorMessage error={save.error} />}
         <div className="form-actions">
