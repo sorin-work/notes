@@ -1,7 +1,8 @@
-import { KeyboardEvent, useState } from 'react';
+import { KeyboardEvent, useId, useState } from 'react';
 
 interface TagInputProps {
   tags: string[];
+  suggestions?: string[];
   onChange(tags: string[]): void;
   disabled?: boolean;
 }
@@ -17,8 +18,9 @@ export function normalizeTag(name: string): string {
     .slice(0, 40);
 }
 
-export function TagInput({ tags, onChange, disabled }: TagInputProps) {
+export function TagInput({ tags, suggestions = [], onChange, disabled }: TagInputProps) {
   const [draft, setDraft] = useState('');
+  const listId = useId();
 
   const add = (raw: string) => {
     const tag = normalizeTag(raw);
@@ -53,11 +55,19 @@ export function TagInput({ tags, onChange, disabled }: TagInputProps) {
         aria-label="Add a tag"
         placeholder={tags.length ? '' : 'Add tags…'}
         value={draft}
+        list={listId}
         disabled={disabled}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={onKeyDown}
         onBlur={() => draft.trim() && add(draft)}
       />
+      <datalist id={listId}>
+        {suggestions
+          .filter((name) => !tags.includes(name))
+          .map((name) => (
+            <option key={name} value={name} />
+          ))}
+      </datalist>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
 import { getNote, updateNote } from '../api/notes';
+import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { useStoredState } from '../hooks/useStoredState';
@@ -92,6 +93,7 @@ function LoadedEditor({ note }: { note: Note }) {
   });
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
+  const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
@@ -157,7 +159,11 @@ function LoadedEditor({ note }: { note: Note }) {
           }
         }}
       />
-      <TagInput tags={note.tags} onChange={(next) => updateMeta.mutate({ tags: next })} />
+      <TagInput
+        tags={note.tags}
+        suggestions={(tags.data ?? []).map((tag) => tag.name)}
+        onChange={(next) => updateMeta.mutate({ tags: next })}
+      />
 
       <div className="editor-panes">
         {mode !== 'preview' && (
