@@ -59,7 +59,7 @@ export function NotesPage() {
   });
 
   return (
-    <div className="notes-page">
+    <div className={noteId ? 'notes-page has-note' : 'notes-page'}>
       <section className="list-pane" aria-label="Notes">
         <header className="list-header">
           <div>

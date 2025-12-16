@@ -15,7 +15,7 @@ type NotebookAction =
   | { kind: 'edit'; notebook: Notebook }
   | { kind: 'delete'; notebook: Notebook };
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -44,6 +44,7 @@ export function Sidebar() {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
       navigate({ pathname: `/notes/${note.id}`, search: onNotes ? location.search : '' });
+      onNavigate?.();
     },
   });
 
@@ -65,6 +66,7 @@ export function Sidebar() {
       to={`/notes${search}`}
       className={`nav-item ${className} ${active ? 'active' : ''}`.trim()}
       aria-current={active ? 'page' : undefined}
+      onClick={onNavigate}
     >
       <span className="nav-label">{label}</span>
       {count !== undefined && count > 0 && <span className="count">{count}</span>}
@@ -74,7 +76,7 @@ export function Sidebar() {
   return (
     <nav className="sidebar" aria-label="Main">
       <div className="sidebar-top">
-        <Link to="/notes" className="brand">
+        <Link to="/notes" className="brand" onClick={onNavigate}>
           <img src="/favicon.svg" alt="" width={22} height={22} /> Notes
         </Link>
         <button
@@ -158,6 +160,7 @@ export function Sidebar() {
                   key={tag.id}
                   to={`/notes?tag=${encodeURIComponent(tag.name)}`}
                   className={activeTag === tag.name ? 'tag-link active' : 'tag-link'}
+                  onClick={onNavigate}
                 >
                   #{tag.name}
                   <span className="count">{tag.noteCount}</span>
