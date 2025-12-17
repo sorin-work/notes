@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import type { NoteSummary } from '../api/types';
 import { formatRelative } from '../lib/dates';
 
@@ -8,12 +8,13 @@ interface Props {
 }
 
 export function NoteList({ notes, activeId }: Props) {
+  const location = useLocation();
   return (
     <ul className="note-list">
       {notes.map((note) => (
         <li key={note.id}>
           <Link
-            to={`/notes/${note.id}`}
+            to={{ pathname: `/notes/${note.id}`, search: location.search }}
             className={note.id === activeId ? 'note-item active' : 'note-item'}
             aria-current={note.id === activeId ? 'page' : undefined}
           >
