@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
 import { createNote, listNotes, NoteFilters } from '../api/notes';
@@ -39,9 +39,14 @@ export function NotesPage() {
     heading = 'Not in a notebook';
   }
 
-  const notes = useQuery({ queryKey: ['notes', filters], queryFn: () => listNotes(filters) });
-  const items = notes.data?.items ?? [];
-  const total = notes.data?.total ?? 0;
+  const notes = useInfiniteQuery({
+    queryKey: ['notes', filters],
+    queryFn: ({ pageParam }) => listNotes({ ...filters, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
+  });
+  const items = notes.data?.pages.flatMap((page) => page.items) ?? [];
+  const total = notes.data?.pages[0]?.total ?? 0;
 
   const newNote = useMutation({
     mutationFn: () =>
@@ -78,6 +83,16 @@ export function NotesPage() {
             </EmptyState>
           )}
           <NoteList notes={items} activeId={noteId} />
+          {notes.hasNextPage && (
+            <button
+              type="button"
+              className="button load-more"
+              onClick={() => void notes.fetchNextPage()}
+              disabled={notes.isFetchingNextPage}
+            >
+              {notes.isFetchingNextPage ? 'Loading…' : 'Load more'}
+            </button>
+          )}
         </div>
       </section>
 

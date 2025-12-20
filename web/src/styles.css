@@ -455,6 +455,11 @@ code {
   padding: 0 0.4rem;
 }
 
+.load-more {
+  display: flex;
+  margin: 0.75rem auto;
+}
+
 .editor-pane {
   min-width: 0;
   overflow-y: auto;
