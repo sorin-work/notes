@@ -1,12 +1,14 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
-import { createNote, listNotes, NoteFilters } from '../api/notes';
+import { createNote, listNotes, NoteFilters, NoteSort } from '../api/notes';
 import { NoteEditor } from '../components/NoteEditor';
 import { NoteList } from '../components/NoteList';
 import { EmptyState, ErrorMessage, Spinner } from '../components/States';
+import { useStoredState } from '../hooks/useStoredState';
 import { notebookLabel } from '../lib/notebooks';
 
+const SORTS = ['updated', 'created', 'title'] as const;
 const PAGE_SIZE = 50;
 
 export function NotesPage() {
@@ -14,13 +16,14 @@ export function NotesPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [sort, setSort] = useStoredState<NoteSort>('notes.sort', SORTS, 'updated');
 
   const view = params.get('view') ?? 'all';
   const notebookId = params.get('notebook');
   const tag = params.get('tag');
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
 
-  const filters: NoteFilters = { pageSize: PAGE_SIZE };
+  const filters: NoteFilters = { sort, pageSize: PAGE_SIZE };
   let heading = 'All notes';
   if (notebookId) {
     filters.notebookId = notebookId;
@@ -71,6 +74,11 @@ export function NotesPage() {
             <h1>{heading}</h1>
             <span className="muted">{notes.isSuccess && `${total} ${total === 1 ? 'note' : 'notes'}`}</span>
           </div>
+          <select aria-label="Sort notes" value={sort} onChange={(event) => setSort(event.target.value as NoteSort)}>
+            <option value="updated">Last edited</option>
+            <option value="created">Created</option>
+            <option value="title">Title</option>
+          </select>
         </header>
         <div className="list-scroll">
           {notes.isLoading && <Spinner />}

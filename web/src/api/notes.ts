@@ -1,11 +1,14 @@
 import { api, json, withQuery } from './client';
 import type { Note, NoteChanges, NoteSummary, Page } from './types';
 
+export type NoteSort = 'updated' | 'created' | 'title';
+
 export interface NoteFilters {
   notebookId?: string;
   tag?: string;
   pinned?: boolean;
   favorite?: boolean;
+  sort?: NoteSort;
   page?: number;
   pageSize?: number;
 }
