@@ -1,6 +1,8 @@
 import { IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
+import { Trim } from '../../common/transforms';
 
 export class CreateNotebookDto {
+  @Trim()
   @IsString()
   @IsNotEmpty({ message: 'name is required' })
   @MaxLength(80)
@@ -14,6 +16,7 @@ export class CreateNotebookDto {
 
 export class UpdateNotebookDto {
   @IsOptional()
+  @Trim()
   @IsString()
   @IsNotEmpty({ message: 'name cannot be empty' })
   @MaxLength(80)
