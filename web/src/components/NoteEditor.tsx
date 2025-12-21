@@ -1,14 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
-import { getNote, updateNote } from '../api/notes';
+import { getNote, trashNote, updateNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
+import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
 import { ErrorMessage, Spinner } from './States';
 import { TagInput } from './TagInput';
@@ -41,11 +43,14 @@ export function NoteEditor({ noteId }: { noteId: string }) {
 
 function LoadedEditor({ note }: { note: Note }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
+  const [dialog, setDialog] = useState<'delete' | null>(null);
 
   const refreshLists = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -90,6 +95,19 @@ function LoadedEditor({ note }: { note: Note }) {
       refreshLists();
     },
     onError: () => void queryClient.invalidateQueries({ queryKey: ['note', note.id] }),
+  });
+
+  const trash = useMutation({
+    mutationFn: async () => {
+      await autosave.flush();
+      await trashNote(note.id);
+    },
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ['note', note.id] });
+      void queryClient.invalidateQueries({ queryKey: ['trash'] });
+      refreshLists();
+      navigate({ pathname: '/notes', search: location.search });
+    },
   });
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
@@ -143,6 +161,9 @@ function LoadedEditor({ note }: { note: Note }) {
         >
           {note.favorite ? '★' : '☆'}
         </button>
+        <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
+          Delete
+        </button>
       </div>
 
       <input
@@ -190,6 +211,20 @@ function LoadedEditor({ note }: { note: Note }) {
           {statusText}
         </span>
       </footer>
+
+      {dialog === 'delete' && (
+        <ConfirmDialog
+          title="Move to trash?"
+          message={
+            <p>“{title || 'Untitled'}” will be moved to the trash. You can restore it from there for 30 days.</p>
+          }
+          confirmLabel="Move to trash"
+          danger
+          busy={trash.isPending}
+          onConfirm={() => trash.mutate()}
+          onCancel={() => setDialog(null)}
+        />
+      )}
     </article>
   );
 }

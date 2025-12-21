@@ -135,6 +135,21 @@ code {
   filter: brightness(1.08);
 }
 
+.button-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.button-danger:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
+}
+
+.button-danger-quiet {
+  color: var(--danger);
+}
+
 .button.wide {
   width: 100%;
 }
