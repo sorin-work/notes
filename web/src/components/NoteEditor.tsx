@@ -54,6 +54,7 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const refreshLists = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
     void queryClient.invalidateQueries({ queryKey: ['tags'] });
   }, [queryClient]);
 
