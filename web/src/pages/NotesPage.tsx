@@ -105,7 +105,7 @@ export function NotesPage() {
       </section>
 
       <section className="editor-pane">
-        {noteId ? <NoteEditor noteId={noteId} /> : <EmptyState title="Pick a note, or start a new one" />}
+        {noteId ? <NoteEditor key={noteId} noteId={noteId} /> : <EmptyState title="Pick a note, or start a new one" />}
       </section>
     </div>
   );
