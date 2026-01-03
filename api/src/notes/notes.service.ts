@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { Page, skipFor } from '../common/pagination';
 import { excerpt } from '../common/text';
@@ -30,6 +30,7 @@ export interface NoteSummary {
 export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   content: string;
   notebook: { id: string; name: string; parentId: string | null } | null;
+  deletedAt: Date | null;
 }
 
 function toSummary(note: NoteWithRelations): NoteSummary {
@@ -58,6 +59,7 @@ function toView(note: NoteWithRelations): NoteView {
     favorite: note.favorite,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
+    deletedAt: note.deletedAt,
   };
 }
 
@@ -72,7 +74,7 @@ export class NotesService {
   ) {}
 
   async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
-    const where: Prisma.NoteWhereInput = { userId };
+    const where: Prisma.NoteWhereInput = { userId, deletedAt: null };
 
     if (query.notebookId === 'none') {
       where.notebookId = null;
@@ -141,7 +143,7 @@ export class NotesService {
   }
 
   async update(userId: string, id: string, dto: UpdateNoteDto): Promise<NoteView> {
-    const note = await this.findOwned(userId, id);
+    const note = await this.findActive(userId, id);
     if (dto.notebookId) {
       await this.notebooks.findOwned(userId, dto.notebookId);
     }
@@ -175,15 +177,20 @@ export class NotesService {
     return toView(updated);
   }
 
-  async remove(userId: string, id: string): Promise<void> {
-    await this.findOwned(userId, id);
-    await this.prisma.note.delete({ where: { id } });
+  /** Moves the note to the trash. */
+  async trash(userId: string, id: string): Promise<void> {
+    await this.findActive(userId, id);
+    await this.prisma.note.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 
-  async findOwned(userId: string, id: string): Promise<Note> {
+  /** A note that is not in the trash. Trashed notes are read-only. */
+  async findActive(userId: string, id: string): Promise<Note> {
     const note = await this.prisma.note.findFirst({ where: { id, userId } });
     if (!note) {
       throw new NotFoundException('Note not found');
+    }
+    if (note.deletedAt) {
+      throw new ConflictException('This note is in the trash. Restore it before changing it.');
     }
     return note;
   }

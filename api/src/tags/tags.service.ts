@@ -14,12 +14,12 @@ export interface TagView {
 export class TagsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Tags with the number of notes that use them. Unused tags are left out. */
+  /** Tags with the number of notes outside the trash that use them. Unused tags are left out. */
   async list(userId: string): Promise<TagView[]> {
     const tags = await this.prisma.tag.findMany({
       where: { userId },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { notes: true } } },
+      include: { _count: { select: { notes: { where: { note: { deletedAt: null } } } } } },
     });
     return tags
       .map((tag) => ({ id: tag.id, name: tag.name, noteCount: tag._count.notes }))
@@ -87,7 +87,7 @@ export class TagsService {
   private async view(id: string): Promise<TagView> {
     const tag = await this.prisma.tag.findUniqueOrThrow({
       where: { id },
-      include: { _count: { select: { notes: true } } },
+      include: { _count: { select: { notes: { where: { note: { deletedAt: null } } } } } },
     });
     return { id: tag.id, name: tag.name, noteCount: tag._count.notes };
   }

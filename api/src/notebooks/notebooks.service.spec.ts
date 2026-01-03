@@ -28,7 +28,7 @@ describe('NotebooksService', () => {
       expect(prisma.notebook.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: USER },
-          include: { _count: { select: { notes: true } } },
+          include: { _count: { select: { notes: { where: { deletedAt: null } } } } },
         }),
       );
     });

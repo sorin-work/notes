@@ -43,17 +43,19 @@ model Notebook {
 }
 
 model Note {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String   @map("user_id") @db.Uuid
-  notebookId String?  @map("notebook_id") @db.Uuid
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  notebookId String?   @map("notebook_id") @db.Uuid
   title      String
-  content    String   @default("")
-  pinned     Boolean  @default(false)
-  favorite   Boolean  @default(false)
-  createdAt  DateTime @default(now()) @map("created_at")
+  content    String    @default("")
+  pinned     Boolean   @default(false)
+  favorite   Boolean   @default(false)
+  /// Set when the note is moved to the trash.
+  deletedAt  DateTime? @map("deleted_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
   /// Only bumped when the title, content, notebook or tags change, so
   /// pinning a note does not move it to the top of "recently edited".
-  updatedAt  DateTime @default(now()) @map("updated_at")
+  updatedAt  DateTime  @default(now()) @map("updated_at")
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   notebook Notebook? @relation(fields: [notebookId], references: [id], onDelete: SetNull)
