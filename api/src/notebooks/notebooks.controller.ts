@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { CreateNotebookDto, UpdateNotebookDto } from './dto/notebook.dto';
 import { NotebooksService, NotebookView } from './notebooks.service';
@@ -27,8 +27,7 @@ export class NotebooksController {
   }
 
   @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<{ trashedNotes: number }> {
     return this.notebooks.remove(user.id, id);
   }
 }

@@ -62,12 +62,20 @@ export class NotebooksService {
   }
 
   /**
-   * Deletes the notebook and the notebooks inside it. Their notes stay, outside
-   * any notebook.
+   * Deletes the notebook and the notebooks inside it. Their notes are moved
+   * to the trash rather than deleted, so nothing is lost by accident.
    */
-  async remove(userId: string, id: string): Promise<void> {
+  async remove(userId: string, id: string): Promise<{ trashedNotes: number }> {
     await this.findOwned(userId, id);
-    await this.prisma.notebook.delete({ where: { id } });
+
+    const [trashed] = await this.prisma.$transaction([
+      this.prisma.note.updateMany({
+        where: { userId, notebookId: id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      }),
+      this.prisma.notebook.delete({ where: { id } }),
+    ]);
+    return { trashedNotes: trashed.count };
   }
 
   async findOwned(userId: string, id: string): Promise<Notebook> {
