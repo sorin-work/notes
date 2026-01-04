@@ -65,3 +65,11 @@ export interface NoteChanges {
   pinned?: boolean;
   favorite?: boolean;
 }
+
+export interface TrashedNote {
+  id: string;
+  title: string;
+  excerpt: string;
+  notebook: { id: string; name: string } | null;
+  deletedAt: string;
+}

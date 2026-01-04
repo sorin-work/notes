@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
 import { createNote } from '../api/notes';
 import { listTags } from '../api/tags';
@@ -172,6 +172,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="sidebar-bottom">
+        <NavLink to="/trash" className="nav-item" onClick={onNavigate}>
+          Trash
+        </NavLink>
         <div className="account">
           <span className="account-name" title={user?.email}>
             {user?.name}
