@@ -51,6 +51,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'delete' | null>(null);
+  const readOnly = note.deletedAt !== null;
 
   const refreshLists = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -122,10 +123,12 @@ function LoadedEditor({ note }: { note: Note }) {
 
   return (
     <article className={`editor editor-${mode}`} aria-label="Note editor">
+      {readOnly && <div className="banner">This note is in the trash. Restore it from the trash to edit it again.</div>}
       <div className="editor-toolbar">
         <NotebookSelect
           notebooks={notebooks.data ?? []}
           value={note.notebookId}
+          disabled={readOnly}
           onChange={(notebookId) => updateMeta.mutate({ notebookId })}
         />
         <div className="toolbar-group" role="group" aria-label="View">
@@ -148,6 +151,7 @@ function LoadedEditor({ note }: { note: Note }) {
           aria-pressed={note.pinned}
           aria-label={note.pinned ? 'Unpin' : 'Pin'}
           title={note.pinned ? 'Unpin' : 'Pin to the top'}
+          disabled={readOnly}
           onClick={() => updateMeta.mutate({ pinned: !note.pinned })}
         >
           📌
@@ -158,13 +162,16 @@ function LoadedEditor({ note }: { note: Note }) {
           aria-pressed={note.favorite}
           aria-label={note.favorite ? 'Remove from favourites' : 'Add to favourites'}
           title={note.favorite ? 'Remove from favourites' : 'Add to favourites'}
+          disabled={readOnly}
           onClick={() => updateMeta.mutate({ favorite: !note.favorite })}
         >
           {note.favorite ? '★' : '☆'}
         </button>
-        <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
-          Delete
-        </button>
+        {!readOnly && (
+          <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
+            Delete
+          </button>
+        )}
       </div>
 
       <input
@@ -173,6 +180,7 @@ function LoadedEditor({ note }: { note: Note }) {
         placeholder="Untitled"
         value={title}
         maxLength={200}
+        readOnly={readOnly}
         onChange={(event) => change({ title: event.target.value })}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
@@ -184,6 +192,7 @@ function LoadedEditor({ note }: { note: Note }) {
       <TagInput
         tags={note.tags}
         suggestions={(tags.data ?? []).map((tag) => tag.name)}
+        disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
 
@@ -195,6 +204,7 @@ function LoadedEditor({ note }: { note: Note }) {
               aria-label="Note content"
               placeholder="Write in Markdown."
               value={content}
+              readOnly={readOnly}
               spellCheck
               onChange={(event) => change({ content: event.target.value })}
             />

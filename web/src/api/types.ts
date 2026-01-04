@@ -55,6 +55,7 @@ export interface Note {
   favorite: boolean;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface NoteChanges {

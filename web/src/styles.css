@@ -532,6 +532,14 @@ code {
   flex: 1;
 }
 
+.banner {
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 0.6rem;
+}
+
 .title-input {
   font-size: 1.6rem;
   font-weight: 650;
