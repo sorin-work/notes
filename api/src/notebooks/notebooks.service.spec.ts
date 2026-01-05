@@ -115,14 +115,15 @@ describe('NotebooksService', () => {
   });
 
   describe('remove', () => {
-    it('moves the notes of the notebook to the trash', async () => {
+    it('moves the notes of the notebook and its children to the trash', async () => {
       prisma.notebook.findFirst.mockResolvedValue(notebook('work'));
+      prisma.notebook.findMany.mockResolvedValue([{ id: 'meetings' }]);
       prisma.note.updateMany.mockResolvedValue({ count: 4 });
       prisma.notebook.delete.mockResolvedValue(notebook('work'));
 
       await expect(service.remove(USER, 'work')).resolves.toEqual({ trashedNotes: 4 });
       expect(prisma.note.updateMany).toHaveBeenCalledWith({
-        where: { userId: USER, notebookId: 'work', deletedAt: null },
+        where: { userId: USER, notebookId: { in: ['work', 'meetings'] }, deletedAt: null },
         data: { deletedAt: expect.any(Date) },
       });
       expect(prisma.notebook.delete).toHaveBeenCalledWith({ where: { id: 'work' } });

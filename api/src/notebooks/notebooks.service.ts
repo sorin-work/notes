@@ -67,10 +67,12 @@ export class NotebooksService {
    */
   async remove(userId: string, id: string): Promise<{ trashedNotes: number }> {
     await this.findOwned(userId, id);
+    const children = await this.prisma.notebook.findMany({ where: { parentId: id }, select: { id: true } });
+    const ids = [id, ...children.map((child) => child.id)];
 
     const [trashed] = await this.prisma.$transaction([
       this.prisma.note.updateMany({
-        where: { userId, notebookId: id, deletedAt: null },
+        where: { userId, notebookId: { in: ids }, deletedAt: null },
         data: { deletedAt: new Date() },
       }),
       this.prisma.notebook.delete({ where: { id } }),
