@@ -73,4 +73,5 @@ export interface TrashedNote {
   excerpt: string;
   notebook: { id: string; name: string } | null;
   deletedAt: string;
+  purgeAt: string;
 }

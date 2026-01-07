@@ -4,7 +4,7 @@ import { deleteForever, emptyTrash, listTrash, restoreNote } from '../api/trash'
 import type { TrashedNote } from '../api/types';
 import { ConfirmDialog } from '../components/Modal';
 import { EmptyState, ErrorMessage, Spinner } from '../components/States';
-import { formatRelative } from '../lib/dates';
+import { daysUntil, formatRelative } from '../lib/dates';
 
 export function TrashPage() {
   const queryClient = useQueryClient();
@@ -37,6 +37,7 @@ export function TrashPage() {
       <header className="page-header">
         <div>
           <h1>Trash</h1>
+          <p className="muted">Notes are deleted for good 30 days after they were moved here.</p>
         </div>
         {trash.data && trash.data.length > 0 && (
           <button type="button" className="button button-danger" onClick={() => setConfirm('all')}>
@@ -55,7 +56,10 @@ export function TrashPage() {
               <strong>{note.title}</strong>
               {note.notebook && <span className="muted"> in {note.notebook.name}</span>}
               {note.excerpt && <p className="note-item-excerpt">{note.excerpt}</p>}
-              <span className="muted">Deleted {formatRelative(note.deletedAt)}</span>
+              <span className="muted">
+                Deleted {formatRelative(note.deletedAt)} · gone for good in {daysUntil(note.purgeAt)}{' '}
+                {daysUntil(note.purgeAt) === 1 ? 'day' : 'days'}
+              </span>
             </div>
             <div className="trash-actions">
               <button

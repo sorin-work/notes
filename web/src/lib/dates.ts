@@ -22,3 +22,7 @@ export function formatRelative(value: string | Date, now = new Date()): string {
     ...(sameYear ? {} : { year: 'numeric' }),
   });
 }
+
+export function daysUntil(value: string | Date, now = new Date()): number {
+  return Math.max(0, Math.ceil((new Date(value).getTime() - now.getTime()) / DAY));
+}
