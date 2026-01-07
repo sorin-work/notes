@@ -8,6 +8,7 @@ export interface AppConfig {
   jwtSecret: string;
   jwtExpiresIn: string;
   logLevels: LogLevel[];
+  trashRetentionDays: number;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -51,5 +52,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
     logLevels: logLevelsFrom(env.LOG_LEVEL),
+    trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
   };
 }

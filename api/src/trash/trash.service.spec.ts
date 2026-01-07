@@ -1,8 +1,14 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { loadConfig } from '../config/config';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { TrashService } from './trash.service';
 
 const USER = 'user-1';
+const config = loadConfig({
+  DATABASE_URL: 'postgresql://x',
+  JWT_SECRET: 'x'.repeat(32),
+  TRASH_RETENTION_DAYS: '30',
+});
 
 describe('TrashService', () => {
   let prisma: PrismaMock;
@@ -10,10 +16,10 @@ describe('TrashService', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new TrashService(asPrismaService(prisma));
+    service = new TrashService(asPrismaService(prisma), config);
   });
 
-  it('lists trashed notes, most recently deleted first', async () => {
+  it('lists trashed notes with the date they will be purged', async () => {
     const deletedAt = new Date('2026-03-01T08:00:00Z');
     prisma.note.findMany.mockResolvedValue([
       { id: 'n1', title: 'Old', content: '# Old\n\nGone soon', notebook: null, deletedAt },
@@ -25,6 +31,7 @@ describe('TrashService', () => {
       excerpt: 'Old Gone soon',
       notebook: null,
       deletedAt,
+      purgeAt: new Date('2026-03-31T08:00:00Z'),
     });
     expect(prisma.note.findMany.mock.calls[0][0].where).toEqual({ userId: USER, deletedAt: { not: null } });
   });
@@ -54,5 +61,14 @@ describe('TrashService', () => {
     prisma.note.deleteMany.mockResolvedValue({ count: 3 });
     await expect(service.empty(USER)).resolves.toEqual({ deleted: 3 });
     expect(prisma.note.deleteMany).toHaveBeenCalledWith({ where: { userId: USER, deletedAt: { not: null } } });
+  });
+
+  it('purges notes trashed before the retention period', async () => {
+    prisma.note.deleteMany.mockResolvedValue({ count: 2 });
+    const now = new Date('2026-04-30T00:00:00Z');
+    await expect(service.purgeExpired(now)).resolves.toBe(2);
+    expect(prisma.note.deleteMany).toHaveBeenCalledWith({
+      where: { deletedAt: { lt: new Date('2026-03-31T00:00:00Z') } },
+    });
   });
 });

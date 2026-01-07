@@ -1,6 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { APP_CONFIG, AppConfig } from '../config/config';
 import { excerpt } from '../common/text';
 import { PrismaService } from '../prisma/prisma.service';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface TrashedNote {
   id: string;
@@ -8,11 +11,16 @@ export interface TrashedNote {
   excerpt: string;
   notebook: { id: string; name: string } | null;
   deletedAt: Date;
+  /** When the note will be deleted for good. */
+  purgeAt: Date;
 }
 
 @Injectable()
 export class TrashService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+  ) {}
 
   async list(userId: string): Promise<TrashedNote[]> {
     const notes = await this.prisma.note.findMany({
@@ -28,6 +36,7 @@ export class TrashService {
         excerpt: excerpt(note.content),
         notebook: note.notebook,
         deletedAt,
+        purgeAt: new Date(deletedAt.getTime() + this.config.trashRetentionDays * DAY_MS),
       };
     });
   }
@@ -46,6 +55,13 @@ export class TrashService {
   async empty(userId: string): Promise<{ deleted: number }> {
     const result = await this.prisma.note.deleteMany({ where: { userId, deletedAt: { not: null } } });
     return { deleted: result.count };
+  }
+
+  /** Deletes notes, for every user, that have been in the trash longer than the retention period. */
+  async purgeExpired(now = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - this.config.trashRetentionDays * DAY_MS);
+    const result = await this.prisma.note.deleteMany({ where: { deletedAt: { lt: cutoff } } });
+    return result.count;
   }
 
   private async findTrashed(userId: string, id: string) {

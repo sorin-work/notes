@@ -11,6 +11,7 @@ describe('loadConfig', () => {
     expect(config).toMatchObject({
       port: 4401,
       jwtExpiresIn: '7d',
+      trashRetentionDays: 30,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
   });
@@ -19,9 +20,11 @@ describe('loadConfig', () => {
     const config = loadConfig({
       ...base,
       PORT: '8080',
+      TRASH_RETENTION_DAYS: '7',
       LOG_LEVEL: 'debug',
     });
     expect(config.port).toBe(8080);
+    expect(config.trashRetentionDays).toBe(7);
     expect(config.logLevels).toContain('debug');
   });
 
@@ -34,7 +37,7 @@ describe('loadConfig', () => {
   });
 
   it('rejects numbers that are not integers', () => {
-    expect(() => loadConfig({ ...base, PORT: 'soon' })).toThrow('PORT');
+    expect(() => loadConfig({ ...base, TRASH_RETENTION_DAYS: 'soon' })).toThrow('TRASH_RETENTION_DAYS');
     expect(() => loadConfig({ ...base, PORT: '0' })).toThrow('PORT');
   });
 });
