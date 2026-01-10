@@ -57,10 +57,14 @@ model Note {
   /// pinning a note does not move it to the top of "recently edited".
   updatedAt  DateTime  @default(now()) @map("updated_at")
 
+  /// Kept up to date by a trigger (see the search migration), queried with raw SQL.
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   notebook Notebook? @relation(fields: [notebookId], references: [id], onDelete: SetNull)
   tags     NoteTag[]
 
+  @@index([searchVector], type: Gin)
   @@index([notebookId])
   @@map("notes")
 }
