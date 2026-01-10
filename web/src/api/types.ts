@@ -75,3 +75,14 @@ export interface TrashedNote {
   deletedAt: string;
   purgeAt: string;
 }
+
+export interface SearchHit {
+  id: string;
+  title: string;
+  snippet: string;
+  notebookId: string | null;
+  tags: string[];
+  pinned: boolean;
+  favorite: boolean;
+  updatedAt: string;
+}

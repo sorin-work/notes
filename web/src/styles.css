@@ -87,6 +87,13 @@ code {
   border-radius: 4px;
 }
 
+mark {
+  background: var(--mark);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -773,6 +780,41 @@ code {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+.search-big {
+  width: 100%;
+  font-size: 1.1rem;
+  padding: 0.65rem 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.search-results,
+.trash-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.search-hit {
+  display: block;
+  padding: 0.8rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+}
+
+.search-hit:hover {
+  background: var(--surface-2);
+}
+
+.search-hit-title {
+  font-weight: 600;
+}
+
+.search-hit-snippet {
+  margin: 0.2rem 0 0.3rem;
+  font-size: 0.9rem;
 }
 
 .trash-item {
