@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
 import { PrismaService } from '../prisma/prisma.service';
+import { HIGHLIGHT_END, HIGHLIGHT_START, toPrefixQuery } from './search-query';
 
 export interface SearchHit {
   id: string;
@@ -31,8 +32,6 @@ interface Row {
   rank: number;
 }
 
-const HIGHLIGHT_START = '\u0002';
-const HIGHLIGHT_END = '\u0003';
 const HEADLINE_OPTIONS = `StartSel=${HIGHLIGHT_START}, StopSel=${HIGHLIGHT_END}, MaxWords=24, MinWords=10, MaxFragments=2, FragmentDelimiter=" … "`;
 
 @Injectable()
@@ -40,11 +39,10 @@ export class SearchService {
   constructor(private readonly prisma: PrismaService) {}
 
   async search(userId: string, q: string, page: PaginationQuery): Promise<Page<SearchHit>> {
-    const terms = q.trim().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) {
+    const tsquery = toPrefixQuery(q);
+    if (!tsquery) {
       return { items: [], total: 0, page: page.page, pageSize: page.pageSize };
     }
-    const tsquery = terms.map((term) => `${term}:*`).join(' & ');
 
     const match = Prisma.sql`
       FROM notes n, to_tsquery('english', ${tsquery}) query
