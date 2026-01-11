@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
 import { createNote } from '../api/notes';
@@ -22,6 +22,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const [action, setAction] = useState<NotebookAction | null>(null);
+  const [query, setQuery] = useState('');
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
@@ -61,6 +62,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     },
   });
 
+  const submitSearch = (event: FormEvent) => {
+    event.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    navigate(`/search?q=${encodeURIComponent(q)}`);
+    onNavigate?.();
+  };
+
   const filterLink = (search: string, active: boolean, label: string, count?: number, className = '') => (
     <Link
       to={`/notes${search}`}
@@ -88,6 +97,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         >
           + New note
         </button>
+        <form role="search" onSubmit={submitSearch}>
+          <input
+            type="search"
+            id="global-search"
+            className="search-input"
+            placeholder="Search notes"
+            aria-label="Search notes"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </form>
       </div>
 
       <div className="sidebar-scroll">

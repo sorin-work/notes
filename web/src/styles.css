@@ -242,6 +242,10 @@ mark {
   text-decoration: none;
 }
 
+.search-input {
+  width: 100%;
+}
+
 .sidebar-scroll {
   flex: 1;
   overflow-y: auto;
