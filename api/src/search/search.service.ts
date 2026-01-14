@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
+import { cleanSnippet, excerpt } from '../common/text';
 import { PrismaService } from '../prisma/prisma.service';
 import { HIGHLIGHT_END, HIGHLIGHT_START, toPrefixQuery } from './search-query';
 
@@ -24,6 +25,7 @@ interface Row {
   id: string;
   title: string;
   snippet: string;
+  content: string;
   notebook_id: string | null;
   tags: string[] | null;
   pinned: boolean;
@@ -52,7 +54,7 @@ export class SearchService {
 
     const [rows, counted] = await Promise.all([
       this.prisma.$queryRaw<Row[]>`
-        SELECT n.id, n.title, n.notebook_id, n.pinned, n.favorite, n.updated_at,
+        SELECT n.id, n.title, n.content, n.notebook_id, n.pinned, n.favorite, n.updated_at,
                ts_rank(n.search_vector, query) AS rank,
                ts_headline('english', n.content, query, ${HEADLINE_OPTIONS}) AS snippet,
                (SELECT array_agg(t.name ORDER BY t.name)
@@ -68,7 +70,8 @@ export class SearchService {
       items: rows.map((row) => ({
         id: row.id,
         title: row.title,
-        snippet: row.snippet,
+        // A title-only match has no highlighted words in the body.
+        snippet: row.snippet.includes(HIGHLIGHT_START) ? cleanSnippet(row.snippet) : excerpt(row.content),
         notebookId: row.notebook_id,
         tags: row.tags ?? [],
         pinned: row.pinned,

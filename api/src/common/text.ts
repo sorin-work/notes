@@ -19,3 +19,12 @@ export function excerpt(markdown: string, maxLength = 160): string {
   const lastSpace = cut.lastIndexOf(' ');
   return `${(lastSpace > maxLength * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
+
+/** Tidies a search snippet: drops Markdown punctuation and collapses whitespace. */
+export function cleanSnippet(snippet: string): string {
+  return snippet
+    .replace(/^\s*\|?[-:| ]+\|?\s*$/gm, ' ')
+    .replace(/[|#>*`]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
