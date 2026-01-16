@@ -14,7 +14,8 @@ import {
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
-import { NotesService, NoteSummary, NoteView } from './notes.service';
+import type { NoteSummary, NoteView } from './note-view';
+import { NotesService } from './notes.service';
 
 @Controller('notes')
 export class NotesController {

@@ -1,67 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { Page, skipFor } from '../common/pagination';
-import { excerpt } from '../common/text';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
 import { TagsService } from '../tags/tags.service';
 import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
-
-export const noteInclude = {
-  tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } },
-  notebook: { select: { id: true, name: true, parentId: true } },
-} satisfies Prisma.NoteInclude;
-
-type NoteWithRelations = Prisma.NoteGetPayload<{ include: typeof noteInclude }>;
-
-export interface NoteSummary {
-  id: string;
-  title: string;
-  excerpt: string;
-  notebookId: string | null;
-  tags: string[];
-  pinned: boolean;
-  favorite: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
-  content: string;
-  notebook: { id: string; name: string; parentId: string | null } | null;
-  deletedAt: Date | null;
-}
-
-function toSummary(note: NoteWithRelations): NoteSummary {
-  return {
-    id: note.id,
-    title: note.title,
-    excerpt: excerpt(note.content),
-    notebookId: note.notebookId,
-    tags: note.tags.map((noteTag) => noteTag.tag.name),
-    pinned: note.pinned,
-    favorite: note.favorite,
-    createdAt: note.createdAt,
-    updatedAt: note.updatedAt,
-  };
-}
-
-function toView(note: NoteWithRelations): NoteView {
-  return {
-    id: note.id,
-    title: note.title,
-    content: note.content,
-    notebookId: note.notebookId,
-    notebook: note.notebook,
-    tags: note.tags.map((noteTag) => noteTag.tag.name),
-    pinned: note.pinned,
-    favorite: note.favorite,
-    createdAt: note.createdAt,
-    updatedAt: note.updatedAt,
-    deletedAt: note.deletedAt,
-  };
-}
+import { noteInclude, NoteSummary, NoteView, toSummary, toView } from './note-view';
 
 export const DEFAULT_TITLE = 'Untitled';
 
