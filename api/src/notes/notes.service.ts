@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { Page, skipFor } from '../common/pagination';
+import { LinksService } from '../links/links.service';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
@@ -16,6 +17,7 @@ export class NotesService {
     private readonly prisma: PrismaService,
     private readonly notebooks: NotebooksService,
     private readonly tags: TagsService,
+    private readonly links: LinksService,
   ) {}
 
   async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
@@ -82,6 +84,9 @@ export class NotesService {
       if (dto.tags?.length) {
         await this.tags.setNoteTags(tx, userId, created.id, dto.tags);
       }
+      if (content) {
+        await this.links.sync(tx, created.id, content);
+      }
       return tx.note.findUniqueOrThrow({ where: { id: created.id }, include: noteInclude });
     });
     return toView(note);
@@ -106,6 +111,9 @@ export class NotesService {
           .sort();
         const after = (await this.tags.setNoteTags(tx, userId, id, dto.tags)).sort();
         tagsChanged = before.join('\n') !== after.join('\n');
+      }
+      if (content !== note.content) {
+        await this.links.sync(tx, id, content);
       }
 
       const data: Prisma.NoteUpdateInput = { title, content };

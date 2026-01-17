@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
+import { LinksModule } from '../links/links.module';
 import { NotebooksModule } from '../notebooks/notebooks.module';
 import { TagsModule } from '../tags/tags.module';
 import { NotesController } from './notes.controller';
 import { NotesService } from './notes.service';
 
 @Module({
-  imports: [NotebooksModule, TagsModule],
+  imports: [NotebooksModule, TagsModule, LinksModule],
   controllers: [NotesController],
   providers: [NotesService],
   exports: [NotesService],
