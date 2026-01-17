@@ -13,17 +13,26 @@ import {
 } from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
-import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
+import { LinksService, OutgoingLink } from '../links/links.service';
+import { CreateNoteDto, ListNotesQuery, ResolveQuery, UpdateNoteDto } from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService } from './notes.service';
 
 @Controller('notes')
 export class NotesController {
-  constructor(private readonly notes: NotesService) {}
+  constructor(
+    private readonly notes: NotesService,
+    private readonly links: LinksService,
+  ) {}
 
   @Get()
   list(@CurrentUser() user: AuthUser, @Query() query: ListNotesQuery): Promise<Page<NoteSummary>> {
     return this.notes.list(user.id, query);
+  }
+
+  @Get('resolve')
+  resolve(@CurrentUser() user: AuthUser, @Query() query: ResolveQuery): Promise<{ id: string; title: string }> {
+    return this.links.resolve(user.id, query.title);
   }
 
   @Post()
@@ -49,5 +58,10 @@ export class NotesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   trash(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.notes.trash(user.id, id);
+  }
+
+  @Get(':id/links')
+  outgoing(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<OutgoingLink[]> {
+    return this.links.outgoing(user.id, id);
   }
 }

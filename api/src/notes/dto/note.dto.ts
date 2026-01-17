@@ -117,3 +117,10 @@ export class ListNotesQuery extends PaginationQuery {
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc';
 }
+
+export class ResolveQuery {
+  @Trim()
+  @IsString()
+  @MaxLength(MAX_TITLE_LENGTH)
+  title: string;
+}
