@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
-import { getNote, trashNote, updateNote } from '../api/notes';
+import { getNote, resolveTitle, trashNote, updateNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
@@ -114,6 +114,15 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
+  const openWikiLink = useCallback(
+    async (target: string) => {
+      await autosave.flush();
+      const found = await resolveTitle(target);
+      navigate({ pathname: `/notes/${found.id}`, search: location.search });
+    },
+    [autosave, navigate, location.search],
+  );
+
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
@@ -202,7 +211,7 @@ function LoadedEditor({ note }: { note: Note }) {
             <textarea
               ref={textareaRef}
               aria-label="Note content"
-              placeholder="Write in Markdown."
+              placeholder="Write in Markdown. Type [[ to link to another note."
               value={content}
               readOnly={readOnly}
               spellCheck
@@ -212,7 +221,7 @@ function LoadedEditor({ note }: { note: Note }) {
         )}
         {mode !== 'edit' && (
           <div className="editor-preview" aria-label="Preview">
-            <MarkdownPreview content={content} />
+            <MarkdownPreview content={content} onWikiLink={openWikiLink} />
           </div>
         )}
       </div>

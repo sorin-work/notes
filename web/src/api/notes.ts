@@ -22,3 +22,6 @@ export const createNote = (note: NoteChanges = {}) => api<Note>('/notes', json('
 export const updateNote = (id: string, changes: NoteChanges) => api<Note>(`/notes/${id}`, json('PATCH', changes));
 
 export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DELETE' });
+
+export const resolveTitle = (title: string) =>
+  api<{ id: string; title: string }>(withQuery('/notes/resolve', { title }));
