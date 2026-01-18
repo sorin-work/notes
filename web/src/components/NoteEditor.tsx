@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
-import { getNote, resolveTitle, trashNote, updateNote } from '../api/notes';
+import { createNote, getNote, outgoingLinks, resolveTitle, trashNote, updateNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
+import { normalizeTitle } from '../lib/wikilinks';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
@@ -63,6 +64,7 @@ function LoadedEditor({ note }: { note: Note }) {
     async (draft: Draft) => {
       const saved = await updateNote(note.id, draft);
       queryClient.setQueryData(['note', note.id], saved);
+      void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
     [note.id, queryClient],
@@ -114,13 +116,27 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
+  const links = useQuery({ queryKey: ['links', note.id], queryFn: () => outgoingLinks(note.id) });
+  const missingTitles = useMemo(
+    () => new Set((links.data ?? []).filter((l) => l.noteId === null).map((l) => normalizeTitle(l.title))),
+    [links.data],
+  );
+
   const openWikiLink = useCallback(
     async (target: string) => {
       await autosave.flush();
-      const found = await resolveTitle(target);
-      navigate({ pathname: `/notes/${found.id}`, search: location.search });
+      try {
+        const found = await resolveTitle(target);
+        navigate({ pathname: `/notes/${found.id}`, search: location.search });
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 404)) throw error;
+        const created = await createNote({ title: target, notebookId: note.notebookId });
+        refreshLists();
+        void queryClient.invalidateQueries({ queryKey: ['links'] });
+        navigate({ pathname: `/notes/${created.id}`, search: location.search });
+      }
     },
-    [autosave, navigate, location.search],
+    [autosave, navigate, location.search, note.notebookId, queryClient, refreshLists],
   );
 
   const statusText = {
@@ -221,7 +237,7 @@ function LoadedEditor({ note }: { note: Note }) {
         )}
         {mode !== 'edit' && (
           <div className="editor-preview" aria-label="Preview">
-            <MarkdownPreview content={content} onWikiLink={openWikiLink} />
+            <MarkdownPreview content={content} onWikiLink={openWikiLink} missingTitles={missingTitles} />
           </div>
         )}
       </div>

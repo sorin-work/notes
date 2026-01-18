@@ -744,6 +744,11 @@ mark {
   border-bottom: 1px solid currentColor;
 }
 
+.wikilink-missing {
+  color: var(--missing);
+  border-bottom-style: dashed;
+}
+
 /* Generic pages */
 
 .page {

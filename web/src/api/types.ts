@@ -67,6 +67,11 @@ export interface NoteChanges {
   favorite?: boolean;
 }
 
+export interface OutgoingLink {
+  title: string;
+  noteId: string | null;
+}
+
 export interface TrashedNote {
   id: string;
   title: string;
