@@ -1,7 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { excerpt } from '../common/text';
 import { PrismaService } from '../prisma/prisma.service';
 import { extractWikiLinks, normalizeTitle } from './wikilinks';
+
+export interface Backlink {
+  id: string;
+  title: string;
+  updatedAt: Date;
+  /** The paragraph around the link in the linking note. */
+  context: string;
+}
 
 export interface OutgoingLink {
   title: string;
@@ -26,6 +35,31 @@ export class LinksService {
         })),
       });
     }
+  }
+
+  /** Notes outside the trash whose [[links]] point at this note's title. */
+  async backlinks(userId: string, noteId: string): Promise<Backlink[]> {
+    const note = await this.prisma.note.findFirst({ where: { id: noteId, userId }, select: { title: true } });
+    if (!note) {
+      throw new NotFoundException('Note not found');
+    }
+    const key = normalizeTitle(note.title);
+    const sources = await this.prisma.note.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        id: { not: noteId },
+        outgoingLinks: { some: { targetKey: key } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, title: true, updatedAt: true, content: true },
+    });
+    return sources.map((source) => ({
+      id: source.id,
+      title: source.title,
+      updatedAt: source.updatedAt,
+      context: linkContext(source.content, key),
+    }));
   }
 
   /** The links written in a note, with the note each one currently resolves to. */
@@ -71,4 +105,12 @@ export class LinksService {
     for (const row of rows) result.set(row.key, row.id);
     return result;
   }
+}
+
+/** The paragraph containing the first link to `key`, as plain text. */
+export function linkContext(content: string, key: string): string {
+  const paragraphs = content.split(/\r?\n\s*\r?\n/);
+  const paragraph =
+    paragraphs.find((p) => extractWikiLinks(p).some((link) => normalizeTitle(link.title) === key)) ?? '';
+  return excerpt(paragraph, 200);
 }

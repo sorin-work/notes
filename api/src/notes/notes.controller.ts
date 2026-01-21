@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
-import { LinksService, OutgoingLink } from '../links/links.service';
+import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
 import { CreateNoteDto, ListNotesQuery, ResolveQuery, UpdateNoteDto } from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService } from './notes.service';
@@ -58,6 +58,11 @@ export class NotesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   trash(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.notes.trash(user.id, id);
+  }
+
+  @Get(':id/backlinks')
+  backlinks(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<Backlink[]> {
+    return this.links.backlinks(user.id, id);
   }
 
   @Get(':id/links')
