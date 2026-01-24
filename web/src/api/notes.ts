@@ -1,5 +1,5 @@
 import { api, json, withQuery } from './client';
-import type { Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
+import type { Backlink, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
 
 export type NoteSort = 'updated' | 'created' | 'title';
 
@@ -22,6 +22,8 @@ export const createNote = (note: NoteChanges = {}) => api<Note>('/notes', json('
 export const updateNote = (id: string, changes: NoteChanges) => api<Note>(`/notes/${id}`, json('PATCH', changes));
 
 export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DELETE' });
+
+export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks`);
 
 export const outgoingLinks = (id: string) => api<OutgoingLink[]>(`/notes/${id}/links`);
 

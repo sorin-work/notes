@@ -10,6 +10,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
 import { normalizeTitle } from '../lib/wikilinks';
+import { BacklinksPanel } from './BacklinksPanel';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
@@ -65,6 +66,7 @@ function LoadedEditor({ note }: { note: Note }) {
       const saved = await updateNote(note.id, draft);
       queryClient.setQueryData(['note', note.id], saved);
       void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
+      void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
     [note.id, queryClient],
@@ -109,6 +111,7 @@ function LoadedEditor({ note }: { note: Note }) {
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ['note', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['trash'] });
+      void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
       refreshLists();
       navigate({ pathname: '/notes', search: location.search });
     },
@@ -247,6 +250,8 @@ function LoadedEditor({ note }: { note: Note }) {
           {statusText}
         </span>
       </footer>
+
+      <BacklinksPanel noteId={note.id} />
 
       {dialog === 'delete' && (
         <ConfirmDialog

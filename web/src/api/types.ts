@@ -67,6 +67,13 @@ export interface NoteChanges {
   favorite?: boolean;
 }
 
+export interface Backlink {
+  id: string;
+  title: string;
+  updatedAt: string;
+  context: string;
+}
+
 export interface OutgoingLink {
   title: string;
   noteId: string | null;
