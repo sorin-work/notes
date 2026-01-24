@@ -1,16 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
-import { createNote, getNote, outgoingLinks, resolveTitle, trashNote, updateNote } from '../api/notes';
+import { createNote, getNote, noteTitles, outgoingLinks, resolveTitle, trashNote, updateNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
-import { normalizeTitle } from '../lib/wikilinks';
+import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
+import { LinkSuggestions, suggestionAt, suggestionCount } from './LinkSuggestions';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
@@ -53,6 +54,8 @@ function LoadedEditor({ note }: { note: Note }) {
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'delete' | null>(null);
+  const [link, setLink] = useState<{ start: number; query: string } | null>(null);
+  const [activeSuggestion, setActiveSuggestion] = useState(0);
   const readOnly = note.deletedAt !== null;
 
   const refreshLists = useCallback(() => {
@@ -125,6 +128,14 @@ function LoadedEditor({ note }: { note: Note }) {
     [links.data],
   );
 
+  const linkQuery = link?.query ?? null;
+  const suggestions = useQuery({
+    queryKey: ['titles', linkQuery],
+    queryFn: () => noteTitles(linkQuery ?? ''),
+    enabled: linkQuery !== null,
+  });
+  const titleOptions = (suggestions.data ?? []).filter((item) => item.id !== note.id);
+
   const openWikiLink = useCallback(
     async (target: string) => {
       await autosave.flush();
@@ -141,6 +152,57 @@ function LoadedEditor({ note }: { note: Note }) {
     },
     [autosave, navigate, location.search, note.notebookId, queryClient, refreshLists],
   );
+
+  const updateLinkState = (text: string, cursor: number) => {
+    const next = openLinkAt(text, cursor);
+    setLink(next);
+    if (next?.query !== link?.query) setActiveSuggestion(0);
+  };
+
+  const insertLink = (target: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea || !link) return;
+    const cursor = textarea.selectionStart;
+    const after = content.slice(cursor);
+    const rest = after.startsWith(']]') ? after.slice(2) : after;
+    const inserted = `[[${target}]]`;
+    const next = content.slice(0, link.start) + inserted + rest;
+    change({ content: next });
+    setLink(null);
+    const position = link.start + inserted.length;
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(position, position);
+    });
+  };
+
+  const onContentChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    change({ content: event.target.value });
+    updateLinkState(event.target.value, event.target.selectionStart);
+  };
+
+  const onContentKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!link) return;
+    const count = suggestionCount(titleOptions, link.query);
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setLink(null);
+    } else if (count === 0) {
+      return;
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveSuggestion((index) => (index + 1) % count);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveSuggestion((index) => (index - 1 + count) % count);
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      const target = suggestionAt(titleOptions, link.query, activeSuggestion);
+      if (target) {
+        event.preventDefault();
+        insertLink(target);
+      }
+    }
+  };
 
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
@@ -234,8 +296,18 @@ function LoadedEditor({ note }: { note: Note }) {
               value={content}
               readOnly={readOnly}
               spellCheck
-              onChange={(event) => change({ content: event.target.value })}
+              onChange={onContentChange}
+              onKeyDown={onContentKeyDown}
+              onClick={(event) => updateLinkState(content, event.currentTarget.selectionStart)}
             />
+            {link && (
+              <LinkSuggestions
+                titles={titleOptions}
+                query={link.query}
+                activeIndex={activeSuggestion}
+                onPick={insertLink}
+              />
+            )}
           </div>
         )}
         {mode !== 'edit' && (

@@ -27,3 +27,16 @@ export function wikiTarget(href: string | undefined): string | null {
     return null;
   }
 }
+
+/**
+ * When the cursor sits inside an unfinished [[link, returns where the link
+ * starts and what has been typed so far.
+ */
+export function openLinkAt(text: string, cursor: number): { start: number; query: string } | null {
+  const before = text.slice(0, cursor);
+  const start = before.lastIndexOf('[[');
+  if (start === -1) return null;
+  const query = before.slice(start + 2);
+  if (/[[\]\n|]/.test(query) || query.length > 100) return null;
+  return { start, query };
+}

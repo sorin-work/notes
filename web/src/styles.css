@@ -642,6 +642,36 @@ mark {
   color: var(--muted);
 }
 
+.link-suggestions {
+  position: absolute;
+  left: 0.8rem;
+  bottom: 0.8rem;
+  z-index: 5;
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  min-width: 16rem;
+  max-width: calc(100% - 1.6rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.link-suggestions li {
+  padding: 0.35rem 0.6rem;
+  border-radius: 5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-suggestions li.active,
+.link-suggestions li:hover {
+  background: var(--accent-soft);
+}
+
 .editor-footer {
   display: flex;
   flex-wrap: wrap;
