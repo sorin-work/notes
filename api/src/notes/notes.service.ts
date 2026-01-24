@@ -136,6 +136,35 @@ export class NotesService {
     await this.prisma.note.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 
+  /** Titles starting with (or else containing) `q`, for [[link]] completion. */
+  async titles(userId: string, q = '', limit = 10): Promise<{ id: string; title: string }[]> {
+    const take = Math.min(Math.max(limit, 1), 25);
+    const term = q.trim();
+    const select = { id: true, title: true } as const;
+    const base: Prisma.NoteWhereInput = { userId, deletedAt: null };
+    if (!term) {
+      return this.prisma.note.findMany({ where: base, orderBy: { updatedAt: 'desc' }, take, select });
+    }
+    const prefixed = await this.prisma.note.findMany({
+      where: { ...base, title: { startsWith: term, mode: 'insensitive' } },
+      orderBy: { title: 'asc' },
+      take,
+      select,
+    });
+    if (prefixed.length >= take) return prefixed;
+    const containing = await this.prisma.note.findMany({
+      where: {
+        ...base,
+        title: { contains: term, mode: 'insensitive' },
+        id: { notIn: prefixed.map((note) => note.id) },
+      },
+      orderBy: { title: 'asc' },
+      take: take - prefixed.length,
+      select,
+    });
+    return [...prefixed, ...containing];
+  }
+
   /** A note that is not in the trash. Trashed notes are read-only. */
   async findActive(userId: string, id: string): Promise<Note> {
     const note = await this.prisma.note.findFirst({ where: { id, userId } });

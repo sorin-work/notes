@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -116,6 +117,17 @@ export class ListNotesQuery extends PaginationQuery {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc';
+}
+
+export class TitleQuery {
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_TITLE_LENGTH)
+  q?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  limit?: number;
 }
 
 export class ResolveQuery {

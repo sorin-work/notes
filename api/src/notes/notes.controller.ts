@@ -14,7 +14,7 @@ import {
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
-import { CreateNoteDto, ListNotesQuery, ResolveQuery, UpdateNoteDto } from './dto/note.dto';
+import { CreateNoteDto, ListNotesQuery, ResolveQuery, TitleQuery, UpdateNoteDto } from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService } from './notes.service';
 
@@ -28,6 +28,11 @@ export class NotesController {
   @Get()
   list(@CurrentUser() user: AuthUser, @Query() query: ListNotesQuery): Promise<Page<NoteSummary>> {
     return this.notes.list(user.id, query);
+  }
+
+  @Get('titles')
+  titles(@CurrentUser() user: AuthUser, @Query() query: TitleQuery): Promise<{ id: string; title: string }[]> {
+    return this.notes.titles(user.id, query.q, query.limit);
   }
 
   @Get('resolve')
