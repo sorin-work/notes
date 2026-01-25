@@ -27,6 +27,26 @@ describe('extractWikiLinks', () => {
   it('does not span lines', () => {
     expect(extractWikiLinks('[[First\nline]]')).toEqual([]);
   });
+
+  it('ignores links in fenced code blocks', () => {
+    const markdown = ['[[Before]]', '```', '[[Inside]]', '```', '~~~ts', '[[Tilde]]', '~~~', '[[After]]'].join('\n');
+    expect(extractWikiLinks(markdown).map((link) => link.title)).toEqual(['Before', 'After']);
+  });
+
+  it('only closes a fence with the same marker', () => {
+    const markdown = ['````', '```', '[[Still code]]', '````', '[[Text]]'].join('\n');
+    expect(extractWikiLinks(markdown).map((link) => link.title)).toEqual(['Text']);
+  });
+
+  it('ignores links in inline code', () => {
+    expect(extractWikiLinks('Type `[[Title]]` to link, like [[Real]]. ``a [[b]] c``').map((l) => l.title)).toEqual([
+      'Real',
+    ]);
+  });
+
+  it('handles Windows line endings', () => {
+    expect(extractWikiLinks('```\r\n[[Code]]\r\n```\r\n[[Text]]').map((link) => link.title)).toEqual(['Text']);
+  });
 });
 
 describe('normalizeTitle', () => {
