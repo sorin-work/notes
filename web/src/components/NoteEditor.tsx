@@ -7,6 +7,7 @@ import { createNote, getNote, noteTitles, outgoingLinks, resolveTitle, trashNote
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatRelative } from '../lib/dates';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
@@ -128,7 +129,7 @@ function LoadedEditor({ note }: { note: Note }) {
     [links.data],
   );
 
-  const linkQuery = link?.query ?? null;
+  const linkQuery = useDebouncedValue(link?.query ?? null, 150);
   const suggestions = useQuery({
     queryKey: ['titles', linkQuery],
     queryFn: () => noteTitles(linkQuery ?? ''),
