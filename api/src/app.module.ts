@@ -11,6 +11,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SearchModule } from './search/search.module';
 import { TagsModule } from './tags/tags.module';
 import { TrashModule } from './trash/trash.module';
+import { VersionsModule } from './versions/versions.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { TrashModule } from './trash/trash.module';
     NotebooksModule,
     NotesModule,
     TagsModule,
+    VersionsModule,
     TrashModule,
     SearchModule,
   ],

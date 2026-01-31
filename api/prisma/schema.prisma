@@ -60,10 +60,11 @@ model Note {
   /// Kept up to date by a trigger (see the search migration), queried with raw SQL.
   searchVector Unsupported("tsvector")? @map("search_vector")
 
-  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  notebook      Notebook?  @relation(fields: [notebookId], references: [id], onDelete: SetNull)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notebook      Notebook?     @relation(fields: [notebookId], references: [id], onDelete: SetNull)
   tags          NoteTag[]
   outgoingLinks NoteLink[]
+  versions      NoteVersion[]
 
   @@index([searchVector], type: Gin)
   @@index([notebookId])
@@ -110,4 +111,17 @@ model NoteLink {
   @@unique([sourceId, targetKey])
   @@index([targetKey])
   @@map("note_links")
+}
+
+model NoteVersion {
+  id        String   @id @default(uuid()) @db.Uuid
+  noteId    String   @map("note_id") @db.Uuid
+  title     String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId, createdAt])
+  @@map("note_versions")
 }

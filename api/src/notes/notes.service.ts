@@ -6,6 +6,7 @@ import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
 import { TagsService } from '../tags/tags.service';
+import { VersionsService } from '../versions/versions.service';
 import { CreateNoteDto, ListNotesQuery, UpdateNoteDto } from './dto/note.dto';
 import { noteInclude, NoteSummary, NoteView, toSummary, toView } from './note-view';
 
@@ -18,6 +19,7 @@ export class NotesService {
     private readonly notebooks: NotebooksService,
     private readonly tags: TagsService,
     private readonly links: LinksService,
+    private readonly versions: VersionsService,
   ) {}
 
   async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
@@ -111,6 +113,9 @@ export class NotesService {
           .sort();
         const after = (await this.tags.setNoteTags(tx, userId, id, dto.tags)).sort();
         tagsChanged = before.join('\n') !== after.join('\n');
+      }
+      if (textChanged) {
+        await this.versions.snapshotIfDue(tx, note);
       }
       if (content !== note.content) {
         await this.links.sync(tx, id, content);
