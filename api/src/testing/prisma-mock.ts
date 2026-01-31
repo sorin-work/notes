@@ -31,8 +31,9 @@ export function createPrismaMock(): PrismaMock {
   );
 
   const mock = new Proxy({} as PrismaMock, {
-    get(_target, key: string) {
-      if (key === 'then') return undefined;
+    get(_target, key: string | symbol) {
+      // Jest looks up Symbol.iterator and friends when comparing arguments.
+      if (typeof key === 'symbol' || key === 'then') return undefined;
       if (key === '$transaction') return $transaction;
       if (key === '$queryRaw') return $queryRaw;
       if (!models.has(key)) models.set(key, modelMock());
