@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
+import { LinksService } from '../links/links.service';
+import { noteInclude, NoteView, toView } from '../notes/note-view';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** While someone keeps typing, keep at most one version per this interval. */
@@ -18,7 +20,10 @@ export interface VersionView extends VersionSummary {
 
 @Injectable()
 export class VersionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly links: LinksService,
+  ) {}
 
   /**
    * Called before a note's title or content changes. Saves the state the note
@@ -52,6 +57,30 @@ export class VersionsService {
     const version = await this.findVersion(noteId, versionId);
     const { noteId: _noteId, ...rest } = version;
     return { ...rest, characters: version.content.length };
+  }
+
+  /**
+   * Puts an old version back. The current state is saved as a version first,
+   * so a restore can itself be undone.
+   */
+  async restore(userId: string, noteId: string, versionId: string): Promise<NoteView> {
+    const note = await this.findNote(userId, noteId);
+    if (note.deletedAt) {
+      throw new ConflictException('Restore the note from the trash before restoring a version');
+    }
+    const version = await this.findVersion(noteId, versionId);
+
+    const restored = await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      await this.save(tx, note, now);
+      await this.links.sync(tx, noteId, version.content);
+      return tx.note.update({
+        where: { id: noteId },
+        data: { title: version.title, content: version.content, updatedAt: now },
+        include: noteInclude,
+      });
+    });
+    return toView(restored);
   }
 
   private async save(tx: Prisma.TransactionClient, note: Note, now: Date): Promise<void> {
