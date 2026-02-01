@@ -79,6 +79,17 @@ export interface OutgoingLink {
   noteId: string | null;
 }
 
+export interface VersionSummary {
+  id: string;
+  title: string;
+  characters: number;
+  createdAt: string;
+}
+
+export interface Version extends VersionSummary {
+  content: string;
+}
+
 export interface TrashedNote {
   id: string;
   title: string;

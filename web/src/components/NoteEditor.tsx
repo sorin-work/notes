@@ -18,6 +18,7 @@ import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
 import { ErrorMessage, Spinner } from './States';
 import { TagInput } from './TagInput';
+import { VersionHistoryDialog } from './VersionHistoryDialog';
 
 const MODES = ['edit', 'split', 'preview'] as const;
 type Mode = (typeof MODES)[number];
@@ -54,7 +55,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
-  const [dialog, setDialog] = useState<'delete' | null>(null);
+  const [dialog, setDialog] = useState<'history' | 'delete' | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const readOnly = note.deletedAt !== null;
@@ -71,6 +72,7 @@ function LoadedEditor({ note }: { note: Note }) {
       queryClient.setQueryData(['note', note.id], saved);
       void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
+      void queryClient.invalidateQueries({ queryKey: ['versions', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
     [note.id, queryClient],
@@ -258,6 +260,9 @@ function LoadedEditor({ note }: { note: Note }) {
         >
           {note.favorite ? '★' : '☆'}
         </button>
+        <button type="button" className="button" onClick={() => setDialog('history')}>
+          History
+        </button>
         {!readOnly && (
           <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
             Delete
@@ -326,6 +331,19 @@ function LoadedEditor({ note }: { note: Note }) {
 
       <BacklinksPanel noteId={note.id} />
 
+      {dialog === 'history' && (
+        <VersionHistoryDialog
+          noteId={note.id}
+          onClose={() => setDialog(null)}
+          onRestored={(restored) => {
+            setTitle(restored.title);
+            setContent(restored.content);
+            queryClient.setQueryData(['note', note.id], restored);
+            void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
+            refreshLists();
+          }}
+        />
+      )}
       {dialog === 'delete' && (
         <ConfirmDialog
           title="Move to trash?"

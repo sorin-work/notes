@@ -23,6 +23,16 @@ export function formatRelative(value: string | Date, now = new Date()): string {
   });
 }
 
+export function formatDateTime(value: string | Date): string {
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function daysUntil(value: string | Date, now = new Date()): number {
   return Math.max(0, Math.ceil((new Date(value).getTime() - now.getTime()) / DAY));
 }

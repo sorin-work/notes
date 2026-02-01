@@ -989,6 +989,10 @@ ul.error-box {
   flex-direction: column;
 }
 
+.modal-wide {
+  width: min(64rem, 100%);
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -1007,6 +1011,68 @@ ul.error-box {
 
 .confirm-message p {
   margin-top: 0;
+}
+
+.history {
+  display: grid;
+  grid-template-columns: 15rem 1fr;
+  gap: 1rem;
+  min-height: 24rem;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-right: 1px solid var(--border);
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.history-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.history-item:hover {
+  background: var(--surface-2);
+}
+
+.history-item.active {
+  background: var(--accent-soft);
+}
+
+.history-date {
+  font-weight: 550;
+}
+
+.history-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.history-preview {
+  min-width: 0;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.history-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
 }
 
 /* Auth and shared pages */
@@ -1105,6 +1171,16 @@ ul.error-box {
 
   .editor {
     padding: 0.5rem 1rem 2rem;
+  }
+
+  .history {
+    grid-template-columns: 1fr;
+  }
+
+  .history-list {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 30vh;
   }
 
   .page {
