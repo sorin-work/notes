@@ -31,6 +31,9 @@ export class VersionsService {
    * since the last one.
    */
   async snapshotIfDue(tx: Prisma.TransactionClient, note: Note, now = new Date()): Promise<boolean> {
+    if (note.content.trim() === '') {
+      return false;
+    }
     const latest = await tx.noteVersion.findFirst({ where: { noteId: note.id }, orderBy: { createdAt: 'desc' } });
     if (latest) {
       const unchanged = latest.title === note.title && latest.content === note.content;

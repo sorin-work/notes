@@ -42,6 +42,11 @@ describe('VersionsService', () => {
       });
     });
 
+    it('skips notes that are still empty', async () => {
+      await expect(service.snapshotIfDue(tx(), { ...note, content: '  ' }, now)).resolves.toBe(false);
+      expect(prisma.noteVersion.create).not.toHaveBeenCalled();
+    });
+
     it('waits for the interval between versions', async () => {
       const recent = new Date(now.getTime() - VERSION_INTERVAL_MS + 1000);
       prisma.noteVersion.findFirst.mockResolvedValue({ title: 'Plan', content: 'Older text', createdAt: recent });
