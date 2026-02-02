@@ -102,6 +102,12 @@ describe('VersionsService', () => {
       expect(restored).toMatchObject({ title: 'Old plan', content: 'Old [[Link]]' });
     });
 
+    it('does not save a duplicate when the note already matches the version', async () => {
+      prisma.note.findFirst.mockResolvedValue({ ...note, title: version.title, content: version.content });
+      await service.restore(USER, 'n1', 'v1');
+      expect(prisma.noteVersion.create).not.toHaveBeenCalled();
+    });
+
     it('refuses for a note in the trash', async () => {
       prisma.note.findFirst.mockResolvedValue({ ...note, deletedAt: now });
       await expect(service.restore(USER, 'n1', 'v1')).rejects.toBeInstanceOf(ConflictException);

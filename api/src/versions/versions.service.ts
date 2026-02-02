@@ -75,7 +75,9 @@ export class VersionsService {
 
     const restored = await this.prisma.$transaction(async (tx) => {
       const now = new Date();
-      await this.save(tx, note, now);
+      if (note.title !== version.title || note.content !== version.content) {
+        await this.save(tx, note, now);
+      }
       await this.links.sync(tx, noteId, version.content);
       return tx.note.update({
         where: { id: noteId },
