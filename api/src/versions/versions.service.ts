@@ -6,6 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 /** While someone keeps typing, keep at most one version per this interval. */
 export const VERSION_INTERVAL_MS = 10 * 60 * 1000;
+/** Older versions beyond this many are dropped. */
+export const MAX_VERSIONS_PER_NOTE = 50;
 
 export interface VersionSummary {
   id: string;
@@ -92,6 +94,15 @@ export class VersionsService {
     await tx.noteVersion.create({
       data: { noteId: note.id, title: note.title, content: note.content, createdAt: now },
     });
+    const stale = await tx.noteVersion.findMany({
+      where: { noteId: note.id },
+      orderBy: { createdAt: 'desc' },
+      skip: MAX_VERSIONS_PER_NOTE,
+      select: { id: true },
+    });
+    if (stale.length > 0) {
+      await tx.noteVersion.deleteMany({ where: { id: { in: stale.map((version) => version.id) } } });
+    }
   }
 
   private async findNote(userId: string, noteId: string): Promise<Note> {

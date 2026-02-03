@@ -1,7 +1,7 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { LinksService } from '../links/links.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
-import { VERSION_INTERVAL_MS, VersionsService } from './versions.service';
+import { MAX_VERSIONS_PER_NOTE, VERSION_INTERVAL_MS, VersionsService } from './versions.service';
 
 const USER = 'user-1';
 const now = new Date('2026-02-01T12:00:00Z');
@@ -63,6 +63,16 @@ describe('VersionsService', () => {
       const old = new Date(now.getTime() - 2 * VERSION_INTERVAL_MS);
       prisma.noteVersion.findFirst.mockResolvedValue({ title: 'Plan', content: 'Current text', createdAt: old });
       await expect(service.snapshotIfDue(tx(), note, now)).resolves.toBe(false);
+    });
+
+    it('drops versions beyond the limit', async () => {
+      prisma.noteVersion.findFirst.mockResolvedValue(null);
+      prisma.noteVersion.findMany.mockResolvedValue([{ id: 'old-1' }, { id: 'old-2' }]);
+      await service.snapshotIfDue(tx(), note, now);
+      expect(prisma.noteVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: MAX_VERSIONS_PER_NOTE, orderBy: { createdAt: 'desc' } }),
+      );
+      expect(prisma.noteVersion.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['old-1', 'old-2'] } } });
     });
   });
 
