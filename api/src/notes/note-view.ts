@@ -4,6 +4,7 @@ import { excerpt } from '../common/text';
 export const noteInclude = {
   tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } },
   notebook: { select: { id: true, name: true, parentId: true } },
+  share: { select: { id: true } },
 } satisfies Prisma.NoteInclude;
 
 export type NoteWithRelations = Prisma.NoteGetPayload<{ include: typeof noteInclude }>;
@@ -23,6 +24,7 @@ export interface NoteSummary {
 export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   content: string;
   notebook: { id: string; name: string; parentId: string | null } | null;
+  shared: boolean;
   deletedAt: Date | null;
 }
 
@@ -50,6 +52,7 @@ export function toView(note: NoteWithRelations): NoteView {
     tags: note.tags.map((noteTag) => noteTag.tag.name),
     pinned: note.pinned,
     favorite: note.favorite,
+    shared: note.share !== null,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
     deletedAt: note.deletedAt,

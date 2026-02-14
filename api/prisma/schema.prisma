@@ -65,6 +65,7 @@ model Note {
   tags          NoteTag[]
   outgoingLinks NoteLink[]
   versions      NoteVersion[]
+  share         ShareLink?
 
   @@index([searchVector], type: Gin)
   @@index([notebookId])
@@ -124,4 +125,16 @@ model NoteVersion {
 
   @@index([noteId, createdAt])
   @@map("note_versions")
+}
+
+model ShareLink {
+  id        String   @id @default(uuid()) @db.Uuid
+  noteId    String   @unique @map("note_id") @db.Uuid
+  token     String   @unique
+  viewCount Int      @default(0) @map("view_count")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@map("share_links")
 }
