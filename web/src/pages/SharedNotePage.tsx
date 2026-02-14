@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { useParams } from 'react-router';
 import { ApiError } from '../api/client';
 import { getSharedNote } from '../api/shares';
@@ -10,6 +11,10 @@ import { formatDateTime } from '../lib/dates';
 export function SharedNotePage() {
   const { token = '' } = useParams();
   const note = useQuery({ queryKey: ['shared', token], queryFn: () => getSharedNote(token) });
+
+  useEffect(() => {
+    if (note.data) document.title = `${note.data.title} · Notes`;
+  }, [note.data]);
 
   if (note.isLoading) return <FullPageSpinner />;
 
