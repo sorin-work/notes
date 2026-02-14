@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { createShare, getShare, revokeShare, shareUrl } from '../api/shares';
 import { formatRelative } from '../lib/dates';
 import { Modal } from './Modal';
@@ -6,6 +7,7 @@ import { ErrorMessage, Spinner } from './States';
 
 export function ShareDialog({ noteId, onClose }: { noteId: string; onClose(): void }) {
   const queryClient = useQueryClient();
+  const [copied, setCopied] = useState(false);
   const share = useQuery({ queryKey: ['share', noteId], queryFn: () => getShare(noteId) });
 
   const refresh = () => {
@@ -17,6 +19,16 @@ export function ShareDialog({ noteId, onClose }: { noteId: string; onClose(): vo
 
   const link = share.data?.share;
   const url = link ? shareUrl(link.token) : '';
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   return (
     <Modal title="Share note" onClose={onClose}>
@@ -41,7 +53,12 @@ export function ShareDialog({ noteId, onClose }: { noteId: string; onClose(): vo
         <>
           <label className="field">
             <span>Read-only link</span>
-            <input readOnly value={url} onFocus={(event) => event.target.select()} aria-label="Share link" />
+            <div className="input-row">
+              <input readOnly value={url} onFocus={(event) => event.target.select()} aria-label="Share link" />
+              <button type="button" className="button" onClick={copy}>
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
           </label>
           <p className="muted">
             Shared {formatRelative(link.createdAt)} · viewed {link.viewCount} {link.viewCount === 1 ? 'time' : 'times'}.

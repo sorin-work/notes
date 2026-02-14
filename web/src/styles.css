@@ -861,6 +861,18 @@ mark {
   font-weight: 550;
 }
 
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.input-row input:not([type='file']) {
+  flex: 1;
+  min-width: 10rem;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;
