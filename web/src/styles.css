@@ -166,6 +166,11 @@ mark {
   color: var(--danger);
 }
 
+.button-shared {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .button.wide {
   width: 100%;
 }

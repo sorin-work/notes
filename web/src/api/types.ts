@@ -53,6 +53,7 @@ export interface Note {
   tags: string[];
   pinned: boolean;
   favorite: boolean;
+  shared: boolean;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -108,4 +109,10 @@ export interface SearchHit {
   pinned: boolean;
   favorite: boolean;
   updatedAt: string;
+}
+
+export interface Share {
+  token: string;
+  viewCount: number;
+  createdAt: string;
 }

@@ -12,6 +12,7 @@ export function note(overrides: Partial<Note> = {}): Note {
     tags: ['atlas'],
     pinned: false,
     favorite: false,
+    shared: false,
     createdAt: '2026-01-01T10:00:00Z',
     updatedAt: '2026-01-02T10:00:00Z',
     deletedAt: null,
