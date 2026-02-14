@@ -6,6 +6,7 @@ import { NotesPage } from './pages/NotesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { SearchPage } from './pages/SearchPage';
+import { SharedNotePage } from './pages/SharedNotePage';
 import { TrashPage } from './pages/TrashPage';
 
 export function App() {
@@ -27,6 +28,7 @@ export function App() {
           </GuestOnly>
         }
       />
+      <Route path="/s/:token" element={<SharedNotePage />} />
       <Route
         element={
           <RequireAuth>

@@ -116,3 +116,10 @@ export interface Share {
   viewCount: number;
   createdAt: string;
 }
+
+export interface SharedNote {
+  title: string;
+  content: string;
+  tags: string[];
+  updatedAt: string;
+}

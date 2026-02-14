@@ -821,6 +821,10 @@ mark {
   border-bottom-style: dashed;
 }
 
+.wikilink-static {
+  border-bottom: 1px dotted var(--muted);
+}
+
 /* Generic pages */
 
 .page {
@@ -1125,6 +1129,33 @@ ul.error-box {
 .auth-card p {
   margin: 0;
   text-align: center;
+}
+
+.shared-page {
+  min-height: 100%;
+  background: var(--surface);
+  padding: 2rem 1.25rem;
+}
+
+.shared-note,
+.shared-missing {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.shared-note header {
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.shared-note h1 {
+  font-size: 2rem;
+}
+
+.shared-footer {
+  max-width: 46rem;
+  margin: 3rem auto 0;
+  font-size: 0.82rem;
 }
 
 /* Small screens */
