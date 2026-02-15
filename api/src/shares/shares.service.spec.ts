@@ -55,13 +55,17 @@ describe('SharesService', () => {
       },
     };
 
-    it('returns the note', async () => {
+    it('returns the note and counts the view', async () => {
       prisma.shareLink.findUnique.mockResolvedValue(shared);
       await expect(service.view('tok')).resolves.toEqual({
         title: 'Recipe',
         content: 'Bread',
         tags: ['baking'],
         updatedAt: createdAt,
+      });
+      expect(prisma.shareLink.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { viewCount: { increment: 1 } },
       });
     });
 

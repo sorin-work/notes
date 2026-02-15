@@ -58,6 +58,7 @@ export class SharesService {
     if (!share) {
       throw new NotFoundException('This link does not exist or is no longer shared');
     }
+    await this.prisma.shareLink.update({ where: { id: share.id }, data: { viewCount: { increment: 1 } } });
     return {
       title: share.note.title,
       content: share.note.content,
