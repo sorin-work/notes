@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -10,10 +11,12 @@ import {
   Patch,
   Post,
   Query,
+  StreamableFile,
 } from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
+import { ExportService } from '../transfer/export.service';
 import { CreateNoteDto, ListNotesQuery, ResolveQuery, TitleQuery, UpdateNoteDto } from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService } from './notes.service';
@@ -23,6 +26,7 @@ export class NotesController {
   constructor(
     private readonly notes: NotesService,
     private readonly links: LinksService,
+    private readonly exporter: ExportService,
   ) {}
 
   @Get()
@@ -73,5 +77,14 @@ export class NotesController {
   @Get(':id/links')
   outgoing(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<OutgoingLink[]> {
     return this.links.outgoing(user.id, id);
+  }
+
+  @Get(':id/export')
+  @Header('Content-Type', 'text/markdown; charset=utf-8')
+  async export(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<StreamableFile> {
+    const { filename, markdown } = await this.exporter.exportNote(user.id, id);
+    return new StreamableFile(Buffer.from(markdown, 'utf8'), {
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }

@@ -11,6 +11,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SearchModule } from './search/search.module';
 import { SharesModule } from './shares/shares.module';
 import { TagsModule } from './tags/tags.module';
+import { TransferModule } from './transfer/transfer.module';
 import { TrashModule } from './trash/trash.module';
 import { VersionsModule } from './versions/versions.module';
 
@@ -26,6 +27,7 @@ import { VersionsModule } from './versions/versions.module';
     TrashModule,
     SearchModule,
     SharesModule,
+    TransferModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: PrismaExceptionFilter }],

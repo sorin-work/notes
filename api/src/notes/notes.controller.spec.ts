@@ -1,4 +1,6 @@
+import { StreamableFile } from '@nestjs/common';
 import { LinksService } from '../links/links.service';
+import { ExportService } from '../transfer/export.service';
 import { ListNotesQuery } from './dto/note.dto';
 import { NotesController } from './notes.controller';
 import { NotesService } from './notes.service';
@@ -15,7 +17,12 @@ describe('NotesController', () => {
     titles: jest.fn(),
   };
   const links = { backlinks: jest.fn(), outgoing: jest.fn(), resolve: jest.fn() };
-  const controller = new NotesController(notes as unknown as NotesService, links as unknown as LinksService);
+  const exporter = { exportNote: jest.fn() };
+  const controller = new NotesController(
+    notes as unknown as NotesService,
+    links as unknown as LinksService,
+    exporter as unknown as ExportService,
+  );
 
   beforeEach(() => jest.resetAllMocks());
 
@@ -45,5 +52,12 @@ describe('NotesController', () => {
   it('passes the title query and limit through', async () => {
     await controller.titles(user, { q: 'pro', limit: 5 });
     expect(notes.titles).toHaveBeenCalledWith('user-1', 'pro', 5);
+  });
+
+  it('exports a note as a Markdown download', async () => {
+    exporter.exportNote.mockResolvedValue({ filename: 'Café plan.md', markdown: '# Hi\n' });
+    const file = await controller.export(user, 'n1');
+    expect(file).toBeInstanceOf(StreamableFile);
+    expect(file.getHeaders().disposition).toBe('attachment; filename="Café plan.md"');
   });
 });
