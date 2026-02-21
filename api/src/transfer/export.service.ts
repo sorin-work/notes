@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import JSZip from 'jszip';
 import { PrismaService } from '../prisma/prisma.service';
-import { safeFileName } from './file-names';
+import { safeFileName, UniquePaths } from './file-names';
 import { FrontMatter, serializeFrontMatter } from './front-matter';
 
 interface ExportableNote {
@@ -41,5 +42,29 @@ export class ExportService {
       throw new NotFoundException('Note not found');
     }
     return { filename: `${safeFileName(note.title)}.md`, markdown: toMarkdownFile(note) };
+  }
+
+  /**
+   * Every note outside the trash as a zip of Markdown files. Notebooks become
+   * folders; notes without a notebook sit at the top.
+   */
+  async exportAll(userId: string): Promise<Buffer> {
+    const notes = await this.prisma.note.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      include: exportInclude,
+    });
+
+    const zip = new JSZip();
+    const paths = new UniquePaths();
+    for (const note of notes) {
+      const folders: string[] = [];
+      if (note.notebook?.parent) folders.push(safeFileName(note.notebook.parent.name, 'Notebook'));
+      if (note.notebook) folders.push(safeFileName(note.notebook.name, 'Notebook'));
+      const folder = folders.map((name) => `${name}/`).join('');
+      const path = paths.claim(folder, safeFileName(note.title), '.md');
+      zip.file(path, toMarkdownFile(note), { date: note.updatedAt });
+    }
+    return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   }
 }
