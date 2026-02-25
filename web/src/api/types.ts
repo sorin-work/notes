@@ -123,3 +123,9 @@ export interface SharedNote {
   tags: string[];
   updatedAt: string;
 }
+
+export interface ImportResult {
+  imported: number;
+  notebooksCreated: number;
+  skipped: { file: string; reason: string }[];
+}

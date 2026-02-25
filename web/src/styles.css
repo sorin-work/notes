@@ -116,6 +116,10 @@ mark {
   color: var(--muted);
 }
 
+.success {
+  color: var(--success);
+}
+
 /* Buttons */
 
 .button {
@@ -848,6 +852,18 @@ mark {
   margin: 0.25rem 0 0;
 }
 
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.card > h3:first-of-type {
+  margin-top: 0.5rem;
+}
+
 .form {
   display: flex;
   flex-direction: column;
@@ -882,6 +898,10 @@ mark {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+.import-result {
+  margin-top: 0.75rem;
 }
 
 .search-big {

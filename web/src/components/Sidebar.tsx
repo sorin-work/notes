@@ -195,6 +195,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <NavLink to="/trash" className="nav-item" onClick={onNavigate}>
           Trash
         </NavLink>
+        <NavLink to="/settings" className="nav-item" onClick={onNavigate}>
+          Settings
+        </NavLink>
         <div className="account">
           <span className="account-name" title={user?.email}>
             {user?.name}

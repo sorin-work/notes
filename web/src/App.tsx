@@ -6,6 +6,7 @@ import { NotesPage } from './pages/NotesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { SearchPage } from './pages/SearchPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { SharedNotePage } from './pages/SharedNotePage';
 import { TrashPage } from './pages/TrashPage';
 
@@ -39,8 +40,9 @@ export function App() {
         <Route index element={<Navigate to="/notes" replace />} />
         <Route path="/notes" element={<NotesPage />} />
         <Route path="/notes/:noteId" element={<NotesPage />} />
-        <Route path="/trash" element={<TrashPage />} />
         <Route path="/search" element={<SearchPage />} />
+        <Route path="/trash" element={<TrashPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
