@@ -78,6 +78,18 @@ function ImportExportSection() {
             Imported {upload.data.imported} {upload.data.imported === 1 ? 'note' : 'notes'}
             {upload.data.notebooksCreated > 0 && ` and created ${upload.data.notebooksCreated} notebooks`}.
           </p>
+          {upload.data.skipped.length > 0 && (
+            <details>
+              <summary>{upload.data.skipped.length} files skipped</summary>
+              <ul>
+                {upload.data.skipped.map((skip) => (
+                  <li key={skip.file}>
+                    {skip.file}: {skip.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
     </section>
