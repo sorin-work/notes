@@ -3,7 +3,16 @@ import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, us
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
-import { createNote, getNote, noteTitles, outgoingLinks, resolveTitle, trashNote, updateNote } from '../api/notes';
+import {
+  createNote,
+  exportNote,
+  getNote,
+  noteTitles,
+  outgoingLinks,
+  resolveTitle,
+  trashNote,
+  updateNote,
+} from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
@@ -271,6 +280,14 @@ function LoadedEditor({ note }: { note: Note }) {
           onClick={() => setDialog('share')}
         >
           {note.shared ? 'Shared' : 'Share'}
+        </button>
+        <button
+          type="button"
+          className="button"
+          title="Download as Markdown"
+          onClick={() => void autosave.flush().then(() => exportNote(note.id, title))}
+        >
+          Export
         </button>
         {!readOnly && (
           <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>

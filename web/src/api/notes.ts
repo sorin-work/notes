@@ -1,4 +1,4 @@
-import { api, json, withQuery } from './client';
+import { api, download, json, withQuery } from './client';
 import type { Backlink, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
 
 export type NoteSort = 'updated' | 'created' | 'title';
@@ -32,3 +32,5 @@ export const noteTitles = (q: string, limit = 8) =>
 
 export const resolveTitle = (title: string) =>
   api<{ id: string; title: string }>(withQuery('/notes/resolve', { title }));
+
+export const exportNote = (id: string, title: string) => download(`/notes/${id}/export`, `${title}.md`);
