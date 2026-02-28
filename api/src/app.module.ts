@@ -9,6 +9,7 @@ import { NotebooksModule } from './notebooks/notebooks.module';
 import { NotesModule } from './notes/notes.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SearchModule } from './search/search.module';
+import { SeedModule } from './seed/seed.module';
 import { SharesModule } from './shares/shares.module';
 import { TagsModule } from './tags/tags.module';
 import { TransferModule } from './transfer/transfer.module';
@@ -28,6 +29,7 @@ import { VersionsModule } from './versions/versions.module';
     SearchModule,
     SharesModule,
     TransferModule,
+    SeedModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: PrismaExceptionFilter }],

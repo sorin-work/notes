@@ -11,6 +11,7 @@ describe('loadConfig', () => {
     expect(config).toMatchObject({
       port: 4401,
       jwtExpiresIn: '7d',
+      seedDemo: false,
       trashRetentionDays: 30,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
@@ -20,10 +21,12 @@ describe('loadConfig', () => {
     const config = loadConfig({
       ...base,
       PORT: '8080',
+      SEED_DEMO: 'true',
       TRASH_RETENTION_DAYS: '7',
       LOG_LEVEL: 'debug',
     });
     expect(config.port).toBe(8080);
+    expect(config.seedDemo).toBe(true);
     expect(config.trashRetentionDays).toBe(7);
     expect(config.logLevels).toContain('debug');
   });

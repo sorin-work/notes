@@ -8,6 +8,7 @@ export interface AppConfig {
   jwtSecret: string;
   jwtExpiresIn: string;
   logLevels: LogLevel[];
+  seedDemo: boolean;
   trashRetentionDays: number;
 }
 
@@ -15,6 +16,11 @@ const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
 const LEVEL_ALIASES: Record<string, LogLevel> = { info: 'log', warning: 'warn' };
 
 export class ConfigError extends Error {}
+
+function toBool(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
 
 function toInt(name: string, value: string | undefined, fallback: number, min = 0): number {
   if (value === undefined || value === '') return fallback;
@@ -52,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
     logLevels: logLevelsFrom(env.LOG_LEVEL),
+    seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
   };
 }
