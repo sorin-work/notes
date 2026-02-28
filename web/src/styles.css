@@ -120,6 +120,11 @@ mark {
   color: var(--success);
 }
 
+.field-error {
+  color: var(--danger);
+  margin: 0;
+}
+
 /* Buttons */
 
 .button {
@@ -870,6 +875,14 @@ mark {
   gap: 0.8rem;
 }
 
+.form.narrow {
+  max-width: 24rem;
+}
+
+.form h3 {
+  margin: 0.5rem 0 0;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -898,6 +911,10 @@ mark {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+.form-actions.start {
+  justify-content: flex-start;
 }
 
 .import-result {

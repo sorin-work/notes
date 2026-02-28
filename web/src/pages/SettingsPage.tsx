@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
+import { changePassword } from '../api/auth';
 import { exportAll, importFiles } from '../api/transfer';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage } from '../components/States';
@@ -14,9 +15,76 @@ export function SettingsPage() {
         <p>
           {user?.name} · <span className="muted">{user?.email}</span>
         </p>
+        <PasswordForm />
       </section>
       <ImportExportSection />
     </div>
+  );
+}
+
+function PasswordForm() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [repeat, setRepeat] = useState('');
+  const [mismatch, setMismatch] = useState(false);
+  const change = useMutation({
+    mutationFn: () => changePassword(current, next),
+    onSuccess: () => {
+      setCurrent('');
+      setNext('');
+      setRepeat('');
+    },
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setMismatch(next !== repeat);
+    if (next === repeat) change.mutate();
+  };
+
+  return (
+    <form className="form narrow" onSubmit={submit}>
+      <h3>Change password</h3>
+      <label className="field">
+        <span>Current password</span>
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={current}
+          onChange={(event) => setCurrent(event.target.value)}
+          required
+        />
+      </label>
+      <label className="field">
+        <span>New password</span>
+        <input
+          type="password"
+          autoComplete="new-password"
+          minLength={8}
+          value={next}
+          onChange={(event) => setNext(event.target.value)}
+          required
+        />
+      </label>
+      <label className="field">
+        <span>Repeat new password</span>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={repeat}
+          onChange={(event) => setRepeat(event.target.value)}
+          required
+        />
+      </label>
+      {mismatch && <p className="field-error">The new passwords do not match.</p>}
+      {change.error && <ErrorMessage error={change.error} />}
+      {change.isSuccess && <p className="success">Password changed.</p>}
+      <div className="form-actions start">
+        <button type="submit" className="button button-primary" disabled={change.isPending}>
+          Change password
+        </button>
+      </div>
+    </form>
   );
 }
 
