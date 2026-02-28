@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { AuthService } from './auth.service';
@@ -83,6 +83,24 @@ describe('AuthService', () => {
     it('404s for a user that was deleted after the token was issued', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       await expect(service.me(user.id)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('changePassword', () => {
+    it('stores a new hash when the current password matches', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.update.mockResolvedValue(user);
+      await service.changePassword(user.id, { currentPassword: 'correct-horse', newPassword: 'battery-staple' });
+      const { passwordHash } = prisma.user.update.mock.calls[0][0].data;
+      expect(await verifyPassword('battery-staple', passwordHash)).toBe(true);
+    });
+
+    it('refuses when the current password is wrong', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      await expect(
+        service.changePassword(user.id, { currentPassword: 'wrong-one', newPassword: 'battery-staple' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 });
