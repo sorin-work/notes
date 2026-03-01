@@ -116,3 +116,32 @@ npm run lint
 npm run typecheck
 npm test
 ```
+
+## Project layout
+
+```
+api/
+  prisma/               schema and migrations
+  src/
+    auth/               sign-up, login, JWT guard, password changes
+    notebooks/          notebooks and their one level of nesting
+    notes/              notes, filters and sorting, note export
+    tags/               tag names, renaming and merging
+    links/              [[wiki link]] parsing, link storage and backlinks
+    versions/           version history and restore
+    trash/              trash, restore and the hourly purge
+    search/             Postgres full-text search
+    shares/             read-only share links
+    transfer/           zip export, Markdown import, front matter
+    seed/               demo account
+    common/, config/    shared helpers and environment configuration
+  test/                 end-to-end tests
+web/
+  src/
+    api/                typed API client
+    auth/               auth context and route guards
+    components/         editor, preview, sidebar, dialogs
+    hooks/              autosave, theme and small state helpers
+    lib/                wiki links, dates, text helpers
+    pages/              one component per route
+```
