@@ -17,5 +17,27 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: postgresql://notes:notes@db:5432/notes
+      JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me-0123456789}
+      PORT: 4401
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Creates demo@example.com / demo-password with sample notes.
+      SEED_DEMO: ${SEED_DEMO:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '${API_PORT:-4401}:4401'
+
+  web:
+    build: ./web
+    depends_on:
+      - api
+    ports:
+      - '${WEB_PORT:-5181}:80'
+
 volumes:
   db-data:
