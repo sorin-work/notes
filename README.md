@@ -73,6 +73,34 @@ The ports can be changed with `WEB_PORT`, `API_PORT` and `DB_PORT`. The API
 container runs `prisma migrate deploy` before it starts. Data lives in the
 `db-data` volume; `docker compose down -v` removes it.
 
+## Running locally
+
+You need Node 22+ and Postgres. The easiest is to run only the database in
+Docker:
+
+```bash
+docker compose up -d db
+```
+
+API (listens on :4401):
+
+```bash
+cd api
+cp .env.example .env
+npm install
+npx prisma migrate deploy
+set -a; . ./.env; set +a
+npm run start:dev
+```
+
+Web (Vite on :5181, proxies `/api` to localhost:4401):
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
 ## Tests and checks
 
 ```bash
