@@ -43,7 +43,7 @@ Markdown import/export.
 | -------- | ---------------------------------------------------------------------------------- |
 | API      | TypeScript, NestJS 11, Prisma 6, PostgreSQL 17, JWT auth, class-validator          |
 | Web      | React 19, TypeScript, Vite, React Router, TanStack Query, react-markdown           |
-| Tests    | Jest for the API, Vitest + Testing Library for the web app             |
+| Tests    | Jest + Supertest for the API, Vitest + Testing Library for the web app             |
 | Tooling  | ESLint, Prettier, GitHub Actions                                                   |
 | Delivery | Docker Compose: Postgres, the API, and nginx serving the web app and proxying /api |
 
@@ -108,7 +108,10 @@ npm run dev
 cd api
 npm run lint
 npm run typecheck
-npm test
+npm test                    # unit tests, no database needed
+DATABASE_URL="postgresql://notes:notes@localhost:5441/notes?schema=e2e" \
+  JWT_SECRET=e2e-secret-that-is-long-enough-0123456789 \
+  npm run test:e2e          # end-to-end tests against Postgres
 
 # Web
 cd web
@@ -116,6 +119,10 @@ npm run lint
 npm run typecheck
 npm test
 ```
+
+The end-to-end tests apply the migrations to the database they are given and
+sign up a fresh user per test, so pointing them at a separate schema (as
+above) keeps them away from your own notes.
 
 ## Project layout
 
