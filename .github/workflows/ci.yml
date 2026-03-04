@@ -11,6 +11,23 @@ jobs:
     defaults:
       run:
         working-directory: api
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: notes
+          POSTGRES_PASSWORD: notes
+          POSTGRES_DB: notes_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U notes"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://notes:notes@localhost:5432/notes_test
+      JWT_SECRET: ci-secret-that-is-long-enough-0123456789
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +42,7 @@ jobs:
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:e2e
       - run: npm run build
 
   web:
