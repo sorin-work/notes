@@ -16,5 +16,6 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY package.json docker-entrypoint.sh ./
+USER node
 EXPOSE 4401
 ENTRYPOINT ["./docker-entrypoint.sh"]
