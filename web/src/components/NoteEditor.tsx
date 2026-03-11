@@ -217,6 +217,25 @@ function LoadedEditor({ note }: { note: Note }) {
     }
   };
 
+  const cycleMode = useCallback(() => {
+    setMode(MODES[(MODES.indexOf(mode) + 1) % MODES.length] ?? 'split');
+  }, [mode, setMode]);
+
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        void autosave.flush();
+      } else if (mod && event.key.toLowerCase() === 'e') {
+        event.preventDefault();
+        cycleMode();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [autosave, cycleMode]);
+
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
