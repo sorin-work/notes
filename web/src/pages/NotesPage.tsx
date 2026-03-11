@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
 import { createNote, listNotes, NoteFilters, NoteSort } from '../api/notes';
@@ -66,6 +67,17 @@ export function NotesPage() {
     },
   });
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.altKey && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        newNote.mutate();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [newNote]);
+
   return (
     <div className={noteId ? 'notes-page has-note' : 'notes-page'}>
       <section className="list-pane" aria-label="Notes">
@@ -105,7 +117,15 @@ export function NotesPage() {
       </section>
 
       <section className="editor-pane">
-        {noteId ? <NoteEditor key={noteId} noteId={noteId} /> : <EmptyState title="Pick a note, or start a new one" />}
+        {noteId ? (
+          <NoteEditor key={noteId} noteId={noteId} />
+        ) : (
+          <EmptyState title="Pick a note, or start a new one">
+            <p className="muted">
+              Alt+N creates a note, / jumps to search, Ctrl+S saves and Ctrl+E switches between edit and preview.
+            </p>
+          </EmptyState>
+        )}
       </section>
     </div>
   );

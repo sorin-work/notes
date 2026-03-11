@@ -93,7 +93,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           className="button button-primary new-note"
           onClick={() => newNote.mutate()}
           disabled={newNote.isPending}
-          title="New note"
+          title="New note (Alt+N)"
         >
           + New note
         </button>
@@ -102,7 +102,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             type="search"
             id="global-search"
             className="search-input"
-            placeholder="Search notes"
+            placeholder="Search notes  /"
             aria-label="Search notes"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
