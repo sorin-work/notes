@@ -11,6 +11,7 @@ describe('loadConfig', () => {
     expect(config).toMatchObject({
       port: 4401,
       jwtExpiresIn: '7d',
+      corsOrigins: [],
       seedDemo: false,
       trashRetentionDays: 30,
     });
@@ -21,11 +22,13 @@ describe('loadConfig', () => {
     const config = loadConfig({
       ...base,
       PORT: '8080',
+      CORS_ORIGINS: 'http://localhost:5181, https://notes.example.com',
       SEED_DEMO: 'true',
       TRASH_RETENTION_DAYS: '7',
       LOG_LEVEL: 'debug',
     });
     expect(config.port).toBe(8080);
+    expect(config.corsOrigins).toEqual(['http://localhost:5181', 'https://notes.example.com']);
     expect(config.seedDemo).toBe(true);
     expect(config.trashRetentionDays).toBe(7);
     expect(config.logLevels).toContain('debug');

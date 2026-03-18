@@ -8,7 +8,7 @@ import { setupApp } from './setup-app';
 async function bootstrap(): Promise<void> {
   const config = loadConfig();
   const app = await NestFactory.create(AppModule, { logger: config.logLevels });
-  setupApp(app);
+  setupApp(app, config.corsOrigins);
   await app.listen(config.port);
   Logger.log(`API listening on :${config.port}`, 'Bootstrap');
 }

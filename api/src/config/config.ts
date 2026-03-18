@@ -7,6 +7,7 @@ export interface AppConfig {
   databaseUrl: string;
   jwtSecret: string;
   jwtExpiresIn: string;
+  corsOrigins: string[];
   logLevels: LogLevel[];
   seedDemo: boolean;
   trashRetentionDays: number;
@@ -57,6 +58,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl,
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN || '7d',
+    corsOrigins: (env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     logLevels: logLevelsFrom(env.LOG_LEVEL),
     seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
