@@ -35,7 +35,14 @@ Markdown import/export.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
-- A layout that works on phones.
+- Keyboard shortcuts and a layout that works on phones.
+
+| Shortcut           | Action                            |
+| ------------------ | --------------------------------- |
+| `Alt+N`            | New note                          |
+| `/`                | Search                            |
+| `Ctrl+S` / `Cmd+S` | Save now                          |
+| `Ctrl+E` / `Cmd+E` | Switch between edit/split/preview |
 
 ## Stack
 
