@@ -1,6 +1,10 @@
 import { cleanSnippet, excerpt } from './text';
 
 describe('excerpt', () => {
+  it('leaves out a heading on the first line', () => {
+    expect(excerpt('# Shopping\n\nMilk and eggs')).toBe('Milk and eggs');
+  });
+
   it('strips formatting and list markers', () => {
     expect(excerpt('Some **bold** and _italic_ text\n\n- one\n* two\n1. first')).toBe(
       'Some bold and italic text one two first',

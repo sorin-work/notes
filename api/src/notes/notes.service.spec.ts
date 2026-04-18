@@ -75,7 +75,7 @@ describe('NotesService', () => {
         }),
       );
       expect(page).toMatchObject({ total: 1, page: 1, pageSize: 50 });
-      expect(page.items[0]).toMatchObject({ id: 'n1', excerpt: 'Plan The body', tags: [] });
+      expect(page.items[0]).toMatchObject({ id: 'n1', excerpt: 'The body', tags: [] });
     });
 
     it('includes nested notebooks when filtering by a notebook', async () => {

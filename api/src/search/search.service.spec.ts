@@ -58,6 +58,6 @@ describe('SearchService', () => {
       rank: 0.6,
     });
     // Title-only matches fall back to the start of the note.
-    expect(result.items[1]).toMatchObject({ snippet: 'Weekly review Friday afternoon', tags: [] });
+    expect(result.items[1]).toMatchObject({ snippet: 'Friday afternoon', tags: [] });
   });
 });

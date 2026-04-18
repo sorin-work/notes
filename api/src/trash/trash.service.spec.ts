@@ -28,7 +28,7 @@ describe('TrashService', () => {
     expect(item).toEqual({
       id: 'n1',
       title: 'Old',
-      excerpt: 'Old Gone soon',
+      excerpt: 'Gone soon',
       notebook: null,
       deletedAt,
       purgeAt: new Date('2026-03-31T08:00:00Z'),

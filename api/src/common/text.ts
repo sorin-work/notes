@@ -1,9 +1,11 @@
 /**
  * A plain-text preview of a note's Markdown for the note list: code blocks,
- * images and formatting removed, links reduced to their text.
+ * images and formatting removed, links reduced to their text. A heading on
+ * the first line is left out, since it usually repeats the title.
  */
 export function excerpt(markdown: string, maxLength = 160): string {
   const text = markdown
+    .replace(/^\s*#\s+[^\n]*(\n|$)/, '')
     .replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
