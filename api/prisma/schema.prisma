@@ -67,6 +67,7 @@ model Note {
   versions      NoteVersion[]
   share         ShareLink?
 
+  @@index([userId, deletedAt, updatedAt])
   @@index([searchVector], type: Gin)
   @@index([notebookId])
   @@map("notes")
