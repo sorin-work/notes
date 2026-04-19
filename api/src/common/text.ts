@@ -11,6 +11,7 @@ export function excerpt(markdown: string, maxLength = 160): string {
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
     .replace(/\[\[([^\]]+)\]\]/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, '')
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
     .replace(/^\s*[-*_]{3,}\s*$/gm, ' ')
     .replace(/[*_~`]+/g, '')

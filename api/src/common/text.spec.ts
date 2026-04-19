@@ -11,6 +11,10 @@ describe('excerpt', () => {
     );
   });
 
+  it('drops task list boxes', () => {
+    expect(excerpt('- [x] done\n- [ ] open\n* [X] also done')).toBe('done open also done');
+  });
+
   it('reduces links to their text', () => {
     expect(excerpt('See [the docs](https://example.com), [[Other note]] and [[Target|this one]]')).toBe(
       'See the docs, Other note and this one',
