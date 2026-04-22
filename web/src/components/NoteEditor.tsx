@@ -18,7 +18,8 @@ import type { Note, NoteChanges } from '../api/types';
 import { useAutosave } from '../hooks/useAutosave';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
-import { formatRelative } from '../lib/dates';
+import { formatDateTime, formatRelative } from '../lib/dates';
+import { countWords, readingMinutes } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
 import { LinkSuggestions, suggestionAt, suggestionCount } from './LinkSuggestions';
@@ -236,6 +237,7 @@ function LoadedEditor({ note }: { note: Note }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [autosave, cycleMode]);
 
+  const words = countWords(content);
   const statusText = {
     saved: `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
@@ -371,6 +373,10 @@ function LoadedEditor({ note }: { note: Note }) {
       <footer className="editor-footer">
         <span className={autosave.status === 'error' ? 'save-status error' : 'save-status'} role="status">
           {statusText}
+        </span>
+        <span className="muted">
+          {words.toLocaleString()} {words === 1 ? 'word' : 'words'}
+          {words > 0 && ` · ${readingMinutes(words)} min read`} · created {formatDateTime(note.createdAt)}
         </span>
       </footer>
 

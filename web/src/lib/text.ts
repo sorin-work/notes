@@ -1,3 +1,17 @@
+export function countWords(markdown: string): number {
+  const words = markdown
+    .replace(/[#>*_`~|[\]()-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((word) => /[\p{L}\p{N}]/u.test(word));
+  return words.length;
+}
+
+/** Minutes at about 220 words a minute, at least one for any text. */
+export function readingMinutes(words: number): number {
+  return words === 0 ? 0 : Math.max(1, Math.round(words / 220));
+}
+
 export const HIGHLIGHT_START = '\u0002';
 export const HIGHLIGHT_END = '\u0003';
 

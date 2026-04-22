@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { splitHighlights } from './text';
+import { countWords, readingMinutes, splitHighlights } from './text';
+
+describe('countWords', () => {
+  it('counts words, ignoring Markdown punctuation', () => {
+    expect(countWords('# Title\n\n- one **two** three\n\n| a | b |')).toBe(6);
+    expect(countWords('')).toBe(0);
+    expect(countWords('--- *** ###')).toBe(0);
+  });
+});
+
+describe('readingMinutes', () => {
+  it('rounds to whole minutes with a minimum of one', () => {
+    expect(readingMinutes(0)).toBe(0);
+    expect(readingMinutes(10)).toBe(1);
+    expect(readingMinutes(1000)).toBe(5);
+  });
+});
 
 describe('splitHighlights', () => {
   it('splits on the highlight markers', () => {
