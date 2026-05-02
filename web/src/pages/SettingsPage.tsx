@@ -1,8 +1,11 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
 import { changePassword } from '../api/auth';
+import { deleteTag, listTags, renameTag } from '../api/tags';
 import { exportAll, importFiles } from '../api/transfer';
+import type { Tag } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { ConfirmDialog } from '../components/Modal';
 import { ErrorMessage } from '../components/States';
 
 export function SettingsPage() {
@@ -18,6 +21,7 @@ export function SettingsPage() {
         <PasswordForm />
       </section>
       <ImportExportSection />
+      <TagsSection />
     </div>
   );
 }
@@ -159,6 +163,99 @@ function ImportExportSection() {
             </details>
           )}
         </div>
+      )}
+    </section>
+  );
+}
+
+function TagsSection() {
+  const queryClient = useQueryClient();
+  const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
+  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
+  const [removing, setRemoving] = useState<Tag | null>(null);
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['tags'] });
+    void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    void queryClient.invalidateQueries({ queryKey: ['note'] });
+  };
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => renameTag(id, name),
+    onSuccess: () => {
+      setEditing(null);
+      refresh();
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteTag(id),
+    onSuccess: () => {
+      setRemoving(null);
+      refresh();
+    },
+  });
+
+  return (
+    <section className="card">
+      <h2>Tags</h2>
+      <p className="muted">Renaming a tag to the name of another one merges them.</p>
+      {tags.data?.length === 0 && <p className="muted">No tags yet. Add tags under a note’s title.</p>}
+      <ul className="tag-admin">
+        {tags.data?.map((tag) => (
+          <li key={tag.id}>
+            {editing?.id === tag.id ? (
+              <form
+                className="input-row"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  rename.mutate(editing);
+                }}
+              >
+                <input
+                  aria-label={`New name for ${tag.name}`}
+                  value={editing.name}
+                  autoFocus
+                  onChange={(event) => setEditing({ id: tag.id, name: event.target.value })}
+                />
+                <button type="submit" className="button button-primary" disabled={rename.isPending}>
+                  Save
+                </button>
+                <button type="button" className="button" onClick={() => setEditing(null)}>
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <>
+                <span>
+                  #{tag.name} <span className="muted">· {tag.noteCount}</span>
+                </span>
+                <span className="tag-admin-actions">
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => setEditing({ id: tag.id, name: tag.name })}
+                  >
+                    Rename
+                  </button>
+                  <button type="button" className="link-button danger" onClick={() => setRemoving(tag)}>
+                    Delete
+                  </button>
+                </span>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      {rename.error && <ErrorMessage error={rename.error} />}
+      {removing && (
+        <ConfirmDialog
+          title={`Delete #${removing.name}?`}
+          message={<p>The tag is removed from {removing.noteCount} notes. The notes themselves are not deleted.</p>}
+          confirmLabel="Delete tag"
+          danger
+          busy={remove.isPending}
+          onConfirm={() => remove.mutate(removing.id)}
+          onCancel={() => setRemoving(null)}
+        />
       )}
     </section>
   );

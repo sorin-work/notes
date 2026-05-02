@@ -13,8 +13,8 @@ Markdown import/export.
 - **Notebooks**, nested one level deep (e.g. _Work → Meetings_). Selecting a
   top-level notebook shows the notes in the notebooks inside it too. Deleting
   a notebook moves its notes to the trash.
-- **Tags** typed under the title (`#book club` becomes `book-club`). Click a tag
-  in the sidebar to see its notes.
+- **Tags** typed under the title (`#book club` becomes `book-club`). Tags can
+  be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
   own view.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`

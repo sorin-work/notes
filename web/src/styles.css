@@ -221,6 +221,10 @@ mark {
   padding: 0;
 }
 
+.link-button.danger {
+  color: var(--danger);
+}
+
 /* Layout */
 
 .app {
@@ -919,6 +923,26 @@ mark {
 
 .import-result {
   margin-top: 0.75rem;
+}
+
+.tag-admin {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tag-admin li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-admin-actions {
+  display: flex;
+  gap: 0.8rem;
 }
 
 .search-big {
