@@ -11,6 +11,7 @@ export interface AppConfig {
   logLevels: LogLevel[];
   seedDemo: boolean;
   trashRetentionDays: number;
+  authThrottleLimit: number;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -65,5 +66,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevels: logLevelsFrom(env.LOG_LEVEL),
     seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
+    authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
   };
 }

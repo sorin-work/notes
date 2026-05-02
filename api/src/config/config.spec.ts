@@ -14,6 +14,7 @@ describe('loadConfig', () => {
       corsOrigins: [],
       seedDemo: false,
       trashRetentionDays: 30,
+      authThrottleLimit: 10,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
   });

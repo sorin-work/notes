@@ -13,6 +13,7 @@ import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
+process.env.AUTH_THROTTLE_LIMIT ??= '1000';
 process.env.SEED_DEMO = 'false';
 
 let app: INestApplication<App>;
