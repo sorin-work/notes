@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage } from '../components/States';
 
@@ -24,6 +25,8 @@ export function RegisterPage() {
       setBusy(false);
     }
   };
+
+  const messages = error instanceof ApiError && error.messages.length > 1 ? error.messages : null;
 
   return (
     <div className="auth-page">
@@ -64,7 +67,15 @@ export function RegisterPage() {
         <small id="password-hint" className="muted">
           At least 8 characters.
         </small>
-        {error !== null && <ErrorMessage error={error} />}
+        {messages ? (
+          <ul className="error-box" role="alert">
+            {messages.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        ) : (
+          error !== null && <ErrorMessage error={error} />
+        )}
         <button type="submit" className="button button-primary wide" disabled={busy}>
           {busy ? 'Creating account…' : 'Create account'}
         </button>

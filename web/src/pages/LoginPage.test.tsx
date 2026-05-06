@@ -60,6 +60,25 @@ describe('LoginPage', () => {
 });
 
 describe('RegisterPage', () => {
+  it('lists every validation message from the API', async () => {
+    mockFetch({
+      'POST /api/auth/register': {
+        status: 400,
+        body: { message: ['email must be a valid email address', 'name is required'], statusCode: 400 },
+      },
+    });
+    renderAuth('/register');
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Ada');
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'long-enough');
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('email must be a valid email address');
+    expect(alert).toHaveTextContent('name is required');
+  });
+
   it('creates the account and signs in', async () => {
     const calls = mockFetch({ 'POST /api/auth/register': { status: 201, body: { token: 'tok-2', user } } });
     renderAuth('/register');
