@@ -29,6 +29,13 @@ export function setToken(token: string | null): void {
   }
 }
 
+let onUnauthorized: (() => void) | null = null;
+
+/** Called when the API rejects the saved token, so the app can sign out. */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 export function withQuery(path: string, query?: Query): string {
@@ -68,6 +75,7 @@ export async function request(path: string, init: RequestInit = {}): Promise<Res
 
   if (!response.ok) {
     const error = await errorFrom(response);
+    if (response.status === 401 && token) onUnauthorized?.();
     throw error;
   }
   return response;

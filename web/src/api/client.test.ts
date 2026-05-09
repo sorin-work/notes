@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, json, setToken, withQuery } from './client';
+import { api, ApiError, json, setToken, setUnauthorizedHandler, withQuery } from './client';
 
 function respond(status: number, body?: unknown) {
   return vi.fn().mockResolvedValue(
@@ -14,6 +14,7 @@ describe('api', () => {
   beforeEach(() => setToken('abc'));
   afterEach(() => {
     vi.unstubAllGlobals();
+    setUnauthorizedHandler(null);
   });
 
   it('sends the token and JSON body', async () => {
@@ -41,6 +42,14 @@ describe('api', () => {
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 400, message: 'name is required' });
     expect((error as ApiError).messages).toHaveLength(2);
+  });
+
+  it('signs out when the saved token is rejected', async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    vi.stubGlobal('fetch', respond(401, { message: 'Invalid or expired token' }));
+    await expect(api('/notes')).rejects.toThrow('Invalid or expired token');
+    expect(handler).toHaveBeenCalled();
   });
 
   it('reports network failures', async () => {
