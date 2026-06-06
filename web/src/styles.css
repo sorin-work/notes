@@ -824,6 +824,7 @@ mark {
   background: var(--surface-2);
   padding: 0.8rem 1rem;
   border-radius: 6px;
+  overflow-x: auto;
 }
 
 .markdown pre code {
@@ -836,6 +837,12 @@ mark {
   padding: 0.1rem 1rem;
   border-left: 3px solid var(--border);
   color: var(--muted);
+}
+
+.markdown table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
 }
 
 .markdown th,
