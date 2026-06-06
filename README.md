@@ -35,7 +35,7 @@ Markdown import/export.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
-- Keyboard shortcuts and a layout that works on phones.
+- Light and dark themes, keyboard shortcuts and a layout that works on phones.
 
 | Shortcut           | Action                            |
 | ------------------ | --------------------------------- |

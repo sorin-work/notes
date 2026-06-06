@@ -7,6 +7,7 @@ import type { Tag } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ConfirmDialog } from '../components/Modal';
 import { ErrorMessage } from '../components/States';
+import { Theme, useTheme } from '../hooks/useTheme';
 
 export function SettingsPage() {
   const { user } = useAuth();
@@ -20,6 +21,7 @@ export function SettingsPage() {
         </p>
         <PasswordForm />
       </section>
+      <AppearanceSection />
       <ImportExportSection />
       <TagsSection />
     </div>
@@ -89,6 +91,34 @@ function PasswordForm() {
         </button>
       </div>
     </form>
+  );
+}
+
+function AppearanceSection() {
+  const [theme, setTheme] = useTheme();
+  const options: { value: Theme; label: string }[] = [
+    { value: 'system', label: 'Same as the system' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+  ];
+  return (
+    <section className="card">
+      <h2>Appearance</h2>
+      <div className="radio-group" role="radiogroup" aria-label="Theme">
+        {options.map((option) => (
+          <label key={option.value} className="radio">
+            <input
+              type="radio"
+              name="theme"
+              value={option.value}
+              checked={theme === option.value}
+              onChange={() => setTheme(option.value)}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+    </section>
   );
 }
 
