@@ -88,6 +88,15 @@ describe('NotebooksService', () => {
       expect(result.name).toBe('Job');
     });
 
+    it('allows changing only the case of the name', async () => {
+      prisma.notebook.findFirst.mockResolvedValueOnce(notebook('work', { name: 'work' })).mockResolvedValueOnce(null);
+      prisma.notebook.findFirstOrThrow.mockResolvedValue(withCount(notebook('work', { name: 'Work' })));
+      await service.update(USER, 'work', { name: 'Work' });
+      expect(prisma.notebook.findFirst).toHaveBeenLastCalledWith({
+        where: { userId: USER, parentId: null, name: { equals: 'Work', mode: 'insensitive' }, id: { not: 'work' } },
+      });
+    });
+
     it('moves a nested notebook back to the top level', async () => {
       prisma.notebook.findFirst
         .mockResolvedValueOnce(notebook('meetings', { parentId: 'work' }))

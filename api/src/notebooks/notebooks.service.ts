@@ -54,7 +54,8 @@ export class NotebooksService {
 
     const name = dto.name ?? notebook.name;
     if (name !== notebook.name || parentId !== notebook.parentId) {
-      await this.assertNameFree(userId, parentId, name);
+      // The notebook itself does not count, so changing only the case of its name works.
+      await this.assertNameFree(userId, parentId, name, notebook.id);
     }
 
     await this.prisma.notebook.update({ where: { id }, data: { name, parentId } });
