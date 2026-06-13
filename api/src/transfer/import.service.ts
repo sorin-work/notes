@@ -51,6 +51,7 @@ function toDate(value: unknown): Date | undefined {
 
 function toTags(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string') return value.split(/[,\s]+/);
   return [];
 }
 

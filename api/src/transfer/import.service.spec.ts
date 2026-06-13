@@ -76,6 +76,11 @@ describe('ImportService', () => {
     expect(links.sync).toHaveBeenCalledWith(prisma, 'note-Weekly plan', 'See [[Atlas]]');
   });
 
+  it('reads tags written as a comma separated string', async () => {
+    await service.import(USER, [file('a.md', '---\ntags: reading, to-do\n---\nBody')]);
+    expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'note-a', ['reading', 'to-do']);
+  });
+
   it('uses the file name when there is no title', async () => {
     await service.import(USER, [file('Shopping list.txt', 'milk')]);
     expect(prisma.note.create.mock.calls[0][0].data.title).toBe('Shopping list');
