@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
 import { createNote, listNotes, NoteFilters, NoteSort } from '../api/notes';
 import { NoteEditor } from '../components/NoteEditor';
@@ -118,7 +118,12 @@ export function NotesPage() {
 
       <section className="editor-pane">
         {noteId ? (
-          <NoteEditor key={noteId} noteId={noteId} />
+          <>
+            <Link to={{ pathname: '/notes', search: params.toString() }} className="back-link">
+              ← {heading}
+            </Link>
+            <NoteEditor key={noteId} noteId={noteId} />
+          </>
         ) : (
           <EmptyState title="Pick a note, or start a new one">
             <p className="muted">

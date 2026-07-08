@@ -560,6 +560,10 @@ mark {
   background: var(--surface);
 }
 
+.back-link {
+  display: none;
+}
+
 /* Editor */
 
 .editor {
@@ -1345,6 +1349,12 @@ ul.error-box {
 
   .list-pane {
     border-right: none;
+  }
+
+  .back-link {
+    display: inline-block;
+    margin: 0.75rem 1rem 0;
+    text-decoration: none;
   }
 
   .editor {
