@@ -352,6 +352,7 @@ function LoadedEditor({ note }: { note: Note }) {
               onChange={onContentChange}
               onKeyDown={onContentKeyDown}
               onClick={(event) => updateLinkState(content, event.currentTarget.selectionStart)}
+              onBlur={() => setLink(null)}
             />
             {link && (
               <LinkSuggestions
