@@ -1,9 +1,35 @@
 import { loadConfig } from '../config/config';
+import { extractWikiLinks, normalizeTitle } from '../links/wikilinks';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
-import { DEMO_NOTES } from './demo-data';
+import { DEMO_NOTEBOOKS, DEMO_NOTES } from './demo-data';
 import { DEMO_EMAIL, DemoSeedService } from './demo-seed.service';
 
 const env = { DATABASE_URL: 'postgresql://x', JWT_SECRET: 'x'.repeat(32) };
+
+describe('demo data', () => {
+  it('only links to notes that exist, apart from none', () => {
+    const titles = new Set(DEMO_NOTES.map((note) => normalizeTitle(note.title)));
+    const broken = DEMO_NOTES.flatMap((note) =>
+      extractWikiLinks(note.content)
+        .filter((link) => !titles.has(normalizeTitle(link.title)))
+        .map((link) => `${note.title} -> ${link.title}`),
+    );
+    expect(broken).toEqual([]);
+  });
+
+  it('puts every note in a notebook that exists', () => {
+    const paths = new Set(
+      DEMO_NOTEBOOKS.flatMap((nb) => [nb.name, ...(nb.children ?? []).map((child) => `${nb.name}/${child}`)]),
+    );
+    for (const note of DEMO_NOTES) {
+      if (note.notebook.length) expect(paths).toContain(note.notebook.join('/'));
+    }
+  });
+
+  it('never has a note edited before it was created', () => {
+    for (const note of DEMO_NOTES) expect(note.updatedDaysAgo).toBeLessThanOrEqual(note.createdDaysAgo);
+  });
+});
 
 describe('DemoSeedService', () => {
   let prisma: PrismaMock;
