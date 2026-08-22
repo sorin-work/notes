@@ -79,7 +79,7 @@ export function serializeFrontMatter(data: FrontMatter): string {
 
 function splitInlineList(inner: string): string[] {
   const values: string[] = [];
-  for (const match of inner.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^,]+)/g)) {
+  for (const match of inner.matchAll(/\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^,]+))/g)) {
     const value = match[1] !== undefined ? unescapeDouble(match[1]) : (match[2]?.replace(/''/g, "'") ?? match[3]);
     const trimmed = value?.trim();
     if (trimmed) values.push(trimmed);

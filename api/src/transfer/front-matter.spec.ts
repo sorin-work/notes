@@ -13,6 +13,11 @@ describe('parseFrontMatter', () => {
     });
   });
 
+  it('unquotes every quoted list item, not only the first', () => {
+    const text = "---\ntags: [work, \"two words\", 'it''s']\n---\nBody";
+    expect(parseFrontMatter(text).data.tags).toEqual(['work', 'two words', "it's"]);
+  });
+
   it('reads block lists', () => {
     const text = '---\ntags:\n  - one\n  - "two"\nauthor: me\n---\n\nBody';
     expect(parseFrontMatter(text).data).toEqual({ tags: ['one', 'two'], author: 'me' });
