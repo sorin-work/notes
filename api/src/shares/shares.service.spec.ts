@@ -73,6 +73,12 @@ describe('SharesService', () => {
       prisma.shareLink.findUnique.mockResolvedValue(null);
       await expect(service.view('nope')).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    it('404s once the note is in the trash', async () => {
+      prisma.shareLink.findUnique.mockResolvedValue({ ...shared, note: { ...shared.note, deletedAt: new Date() } });
+      await expect(service.view('tok')).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.shareLink.update).not.toHaveBeenCalled();
+    });
   });
 });
 

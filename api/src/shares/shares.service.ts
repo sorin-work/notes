@@ -49,13 +49,13 @@ export class SharesService {
     await this.prisma.shareLink.deleteMany({ where: { noteId } });
   }
 
-  /** The read-only view behind a share link. */
+  /** The read-only view behind a share link. Notes in the trash are not served. */
   async view(token: string): Promise<SharedNote> {
     const share = await this.prisma.shareLink.findUnique({
       where: { token },
       include: { note: { include: { tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } } } } },
     });
-    if (!share) {
+    if (!share || share.note.deletedAt) {
       throw new NotFoundException('This link does not exist or is no longer shared');
     }
     await this.prisma.shareLink.update({ where: { id: share.id }, data: { viewCount: { increment: 1 } } });
