@@ -13,6 +13,17 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep the Markdown renderer and React in their own long-cached files.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router', '@tanstack/react-query'],
+          markdown: ['react-markdown', 'remark-gfm'],
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
