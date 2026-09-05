@@ -84,7 +84,11 @@ export class NotesController {
   async export(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<StreamableFile> {
     const { filename, markdown } = await this.exporter.exportNote(user.id, id);
     return new StreamableFile(Buffer.from(markdown, 'utf8'), {
-      disposition: `attachment; filename="${filename}"`,
+      disposition: `attachment; filename="${asciiFilename(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
     });
   }
+}
+
+export function asciiFilename(filename: string): string {
+  return filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
 }

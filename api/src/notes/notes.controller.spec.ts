@@ -2,7 +2,7 @@ import { StreamableFile } from '@nestjs/common';
 import { LinksService } from '../links/links.service';
 import { ExportService } from '../transfer/export.service';
 import { ListNotesQuery } from './dto/note.dto';
-import { NotesController } from './notes.controller';
+import { asciiFilename, NotesController } from './notes.controller';
 import { NotesService } from './notes.service';
 
 const user = { id: 'user-1', email: 'ada@example.com' };
@@ -58,6 +58,14 @@ describe('NotesController', () => {
     exporter.exportNote.mockResolvedValue({ filename: 'Café plan.md', markdown: '# Hi\n' });
     const file = await controller.export(user, 'n1');
     expect(file).toBeInstanceOf(StreamableFile);
-    expect(file.getHeaders().disposition).toBe('attachment; filename="Café plan.md"');
+    expect(file.getHeaders().disposition).toBe(
+      `attachment; filename="Caf_ plan.md"; filename*=UTF-8''Caf%C3%A9%20plan.md`,
+    );
+  });
+});
+
+describe('asciiFilename', () => {
+  it('replaces characters that do not belong in a quoted header value', () => {
+    expect(asciiFilename('Notes "draft" ✓.md')).toBe('Notes _draft_ _.md');
   });
 });
