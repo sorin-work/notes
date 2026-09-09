@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router';
 import type { NoteSummary } from '../api/types';
 import { formatRelative } from '../lib/dates';
+import { PinIcon } from './Icons';
 
 interface Props {
   notes: NoteSummary[];
@@ -22,7 +23,7 @@ export function NoteList({ notes, activeId }: Props) {
               <span className="note-item-title">{note.title}</span>
               {note.pinned && (
                 <span className="flag" title="Pinned" aria-label="Pinned">
-                  📌
+                  <PinIcon size={13} filled />
                 </span>
               )}
               {note.favorite && (

@@ -1379,3 +1379,9 @@ ul.error-box {
     flex-direction: column;
   }
 }
+
+.icon-button svg,
+.flag svg {
+  display: inline-block;
+  vertical-align: middle;
+}

@@ -7,6 +7,7 @@ import { listTags } from '../api/tags';
 import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { notebookTree, totalNotes } from '../lib/notebooks';
+import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
 
@@ -270,7 +271,7 @@ function NotebookMenu({
         title="Rename or move"
         onClick={() => onAction('edit')}
       >
-        ✎
+        <PencilIcon />
       </button>
       <button
         type="button"
@@ -279,7 +280,7 @@ function NotebookMenu({
         title="Delete"
         onClick={() => onAction('delete')}
       >
-        🗑
+        <TrashIcon />
       </button>
     </span>
   );

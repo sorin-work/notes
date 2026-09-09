@@ -22,6 +22,7 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { countWords, readingMinutes } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
+import { PinIcon } from './Icons';
 import { LinkSuggestions, suggestionAt, suggestionCount } from './LinkSuggestions';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ConfirmDialog } from './Modal';
@@ -278,7 +279,7 @@ function LoadedEditor({ note }: { note: Note }) {
           disabled={readOnly}
           onClick={() => updateMeta.mutate({ pinned: !note.pinned })}
         >
-          📌
+          <PinIcon filled={note.pinned} />
         </button>
         <button
           type="button"
