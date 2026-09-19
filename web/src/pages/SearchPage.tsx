@@ -19,12 +19,20 @@ function Snippet({ text }: { text: string }) {
 
 export function SearchPage() {
   const [params, setParams] = useSearchParams();
-  const [input, setInput] = useState(params.get('q') ?? '');
+  const urlQuery = params.get('q') ?? '';
+  const [input, setInput] = useState(urlQuery);
+  const [seenUrlQuery, setSeenUrlQuery] = useState(urlQuery);
   const q = useDebouncedValue(input.trim(), 250);
 
+  // A search from the sidebar while this page is open changes the URL only.
+  if (urlQuery !== seenUrlQuery) {
+    setSeenUrlQuery(urlQuery);
+    if (urlQuery !== input.trim()) setInput(urlQuery);
+  }
+
   useEffect(() => {
-    setParams(q ? { q } : {}, { replace: true });
-  }, [q, setParams]);
+    if (q !== urlQuery) setParams(q ? { q } : {}, { replace: true });
+  }, [q, urlQuery, setParams]);
 
   const results = useQuery({
     queryKey: ['search', q],
