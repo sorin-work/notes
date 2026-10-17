@@ -159,3 +159,16 @@ web/
     lib/                wiki links, dates, text helpers
     pages/              one component per route
 ```
+
+## How links and versions work
+
+Links point at titles, not ids. `[[Atlas]]` matches the note titled "Atlas"
+ignoring case and extra spaces; if several notes share a title, the most
+recently edited one wins. Renaming a note therefore leaves links to the old
+title dangling (they show up dashed), and a new note with the old title picks
+them up again. Links inside code blocks and inline code are ignored.
+
+Versions hold the text a note had _before_ an edit. The first change after a
+ten minute pause saves the old text as a version; further changes in the
+next ten minutes do not. Pinning, favouriting, tags and moving between
+notebooks do not create versions.
