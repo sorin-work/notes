@@ -108,6 +108,20 @@ npm install
 npm run dev
 ```
 
+### Configuration
+
+| Variable               | Default    | Purpose                                                    |
+| ---------------------- | ---------- | ---------------------------------------------------------- |
+| `DATABASE_URL`         | (required) | Postgres connection string                                 |
+| `JWT_SECRET`           | (required) | Signs login tokens, at least 32 characters                 |
+| `JWT_EXPIRES_IN`       | `7d`       | How long a login lasts                                     |
+| `PORT`                 | `4401`     | API port                                                   |
+| `CORS_ORIGINS`         | (none)     | Comma-separated browser origins, only needed without nginx |
+| `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                         |
+| `SEED_DEMO`            | `false`    | Create the demo account on start-up                        |
+| `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good             |
+| `AUTH_THROTTLE_LIMIT`  | `10`       | Sign-up and login attempts per minute per client           |
+
 ## Tests and checks
 
 ```bash
@@ -172,3 +186,25 @@ Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
 notebooks do not create versions.
+
+## API overview
+
+All endpoints are under `/api` and, apart from sign-up, login, the health
+check and shared notes, need an `Authorization: Bearer <token>` header.
+Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
+
+| Method & path                                                  | What it does                              |
+| -------------------------------------------------------------- | ----------------------------------------- |
+| `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
+| `GET /auth/me`, `PATCH /auth/password`                         | Current user, change password             |
+| `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
+| `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
+| `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
+| `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
+| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Link completion and lookup                |
+| `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
+| `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
+| `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
+| `GET /search?q=`                                               | Full-text search                          |
+| `GET /tags`, `PATCH/DELETE /tags/:id`                          | Tags                                      |
+| `GET /export`, `GET /notes/:id/export`, `POST /import`         | Zip export, single note, import           |
