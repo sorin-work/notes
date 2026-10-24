@@ -24,6 +24,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me-0123456789}
       PORT: 4401
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-30}
       # Creates demo@example.com / demo-password with sample notes.
       SEED_DEMO: ${SEED_DEMO:-true}
     depends_on:
