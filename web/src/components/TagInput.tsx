@@ -46,6 +46,7 @@ export function TagInput({ tags, suggestions = [], onChange, disabled }: TagInpu
             type="button"
             aria-label={`Remove tag ${tag}`}
             onClick={() => onChange(tags.filter((t) => t !== tag))}
+            disabled={disabled}
           >
             ×
           </button>
