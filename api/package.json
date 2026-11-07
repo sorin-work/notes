@@ -21,10 +21,10 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@nestjs/common": "^11.2.7",
-    "@nestjs/core": "^11.2.7",
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/core": "^11.2.8",
     "@nestjs/jwt": "^11.0.2",
-    "@nestjs/platform-express": "^11.2.7",
+    "@nestjs/platform-express": "^11.2.8",
     "@nestjs/throttler": "^6.7.1",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
@@ -38,7 +38,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@nestjs/cli": "^11.0.24",
-    "@nestjs/testing": "^11.2.7",
+    "@nestjs/testing": "^11.2.8",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.3.0",
@@ -48,10 +48,10 @@
     "globals": "^16.5.0",
     "jest": "^30.5.2",
     "prettier": "^3.9.10",
-    "supertest": "^7.3.1",
-    "ts-jest": "^29.4.14",
+    "supertest": "^7.3.2",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.71.1"
+    "typescript-eslint": "^8.72.1"
   },
   "jest": {
     "moduleFileExtensions": [
