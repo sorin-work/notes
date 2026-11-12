@@ -44,6 +44,8 @@ Markdown import/export.
 | `Ctrl+S` / `Cmd+S` | Save now                          |
 | `Ctrl+E` / `Cmd+E` | Switch between edit/split/preview |
 
+Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
+
 ## Stack
 
 | Part     | Tech                                                                               |
