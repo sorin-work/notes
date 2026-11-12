@@ -10,7 +10,7 @@ Markdown import/export.
 - **Markdown editor** with edit, split and preview modes. GitHub flavoured
   Markdown: tables, task lists, strikethrough and autolinks. Notes save
   automatically a moment after you stop typing.
-- **Notebooks**, nested one level deep (e.g. _Work → Meetings_). Selecting a
+- **Notebooks**, nested one level deep (e.g. _Work -> Meetings_). Selecting a
   top-level notebook shows the notes in the notebooks inside it too. Deleting
   a notebook moves its notes to the trash.
 - **Tags** typed under the title (`#book club` becomes `book-club`). Tags can
