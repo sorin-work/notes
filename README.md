@@ -896,39 +896,51 @@ be saved stays in the editor as an unsaved change.
 
 Every route that takes a note or a notebook first asks one access check
 (`api/src/access/access.service.ts`): the owner may do everything, a member of
-the notebook the note is in (or of the notebook around that one) may read or
-edit, and anyone else gets a `404`, the same as for a note that does not
-exist. The check hands back the owner's id, and the services go on looking
-notes up by owner and id with it, so a route that forgot to ask would only
-ever find the caller's own notes. An end-to-end test walks every note route
-as an outsider, and as a member on a note outside the shared notebook, and
-expects `404` from each.
+a shared notebook may read or edit the notes in it and in every notebook
+below it, at any depth, and anyone else gets a `404`, the same as for a note
+that does not exist. "Below it" is one recursive query
+(`api/src/notebooks/subtree.ts`), the same one the owner's note list, search
+and graph use, so all of them agree on what a shared notebook holds. The
+check hands back the owner's id, and the services go on looking notes up by
+owner and id with it, so a route that forgot to ask would only ever find the
+caller's own notes. A write checks again inside its own transaction, with
+the note's row locked and the memberships read with a share lock, so a move
+of the note or the removal of the member in the meantime cannot let it
+through. An end-to-end test walks every note route as an outsider, and as a
+member on a note outside the shared notebook, and expects `404` from each.
 
 A member works on the owner's notes. Tags set by an editor are the owner's
 tags, `[[links]]` resolve among the owner's titles, and new notes in the
 shared notebook belong to the owner. But a member only ever sees what is in
 the shared notebook: links to anything else read as missing, and backlinks,
-link suggestions and search with the notebook as filter stay inside it. Their
-own lists, tags, search and "Go to a note" stay their own. Templates
-and notes in the trash are never shown to members. Two people saving one
-note meet the conflict question of item 8, as two tabs do. An editor changes
-title, text and tags, and restores versions; pinning, stars, moving, templates,
-share links, renaming links across notes, duplicating and the trash stay the
-owner's (`403`).
+link suggestions, unlinked mentions, the graph (with the notebook as filter)
+and search with the notebook as filter stay inside it, link counts included.
+Their own lists, tags, search, graph and "Go to a note" stay their own.
+Templates and notes in the trash are never shown to members. Two people saving
+one note meet the conflict question of item 8, as two tabs do. An editor
+changes title, text and tags, attaches files (counted against the owner's
+room) and restores versions; pinning, stars, moving, templates, share links,
+renaming links across notes, linking mentions in other notes, duplicating and
+the trash stay the owner's (`403`). Members see the names of the others in
+the notebook; only the owner sees their addresses and the open invitations.
 
-Invitations go to an address and last a week. An account with that address
-sees them at the top of its sidebar, to accept or decline. When the server
-can send mail, a mail goes out as well, with a link to `/invites`. Like the
-password reset, the link's token is in the fragment, only its hash is
-stored, and it works once. It also works only for an account with the
-invited address, so a forwarded link is no use. The mail says nothing that
-came from the inviting account: not their name, not the notebook's. An
-account can send ten invitations an hour, and a notebook can have twenty
-open. A change waiting in a member's outbox for a note they can no longer
-reach is listed as stuck ("gone, or not shared with you any more").
+An invitation is accepted only with the token of its link, which works once,
+for a week. Like the password reset, the token is in the fragment and only
+its hash is stored. Whoever is signed in when the link is opened joins, as
+themselves: the token is the proof, not the address, which nothing here has
+checked. Nothing lists invitations by address, so registering with an
+invited address gets nobody in. When the server can send mail, the link goes
+by mail, which says nothing that came from the inviting account: not their
+name, not the notebook's. When it cannot, the owner gets the link once, in
+the answer to the invitation, to pass on; it is never shown again. Sends are
+counted apart from the invitations, so withdrawing or renewing one makes no
+room: ten an hour from one account, three a day to one address, and twenty
+open invitations per notebook. A change waiting in a member's outbox for a
+note they can no longer reach is listed as stuck ("gone, or not shared with
+you any more").
 
-The routes are under `/api/notebooks/:id/members` and `/api/invites`, closed
-to API tokens.
+The routes are under `/api/notebooks/:id/members` and `/api/invites/accept`,
+closed to API tokens.
 
 ## API overview
 
