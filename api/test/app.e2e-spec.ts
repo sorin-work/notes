@@ -173,6 +173,56 @@ describe('links and search', () => {
 
     await request(server).get('/api/search?q=%22%26%7C!').set(auth).expect(200);
   });
+
+  it('searches inside a notebook or a tag, matches quoted phrases and pages', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object, headers = auth) =>
+      (await request(server).post(path).set(headers).send(body).expect(201)).body.id as string;
+    const search = async (query: Record<string, string | number>) => {
+      const response = await request(server).get('/api/search').query(query).set(auth).expect(200);
+      return { ids: response.body.items.map((hit: { id: string }) => hit.id) as string[], total: response.body.total };
+    };
+
+    const work = await post('/api/notebooks', { name: 'Work' });
+    const meetings = await post('/api/notebooks', { name: 'Meetings', parentId: work });
+    const inWork = await post('/api/notes', { title: 'Plan', content: 'The weekly sync moved.', notebookId: work });
+    const inMeetings = await post('/api/notes', {
+      title: 'Minutes',
+      content: 'Sync notes, sent weekly.',
+      notebookId: meetings,
+      tags: ['Team Sync'],
+    });
+    const unfiled = await post('/api/notes', { title: 'Loose', content: 'A weekly team sync.', tags: ['team-sync'] });
+
+    expect((await search({ q: 'weekly sync' })).ids.sort()).toEqual([inWork, inMeetings, unfiled].sort());
+    // A top-level notebook covers the notebooks inside it.
+    expect((await search({ q: 'weekly sync', notebookId: work })).ids.sort()).toEqual([inWork, inMeetings].sort());
+    expect((await search({ q: 'weekly sync', notebookId: meetings })).ids).toEqual([inMeetings]);
+    expect((await search({ q: 'weekly sync', notebookId: 'none' })).ids).toEqual([unfiled]);
+    expect((await search({ q: 'weekly sync', tag: '#Team Sync' })).ids.sort()).toEqual([inMeetings, unfiled].sort());
+    expect((await search({ q: 'weekly sync', notebookId: work, tag: 'team-sync' })).ids).toEqual([inMeetings]);
+
+    // In quotes the words have to follow each other in that order, and are not prefixes.
+    expect((await search({ q: '"weekly sync"' })).ids).toEqual([inWork]);
+    expect((await search({ q: '"weekly sync" plan' })).ids).toEqual([inWork]);
+    expect((await search({ q: 'wee' })).total).toBe(3);
+    expect((await search({ q: '"wee"' })).total).toBe(0);
+    // A phrase that is still being typed searches as ordinary words.
+    expect((await search({ q: '"weekly sy' })).total).toBe(3);
+
+    const first = await search({ q: 'weekly sync', pageSize: 2 });
+    const second = await search({ q: 'weekly sync', pageSize: 2, page: 2 });
+    expect(first.total).toBe(3);
+    expect([...first.ids, ...second.ids].sort()).toEqual([inWork, inMeetings, unfiled].sort());
+
+    // Values that look like SQL are only ever compared, and another account's notebook is not found.
+    expect((await search({ q: "sync' OR '1'='1", tag: "x' OR '1'='1" })).total).toBe(0);
+    const foreign = await post('/api/notebooks', { name: 'Theirs' }, other.auth);
+    await request(server).get('/api/search').query({ q: 'sync', notebookId: foreign }).set(auth).expect(404);
+    await request(server).get('/api/search').query({ q: 'sync', notebookId: 'inbox' }).set(auth).expect(400);
+  });
 });
 
 describe('sharing', () => {
