@@ -12,6 +12,8 @@ export interface Backlink {
   context: string;
 }
 
+type RawQueries = Pick<Prisma.TransactionClient, '$queryRaw'>;
+
 export interface OutgoingLink {
   title: string;
   /** The note the link resolves to, or null when no note has that title. */
@@ -78,6 +80,15 @@ export class LinksService {
     return note.outgoingLinks.map((link) => ({ title: link.targetTitle, noteId: targets.get(link.targetKey) ?? null }));
   }
 
+  /**
+   * Whether a note outside the trash has this title. Links to a title lead
+   * somewhere only then. Pass the transaction to ask from inside one.
+   */
+  async titleTaken(userId: string, title: string, db: RawQueries = this.prisma): Promise<boolean> {
+    const key = normalizeTitle(title);
+    return (await this.resolveKeys(userId, [key], db)).has(key);
+  }
+
   /** The most recently edited note outside the trash with this title. */
   async resolve(userId: string, title: string): Promise<{ id: string; title: string }> {
     const target = (await this.resolveKeys(userId, [normalizeTitle(title)])).get(normalizeTitle(title));
@@ -88,12 +99,16 @@ export class LinksService {
     return note;
   }
 
-  private async resolveKeys(userId: string, keys: string[]): Promise<Map<string, string>> {
+  private async resolveKeys(
+    userId: string,
+    keys: string[],
+    db: RawQueries = this.prisma,
+  ): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     if (keys.length === 0) return result;
     // Titles are matched case-insensitively. Prisma cannot express
     // lower(title) IN (...), so this compares in SQL directly.
-    const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
+    const rows = await db.$queryRaw<{ id: string; key: string }[]>`
       SELECT DISTINCT ON (key) id, key
       FROM (
         SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at
