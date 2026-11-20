@@ -21,6 +21,16 @@ function Snippet({ text }: { text: string }) {
   );
 }
 
+/** Drops the hits that an earlier page already had. */
+function withoutRepeats<T extends { id: string }>(hits: T[]): T[] {
+  const seen = new Set<string>();
+  return hits.filter((hit) => {
+    if (seen.has(hit.id)) return false;
+    seen.add(hit.id);
+    return true;
+  });
+}
+
 export function SearchPage() {
   const [params, setParams] = useSearchParams();
   // The URL is what gets searched: the words in `q`, narrowed by `notebook` and `tag`.
@@ -54,14 +64,18 @@ export function SearchPage() {
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
+  // The key sits under 'notes', so whatever creates, changes, trashes or
+  // restores a note and refreshes the note lists refreshes the results too.
   const results = useInfiniteQuery({
-    queryKey: ['search', q, notebook, tag],
+    queryKey: ['notes', 'search', q, notebook, tag],
     queryFn: ({ pageParam }) => search(q, { notebookId: notebook, tag, page: pageParam }),
     initialPageParam: 1,
     getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
     enabled: q.length > 0,
   });
-  const hits = results.data?.pages.flatMap((page) => page.items) ?? [];
+  // Pages are cut by position. A note that was added or removed between two
+  // requests shifts the rest, and the next page can then repeat a hit.
+  const hits = withoutRepeats(results.data?.pages.flatMap((page) => page.items) ?? []);
   const total = results.data?.pages[0]?.total ?? 0;
   const filtered = notebook !== null || tag !== null;
 

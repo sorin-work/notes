@@ -106,6 +106,36 @@ describe('SearchPage', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 
+  it('shows a hit once when the next page repeats it', async () => {
+    const first = Array.from({ length: 30 }, (_, i) => hit(`a${i}`, `Sync ${i}`));
+    mockFetch({
+      ...lists,
+      // A note was added since the first page was loaded, so the last hit of that page comes again.
+      'GET /api/search': ({ url }) =>
+        url.includes('page=2')
+          ? { body: page([hit('a29', 'Sync 29'), hit('last', 'The last sync')], 32, 2) }
+          : { body: page(first, 32) },
+    });
+    renderPage('/search?q=sync');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Load more' }));
+    expect(await screen.findByRole('link', { name: /The last sync/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /Sync 29/ })).toHaveLength(1);
+  });
+
+  it('searches again when the notes have changed', async () => {
+    let found = [hit('n1', 'Weekly sync'), hit('n2', 'Sync notes')];
+    mockFetch({ ...lists, 'GET /api/search': () => ({ body: page(found) }) });
+    const { queryClient } = renderPage('/search?q=sync');
+    expect(await screen.findByRole('link', { name: /Sync notes/ })).toBeInTheDocument();
+
+    // What the editor, the trash and the import do after they change notes.
+    found = [hit('n1', 'Weekly sync')];
+    await queryClient.invalidateQueries({ queryKey: ['notes'] });
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Sync notes/ })).not.toBeInTheDocument());
+    expect(screen.getByText('1 note matches')).toBeInTheDocument();
+  });
+
   it('takes over a query that arrives in the URL from outside', async () => {
     const calls = mockFetch({ ...lists, 'GET /api/search': { body: page() } });
     renderPage('/search?q=atlas&notebook=w');
