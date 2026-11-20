@@ -21,20 +21,17 @@ import { PasswordResetService } from './password-reset.service';
         signOptions: { expiresIn: config.jwtExpiresIn as `${number}d` },
       }),
     }),
-    // Only the routes that take a password or send mail use the
-    // ThrottlerGuard: sign-up, login, the account changes that ask for the
-    // password again, and password reset. Requests made with an API token
-    // are counted in the same store, per token (ApiTokensService.throttle).
+    // One allowance a minute, the strict one, for whatever takes a password
+    // or sends mail: sign-up, login, the account changes that ask for the
+    // password again, and password reset. It is counted only where the
+    // ThrottlerGuard is put. Anything with a limit of its own has a guard
+    // of its own and no second entry here: every entry in this list is
+    // counted by every ThrottlerGuard, and the lowest one wins. Requests
+    // made with an API token are counted in the same store, per token
+    // (ApiTokensService.throttle).
     ThrottlerModule.forRootAsync({
       inject: [APP_CONFIG],
-      // Two allowances a minute, both counted wherever the ThrottlerGuard is
-      // used. "default" is the strict one, for whatever takes a password.
-      // "public" is the roomy one for reading shared notes, where the strict
-      // one is switched off.
-      useFactory: (config: AppConfig) => [
-        { name: 'default', ttl: 60_000, limit: config.authThrottleLimit },
-        { name: 'public', ttl: 60_000, limit: config.publicThrottleLimit },
-      ],
+      useFactory: (config: AppConfig) => [{ ttl: 60_000, limit: config.authThrottleLimit }],
     }),
     MailModule,
   ],

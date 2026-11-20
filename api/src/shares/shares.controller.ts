@@ -13,7 +13,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { bearerToken } from '../auth/jwt-auth.guard';
@@ -21,6 +21,7 @@ import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
 import { ShareOptionsDto, UnlockShareDto } from './dto/share.dto';
+import { PublicThrottlerGuard } from './public-throttler.guard';
 import { ShareLinkThrottlerGuard } from './share-link-throttler.guard';
 import { SharedNote, SharesService, ShareView } from './shares.service';
 
@@ -90,8 +91,7 @@ export class PublicSharesController {
    * Throttled per client, with the roomy allowance for reading.
    */
   @Public()
-  @SkipThrottle({ default: true })
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(PublicThrottlerGuard)
   @Get(':token')
   async view(
     @Param('token') token: string,

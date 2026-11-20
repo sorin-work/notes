@@ -14,7 +14,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { ALLOW_API_TOKEN } from '../src/common/allow-api-token.decorator';
 import { IS_PUBLIC } from '../src/common/public.decorator';
-import { APP_CONFIG, loadConfig } from '../src/config/config';
+import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
@@ -1406,6 +1406,20 @@ describe('import and export', () => {
   });
 });
 
+/** A second app on the same database, with other settings. One proxy is trusted, so a test can come from several addresses. */
+async function startApp(settings: Partial<AppConfig>): Promise<INestApplication<App>> {
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(APP_CONFIG)
+    .useValue({ ...loadConfig(), ...settings })
+    .overrideProvider(MAIL_TRANSPORT)
+    .useValue(fakeTransport)
+    .compile();
+  const nest: INestApplication<App> = moduleRef.createNestApplication();
+  setupApp(nest, { trustProxy: 1 });
+  await nest.init();
+  return nest;
+}
+
 /**
  * The suites above run with a throttle limit too high to notice. This one
  * has an app of its own with a limit of three, to see the routes that check
@@ -1416,26 +1430,21 @@ describe('password guesses with a low throttle limit', () => {
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(APP_CONFIG)
-      .useValue({ ...loadConfig(), authThrottleLimit: 3, publicThrottleLimit: 5 })
-      .overrideProvider(MAIL_TRANSPORT)
-      .useValue(fakeTransport)
-      .compile();
-    limited = moduleRef.createNestApplication();
-    // One proxy is trusted, so that a test can come from several addresses by sending X-Forwarded-For.
-    setupApp(limited, { trustProxy: 1 });
-    await limited.init();
+    limited = await startApp({ authThrottleLimit: 3, publicThrottleLimit: 5 });
   });
 
   afterAll(async () => {
     await limited.close();
   });
 
+  const from = (address: string) => ({ 'X-Forwarded-For': address });
+  let accounts = 0;
+  /** Signs up from an address of its own: one address gets three sign-ups a minute here. */
   const account = async (name: string) => {
     const response = await request(limited.getHttpServer())
       .post('/api/auth/register')
-      .send({ email: `${name}-${Date.now()}@example.com`, name, password: 'password123' })
+      .set(from(`192.0.2.${100 + ++accounts}`))
+      .send({ email: `${name}-${Date.now()}-${accounts}@example.com`, name, password: 'password123' })
       .expect(201);
     return bearer(response.body.token);
   };
@@ -1523,5 +1532,64 @@ describe('password guesses with a low throttle limit', () => {
     // Another account, from the same address, still has its own guesses.
     await guessOnPassword(other).expect(403);
     await guessOnToken(other).expect(403);
+  });
+});
+
+/**
+ * AUTH_THROTTLE_LIMIT and PUBLIC_THROTTLE_LIMIT each rule their own routes.
+ * The suite above has the strict limit below the roomy one. Here it is the
+ * other way round and far apart: if reading shared notes were counted on
+ * the password routes as well, they would close after two requests.
+ */
+describe('throttle limits far apart', () => {
+  let nest: INestApplication<App>;
+
+  beforeAll(async () => {
+    nest = await startApp({ authThrottleLimit: 8, publicThrottleLimit: 2 });
+  });
+
+  afterAll(async () => {
+    await nest.close();
+  });
+
+  it('gives every route the allowance that is meant for it', async () => {
+    const server = nest.getHttpServer();
+    const email = `far-apart-${Date.now()}@example.com`;
+    const signedUp = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Far', password: 'password123' })
+      .expect(201);
+    const auth = { Authorization: `Bearer ${signedUp.body.token as string}` };
+    const note = await request(server).post('/api/notes').set(auth).send({ title: 'Open' }).expect(201);
+    const link = await request(server).post(`/api/notes/${note.body.id}/share`).set(auth).expect(200);
+    const shared = `/api/public/notes/${link.body.token as string}`;
+
+    /** How many requests in a row are answered with `status` before the first 429. */
+    const allowance = async (send: () => request.Test, status: number): Promise<number> => {
+      for (let count = 0; count < 20; count++) {
+        const response = await send();
+        if (response.status === 429) return count;
+        expect(response.status).toBe(status);
+      }
+      return 20;
+    };
+
+    // Reading shared notes: two.
+    expect(await allowance(() => request(server).get(shared), 200)).toBe(2);
+
+    // Everything that takes a password or sends mail: eight, not two.
+    const login = () => request(server).post('/api/auth/login').send({ email, password: 'guess' });
+    expect(await allowance(login, 401)).toBe(8);
+    const forgot = () => request(server).post('/api/auth/password-reset').send({ email: 'nobody@example.com' });
+    expect(await allowance(forgot, 204)).toBe(8);
+    const change = () =>
+      request(server)
+        .patch('/api/auth/password')
+        .set(auth)
+        .send({ currentPassword: 'guess', newPassword: 'x'.repeat(12) });
+    expect(await allowance(change, 403)).toBe(8);
+    const register = () => request(server).post('/api/auth/register').send({ email: 'not an address' });
+    // One was used to sign up above.
+    expect(await allowance(register, 400)).toBe(7);
   });
 });
