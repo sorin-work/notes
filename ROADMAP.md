@@ -366,15 +366,18 @@ marker and a task on the first line of a footnote definition.
 The history dialog has a Preview / Changes switch. Changes shows a line diff
 from the selected version to the text in the editor, which `NoteEditor`
 passes in, so an unsaved draft is compared correctly. A changed title is
-shown above the diff. No API change. I wrote the diff in
+shown above the diff, compared the way the API stores titles (trimmed, and
+"Untitled" when empty). No API change. I wrote the diff in
 `web/src/lib/diff.ts` and did not add the `diff` package: lines that match at
-the start and the end are set aside, and the rest goes through a longest
-common subsequence table. The cut-off is on the part that differs, not on the
-length of the note: past about 3,000 lines against 3,000 the view shows a
-plain message. Added on top: unchanged stretches are folded to three lines
-around each change. Still open: changes inside a line are not highlighted,
-folded lines cannot be expanded, and two versions cannot be compared with
-each other.
+the start and the end are set aside, and the rest goes through Myers'
+algorithm, whose work grows with how much changed and not with the length of
+the note. The cut-off is 2,000 added and removed lines, past which the view
+shows a plain message. A single block that was only added or only removed is
+exempt. At most 2,000 rows are shown, followed by how many more lines
+changed. Added on top: unchanged stretches are folded to three lines around
+each change. Still open: changes inside a line are not highlighted, folded
+lines cannot be expanded, and two versions cannot be compared with each
+other.
 
 ### 3. Quick switcher
 

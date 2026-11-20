@@ -203,9 +203,11 @@ the text, so it counts as an edit.
 The Changes view in the history compares a version with what is in the
 editor at that moment, saved or not. Lines marked `-` are only in the
 version, lines marked `+` only in the note now, and long unchanged stretches
-are left out. Line endings are not compared. A long note is compared too when
-only part of it changed, but past about 3,000 changed lines on both sides the
-view says so and shows no diff.
+are left out. Line endings are not compared. How long the note is does not
+matter, only how much changed: up to 2,000 added and removed lines are worked
+out, and past that the view says so and shows no diff. A single block that
+was only added or only removed is shown whatever its size. The view lists
+2,000 rows at most and then says how many more lines changed.
 
 ## API overview
 
