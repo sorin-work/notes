@@ -863,6 +863,88 @@ mark {
   font-size: 0.85rem;
 }
 
+/* Graph */
+
+.graph-canvas {
+  position: relative;
+  margin: 0.5rem 0 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.graph {
+  display: block;
+  width: 100%;
+  height: min(70vh, 34rem);
+  /* Dragging moves the picture, not the page. */
+  touch-action: none;
+  cursor: grab;
+}
+
+.graph-dragging {
+  cursor: grabbing;
+}
+
+.graph-tools {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.graph-edge {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node circle {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.graph-node text {
+  display: none;
+  font-size: 11px;
+  fill: var(--text);
+  /* A rim in the background colour keeps a title readable where it crosses a line. */
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
+.graph-labelled .graph-node text,
+.graph-node.near text {
+  display: block;
+}
+
+/* With the pointer on a note, the rest steps back. */
+.graph-dimmed .graph-node:not(.near),
+.graph-dimmed .graph-edge:not(.near) {
+  opacity: 0.25;
+}
+
+.graph-cut {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.graph-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
 /* Rendered Markdown */
 
 .markdown {

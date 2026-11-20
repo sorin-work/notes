@@ -43,6 +43,7 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: /#atlas/ })).toHaveAttribute('href', '/notes?tag=atlas');
     expect(screen.getByRole('link', { name: 'Not in a notebook' })).toHaveAttribute('href', '/notes?notebook=none');
     expect(screen.getByRole('link', { name: 'Orphans' })).toHaveAttribute('href', '/notes?view=orphans');
+    expect(screen.getByRole('link', { name: 'Graph' })).toHaveAttribute('href', '/graph');
     expect(screen.getByRole('link', { name: 'All notes' })).not.toHaveAttribute('aria-current');
   });
 

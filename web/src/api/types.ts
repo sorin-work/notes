@@ -83,6 +83,18 @@ export interface MentionPage extends Page<Mention> {
   capped: boolean;
 }
 
+export interface GraphNode {
+  id: string;
+  title: string;
+}
+
+/** Notes and the links between them. `total` is larger than the number of nodes when the server cut the graph short. */
+export interface Graph {
+  nodes: GraphNode[];
+  edges: { source: string; target: string }[];
+  total: number;
+}
+
 export interface OutgoingLink {
   title: string;
   noteId: string | null;
