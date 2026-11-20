@@ -295,9 +295,10 @@ function ImportExportSection() {
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
+  const [skipExisting, setSkipExisting] = useState(true);
 
   const upload = useMutation({
-    mutationFn: () => importFiles(files),
+    mutationFn: () => importFiles(files, { skipExisting }),
     onSuccess: () => {
       setFiles([]);
       if (input.current) input.current.value = '';
@@ -321,8 +322,9 @@ function ImportExportSection() {
 
       <h3>Import</h3>
       <p className="muted">
-        Markdown (.md), text files or a zip of them, for example an export from this app or an Obsidian vault. Folders
-        become notebooks.
+        Markdown (.md), text files or a zip of them, for example an export from this app, an Obsidian vault or a Notion
+        export (Markdown, unzipped once if Notion packed it twice). Evernote .enex files too: each file becomes a
+        notebook named after it. Folders become notebooks. Attachments and images are not imported yet.
       </p>
       <div className="input-row">
         <input
@@ -330,7 +332,7 @@ function ImportExportSection() {
           type="file"
           aria-label="Files to import"
           multiple
-          accept=".md,.markdown,.txt,.zip"
+          accept=".md,.markdown,.txt,.zip,.enex"
           onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
         />
         <button
@@ -342,6 +344,10 @@ function ImportExportSection() {
           {upload.isPending ? 'Importing…' : 'Import'}
         </button>
       </div>
+      <label className="checkbox">
+        <input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} />
+        Leave out notes that are here already (same title, notebook and text)
+      </label>
       {upload.error && <ErrorMessage error={upload.error} />}
       {upload.data && (
         <div className="import-result" role="status">
@@ -349,6 +355,19 @@ function ImportExportSection() {
             Imported {upload.data.imported} {upload.data.imported === 1 ? 'note' : 'notes'}
             {upload.data.notebooksCreated > 0 && ` and created ${upload.data.notebooksCreated} notebooks`}.
           </p>
+          {upload.data.duplicates > 0 && (
+            <p>
+              Left out {upload.data.duplicates} {upload.data.duplicates === 1 ? 'note that was' : 'notes that were'}{' '}
+              here already.
+            </p>
+          )}
+          {upload.data.attachmentsSkipped > 0 && (
+            <p>
+              {upload.data.attachmentsSkipped}{' '}
+              {upload.data.attachmentsSkipped === 1 ? 'attachment was' : 'attachments were'} not imported. Only the text
+              of the notes comes along for now.
+            </p>
+          )}
           {upload.data.skipped.length > 0 && (
             <details>
               <summary>{upload.data.skipped.length} files skipped</summary>

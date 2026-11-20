@@ -30,18 +30,47 @@ describe('SettingsPage', () => {
       ...loaded,
       'POST /api/import': {
         status: 201,
-        body: { imported: 2, notebooksCreated: 1, skipped: [{ file: 'photo.jpg', reason: 'Not a Markdown file' }] },
+        body: {
+          imported: 2,
+          notebooksCreated: 1,
+          duplicates: 3,
+          attachmentsSkipped: 1,
+          skipped: [{ file: 'photo.jpg', reason: 'Not a Markdown file' }],
+        },
       },
     });
     renderSettings();
 
     const file = new File(['# Hello'], 'hello.md', { type: 'text/markdown' });
     await userEvent.upload(screen.getByLabelText('Files to import'), file);
+    expect(screen.getByRole('checkbox', { name: /Leave out notes that are here already/ })).toBeChecked();
     await userEvent.click(screen.getByRole('button', { name: 'Import' }));
 
     expect(await screen.findByText(/Imported 2 notes and created 1 notebooks/)).toBeInTheDocument();
+    expect(screen.getByText('Left out 3 notes that were here already.')).toBeInTheDocument();
+    expect(screen.getByText(/1 attachment was not imported/)).toBeInTheDocument();
     expect(screen.getByText('1 files skipped')).toBeInTheDocument();
-    expect(calls.find((call) => call.method === 'POST')?.body).toBeInstanceOf(FormData);
+    const body = calls.find((call) => call.method === 'POST')?.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get('skipExisting')).toBe('true');
+  });
+
+  it('imports everything again when told not to leave out what is there', async () => {
+    const calls = mockFetch({
+      ...loaded,
+      'POST /api/import': {
+        status: 201,
+        body: { imported: 1, notebooksCreated: 0, duplicates: 0, attachmentsSkipped: 0, skipped: [] },
+      },
+    });
+    renderSettings();
+
+    await userEvent.upload(screen.getByLabelText('Files to import'), new File(['x'], 'Notes.enex'));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Leave out notes that are here already/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(await screen.findByText(/Imported 1 note/)).toBeInTheDocument();
+    expect((calls.find((call) => call.method === 'POST')?.body as FormData).get('skipExisting')).toBe('false');
   });
 
   it('checks that the new passwords match before sending them', async () => {

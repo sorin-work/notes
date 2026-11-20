@@ -1156,6 +1156,13 @@ mark {
   gap: 0.4rem;
 }
 
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
 .import-result {
   margin-top: 0.75rem;
 }

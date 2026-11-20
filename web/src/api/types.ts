@@ -189,5 +189,9 @@ export type ShareSubject = { noteId: string } | { notebookId: string };
 export interface ImportResult {
   imported: number;
   notebooksCreated: number;
+  /** Notes left out because the account has them already. */
+  duplicates: number;
+  /** Attachments and images in Evernote notes, which are not imported. */
+  attachmentsSkipped: number;
   skipped: { file: string; reason: string }[];
 }
