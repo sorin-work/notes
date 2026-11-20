@@ -14,7 +14,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { ALLOW_API_TOKEN } from '../src/common/allow-api-token.decorator';
 import { IS_PUBLIC } from '../src/common/public.decorator';
-import { APP_CONFIG, loadConfig } from '../src/config/config';
+import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
@@ -697,10 +697,13 @@ describe('api tokens', () => {
       'PasswordResetController.confirm',
       'PasswordResetController.request',
       'PasswordResetController.status',
+      'PublicSharesController.unlock',
       'PublicSharesController.view',
+      'PublicSharesController.viewNote',
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AuthController',
+      'NotebookSharesController',
       'NotebooksController',
       'NotesController',
       'SearchController',
@@ -1411,6 +1414,407 @@ describe('sharing', () => {
     await request(server).delete(`/api/notes/${note.body.id}/share`).set(auth).expect(204);
     await request(server).get(`/api/public/notes/${share.body.token}`).expect(404);
   });
+
+  const shareOf = async (auth: { Authorization: string }, title = 'Recipe') => {
+    const server = app.getHttpServer();
+    const note = await request(server).post('/api/notes').set(auth).send({ title, content: 'Bread' }).expect(201);
+    const share = await request(server).post(`/api/notes/${note.body.id}/share`).set(auth).expect(200);
+    return {
+      noteId: note.body.id as string,
+      token: share.body.token as string,
+      path: `/api/notes/${note.body.id}/share`,
+    };
+  };
+
+  it('asks readers for the password, which travels in the body, and never tells anyone to keep a copy', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const { token, path } = await shareOf(auth);
+
+    await request(server).patch(path).set(auth).send({ password: 'short' }).expect(400);
+    const set = await request(server).patch(path).set(auth).send({ password: 'open sesame' }).expect(200);
+    expect(set.body).toMatchObject({ token, hasPassword: true, expiresAt: null, expired: false });
+    expect(JSON.stringify(set.body)).not.toContain('open sesame');
+    expect(set.body).not.toHaveProperty('passwordHash');
+
+    // Enough to show a prompt, and nothing of the note.
+    const prompt = await request(server).get(`/api/public/notes/${token}`).expect(403);
+    expect(prompt.body).toEqual({
+      statusCode: 403,
+      error: 'Forbidden',
+      message: 'This link is protected by a password',
+      passwordRequired: true,
+    });
+    expect(prompt.headers['cache-control']).toBe('no-store');
+    // A password in the address is not looked at.
+    await request(server).get(`/api/public/notes/${token}?password=open%20sesame`).expect(403);
+
+    const wrong = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'open says me' })
+      .expect(403);
+    expect(wrong.body).toMatchObject({ passwordRequired: true, message: 'That password is not right' });
+    expect(wrong.headers['cache-control']).toBe('no-store');
+    const empty = await request(server).post(`/api/public/notes/${token}`).send({}).expect(400);
+    expect(empty.headers['cache-control']).toBe('no-store');
+
+    const opened = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    expect(opened.body).toMatchObject({ title: 'Recipe', content: 'Bread' });
+    expect(opened.headers['cache-control']).toBe('no-store');
+
+    // Taking the password away opens the same link again.
+    await request(server).patch(path).set(auth).send({ password: null }).expect(200);
+    const open = await request(server).get(`/api/public/notes/${token}`).expect(200);
+    expect(open.headers['cache-control']).toBe('no-store');
+  });
+
+  it('stops working when it runs out, and then looks like a link that never was', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const { auth } = await signUp();
+    const { noteId, token, path } = await shareOf(auth);
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    await request(server).patch(path).set(auth).send({ expiresAt: 'next week' }).expect(400);
+    await request(server).patch(path).set(auth).send({ expiresAt: '2020-01-01T00:00:00Z' }).expect(400);
+    // Forms that pass for ISO 8601 and that no date can be made of, or only with a guess at the zone.
+    for (const unreadable of ['2027-W01', '20270101', '2099-01-01T10:00']) {
+      const refused = await request(server).patch(path).set(auth).send({ expiresAt: unreadable }).expect(400);
+      expect(refused.body.message).toEqual(['expiresAt must be a date and time such as 2026-03-01T12:00:00Z']);
+    }
+    const limited = await request(server)
+      .patch(path)
+      .set(auth)
+      .send({ expiresAt: soon, password: 'open sesame' })
+      .expect(200);
+    expect(limited.body).toMatchObject({ expiresAt: soon, expired: false, hasPassword: true });
+    await request(server).get(`/api/public/notes/${token}`).expect(403);
+
+    // The hour passes.
+    await prisma.shareLink.update({ where: { noteId }, data: { expiresAt: new Date(Date.now() - 1000) } });
+
+    const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
+    const expired = await request(server).get(`/api/public/notes/${token}`).expect(404);
+    const expiredWithPassword = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'open sesame' })
+      .expect(404);
+    const expiredWithGuess = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'guess' })
+      .expect(404);
+    // Not even that it once had a password shows.
+    expect(expired.body).toEqual(never.body);
+    expect(expiredWithPassword.body).toEqual(never.body);
+    expect(expiredWithGuess.body).toEqual(never.body);
+    expect(expired.headers['cache-control']).toBe('no-store');
+
+    // The owner sees what happened, and can give it more time.
+    const seen = await request(server).get(path).set(auth).expect(200);
+    expect(seen.body.share).toMatchObject({ token, expired: true, hasPassword: true });
+    await request(server).patch(path).set(auth).send({ expiresAt: null }).expect(200);
+    await request(server).post(`/api/public/notes/${token}`).send({ password: 'open sesame' }).expect(200);
+  });
+
+  it('counts the views of others, not the owner looking at their own note', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const stranger = await signUp();
+    const { token, path } = await shareOf(auth);
+    const views = async () => (await request(server).get(path).set(auth).expect(200)).body.share.viewCount as number;
+
+    await request(server).get(`/api/public/notes/${token}`).set(auth).expect(200);
+    expect(await views()).toBe(0);
+
+    await request(server).get(`/api/public/notes/${token}`).expect(200);
+    await request(server).get(`/api/public/notes/${token}`).set(stranger.auth).expect(200);
+    await request(server).get(`/api/public/notes/${token}`).set({ Authorization: 'Bearer not-a-token' }).expect(200);
+    expect(await views()).toBe(3);
+
+    // Behind a password too, and a refused attempt is not a view.
+    await request(server).patch(path).set(auth).send({ password: 'open sesame' }).expect(200);
+    await request(server).get(`/api/public/notes/${token}`).expect(403);
+    await request(server).post(`/api/public/notes/${token}`).send({ password: 'wrong one' }).expect(403);
+    await request(server).post(`/api/public/notes/${token}`).set(auth).send({ password: 'open sesame' }).expect(200);
+    expect(await views()).toBe(3);
+    await request(server).post(`/api/public/notes/${token}`).send({ password: 'open sesame' }).expect(200);
+    expect(await views()).toBe(4);
+  });
+});
+
+describe('sharing a notebook', () => {
+  /** Recipes with Soup in it, Bread inside Recipes with Rye in it, and a note in no notebook. */
+  const kitchen = async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const make = async (path: string, body: object) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+    const recipes = await make('/api/notebooks', { name: 'Recipes' });
+    const bread = await make('/api/notebooks', { name: 'Bread', parentId: recipes.id });
+    const soup = await make('/api/notes', { title: 'Soup', content: 'Leeks.', notebookId: recipes.id });
+    const plan = await make('/api/notes', { title: 'Private plan', content: 'Nobody reads this.' });
+    const rye = await make('/api/notes', {
+      title: 'Rye',
+      content: 'Goes with [[soup]]. See [[Private plan|the plan]], [[Private plan]] and [[Missing note]].',
+      notebookId: bread.id,
+    });
+    const share = await request(server).post(`/api/notebooks/${recipes.id}/share`).set(auth).expect(200);
+    return {
+      server,
+      auth,
+      recipes: recipes.id as string,
+      bread: bread.id as string,
+      soup: soup.id as string,
+      rye: rye.id as string,
+      plan: plan.id as string,
+      sharePath: `/api/notebooks/${recipes.id}/share`,
+      link: `/api/public/notes/${share.body.token as string}`,
+      token: share.body.token as string,
+    };
+  };
+
+  it('shows the notes of the notebook and of the notebooks inside it, and nothing from outside', async () => {
+    const { server, auth, recipes, soup, rye, plan, link, token } = await kitchen();
+
+    const index = await request(server).get(link).expect(200);
+    expect(index.headers['cache-control']).toBe('no-store');
+    expect(index.body).toMatchObject({ kind: 'notebook', name: 'Recipes' });
+    expect(
+      index.body.notes.map((note: { id: string; title: string; notebook: string | null }) => [
+        note.title,
+        note.notebook,
+        note.id,
+      ]),
+    ).toEqual([
+      ['Soup', null, soup],
+      ['Rye', 'Bread', rye],
+    ]);
+    expect(JSON.stringify(index.body)).not.toContain('Private plan');
+
+    const never = await request(server).get(`${link}/6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e`).expect(404);
+    const outside = await request(server).get(`${link}/${plan}`).expect(404);
+    expect(outside.body).toEqual(never.body);
+
+    // A note added to the notebook later is covered without touching the link.
+    const pizza = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Pizza', notebookId: recipes })
+      .expect(201);
+    await request(server).get(`${link}/${pizza.body.id}`).expect(200);
+    expect((await request(server).get(link).expect(200)).body.notes).toHaveLength(3);
+
+    // The same link again, and the owner sees one link per notebook.
+    const again = await request(server).post(`/api/notebooks/${recipes}/share`).set(auth).expect(200);
+    expect(again.body.token).toBe(token);
+  });
+
+  it('follows [[links]] inside the notebook and gives away no title from outside it', async () => {
+    const { server, soup, rye, link, token } = await kitchen();
+
+    const shared = await request(server).get(`${link}/${rye}`).expect(200);
+
+    expect(shared.body).toMatchObject({
+      kind: 'note',
+      title: 'Rye',
+      // The link into the notebook stays. The private note is down to the words the page shows, the
+      // note that does not exist looks no different, and the title behind the alias is gone.
+      content: 'Goes with [[soup]]. See the plan, Private plan and Missing note.',
+      links: { soup: `/s/${token}/${soup}` },
+    });
+    expect(Object.keys(shared.body.links)).toEqual(['soup']);
+    expect(shared.body.content.match(/Private plan/g)).toHaveLength(1);
+  });
+
+  it('looks up titles among the shared notes, so a newer private note of the same title changes nothing', async () => {
+    const { server, auth, soup, rye, link, token } = await kitchen();
+    const before = await request(server).get(`${link}/${rye}`).expect(200);
+
+    // In the app [[soup]] now leads to this one, the newest. Readers must not see a difference.
+    await request(server).post('/api/notes').set(auth).send({ title: 'Soup', content: 'Private.' }).expect(201);
+
+    const after = await request(server).get(`${link}/${rye}`).expect(200);
+    expect(after.body).toEqual(before.body);
+    expect(after.body.links).toEqual({ soup: `/s/${token}/${soup}` });
+  });
+
+  it('tells the owner what is public through a shared notebook, and through which', async () => {
+    const { server, auth, recipes, bread, soup, rye, plan } = await kitchen();
+    const through = { id: recipes, name: 'Recipes' };
+
+    for (const id of [soup, rye]) {
+      expect((await request(server).get(`/api/notes/${id}`).set(auth).expect(200)).body).toMatchObject({
+        shared: false,
+        sharedThrough: through,
+      });
+    }
+    expect((await request(server).get(`/api/notes/${plan}`).set(auth).expect(200)).body.sharedThrough).toBeNull();
+    const notebooks = (await request(server).get('/api/notebooks').set(auth).expect(200)).body as {
+      id: string;
+      shared: boolean;
+      sharedThrough: object | null;
+    }[];
+    expect(notebooks.find((notebook) => notebook.id === recipes)).toMatchObject({
+      shared: true,
+      sharedThrough: through,
+    });
+    expect(notebooks.find((notebook) => notebook.id === bread)).toMatchObject({
+      shared: false,
+      sharedThrough: through,
+    });
+
+    // Moved in, the private note is public too, and says so.
+    const moved = await request(server).patch(`/api/notes/${plan}`).set(auth).send({ notebookId: bread }).expect(200);
+    expect(moved.body.sharedThrough).toEqual(through);
+  });
+
+  it('stops serving a note the moment it is moved out or put in the trash', async () => {
+    const { server, auth, soup, rye, link } = await kitchen();
+    const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
+    await request(server).get(`${link}/${soup}`).expect(200);
+
+    await request(server).patch(`/api/notes/${soup}`).set(auth).send({ notebookId: null }).expect(200);
+    const moved = await request(server).get(`${link}/${soup}`).expect(404);
+    expect(moved.body).toEqual(never.body);
+    // And the note that linked to it has a plain word where the link was.
+    const rest = await request(server).get(`${link}/${rye}`).expect(200);
+    expect(rest.body).toMatchObject({ content: expect.stringContaining('Goes with soup.'), links: {} });
+
+    await request(server).delete(`/api/notes/${rye}`).set(auth).expect(204);
+    await request(server).get(`${link}/${rye}`).expect(404);
+    expect((await request(server).get(link).expect(200)).body.notes).toEqual([]);
+  });
+
+  it('takes the same password and expiry as a link to a note, and one password serves the whole notebook', async () => {
+    const { server, auth, soup, rye, sharePath, link } = await kitchen();
+    const prisma = app.get(PrismaService);
+
+    await request(server).patch(sharePath).set(auth).send({ password: 'open sesame' }).expect(200);
+    expect((await request(server).get(link).expect(403)).body).toMatchObject({ passwordRequired: true });
+    await request(server).get(`${link}/${soup}`).expect(403);
+    await request(server).post(link).send({ password: 'open says me' }).expect(403);
+
+    const opened = await request(server).post(link).send({ password: 'open sesame' }).expect(200);
+    expect(opened.body).toMatchObject({ kind: 'notebook', name: 'Recipes' });
+    const proof = { 'X-Share-Access': opened.body.access as string };
+
+    // The proof of the password, not the password, goes with every note after that.
+    expect((await request(server).get(`${link}/${soup}`).set(proof).expect(200)).body.title).toBe('Soup');
+    expect((await request(server).get(`${link}/${rye}`).set(proof).expect(200)).body.title).toBe('Rye');
+    await request(server).get(link).set(proof).expect(200);
+    await request(server).get(`${link}/${soup}`).set({ 'X-Share-Access': 'made-up' }).expect(403);
+
+    // A new password ends what the old one opened.
+    await request(server).patch(sharePath).set(auth).send({ password: 'another one' }).expect(200);
+    await request(server).get(`${link}/${soup}`).set(proof).expect(403);
+
+    await prisma.shareLink.updateMany({
+      where: { notebookId: { not: null }, token: link.split('/').pop() },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
+    expect((await request(server).get(link).expect(404)).body).toEqual(never.body);
+    expect((await request(server).get(`${link}/${soup}`).set(proof).expect(404)).body).toEqual(never.body);
+    expect((await request(server).get(sharePath).set(auth).expect(200)).body.share).toMatchObject({ expired: true });
+  });
+
+  it('ends with the notebook, and a link has to be for a note or for a notebook', async () => {
+    const { server, auth, recipes, soup, link, sharePath } = await kitchen();
+    const prisma = app.get(PrismaService);
+    const stranger = await signUp();
+
+    await request(server).post(sharePath).set(stranger.auth).expect(404);
+    await request(server).get(sharePath).set(stranger.auth).expect(404);
+
+    await expect(prisma.shareLink.create({ data: { token: `neither-${Date.now()}` } })).rejects.toThrow();
+    await expect(
+      prisma.shareLink.create({ data: { token: `both-${Date.now()}`, noteId: soup, notebookId: recipes } }),
+    ).rejects.toThrow();
+
+    await request(server).delete(`/api/notebooks/${recipes}`).set(auth).expect(200);
+    await request(server).get(link).expect(404);
+    await request(server).get(`${link}/${soup}`).expect(404);
+  });
+});
+
+describe('links between shared notes', () => {
+  it('lead to the other note only while that note has a live link of its own', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const { auth } = await signUp();
+    const starter = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Starter', content: 'Flour and water.' });
+    const bread = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Bread', content: 'Feed the [[Starter|starter culture]] first.' });
+    const shared = await request(server).post(`/api/notes/${bread.body.id}/share`).set(auth).expect(200);
+    const link = `/api/public/notes/${shared.body.token as string}`;
+
+    // The other note is private: its title is not in what readers get, only the words written for it.
+    const alone = await request(server).get(link).expect(200);
+    expect(alone.body).toMatchObject({ kind: 'note', content: 'Feed the starter culture first.', links: {} });
+    expect(JSON.stringify(alone.body)).not.toContain('Starter');
+
+    const other = await request(server).post(`/api/notes/${starter.body.id}/share`).set(auth).expect(200);
+    const both = await request(server).get(link).expect(200);
+    expect(both.body).toMatchObject({
+      content: 'Feed the [[Starter|starter culture]] first.',
+      links: { starter: `/s/${other.body.token as string}` },
+    });
+
+    // A newer private note of the same title does not take the link's place.
+    await request(server).post('/api/notes').set(auth).send({ title: 'Starter', content: 'Private.' }).expect(201);
+    expect((await request(server).get(link).expect(200)).body).toEqual(both.body);
+
+    // Behind a password, the other note is no place to follow to: neither its token nor its title get out.
+    const starterShare = `/api/notes/${starter.body.id}/share`;
+    await request(server).patch(starterShare).set(auth).send({ password: 'open sesame' }).expect(200);
+    const locked = await request(server).get(link).expect(200);
+    expect(locked.body).toMatchObject({ content: 'Feed the starter culture first.', links: {} });
+    expect(JSON.stringify(locked.body)).not.toContain('Starter');
+    expect(JSON.stringify(locked.body)).not.toContain(other.body.token as string);
+    await request(server).patch(starterShare).set(auth).send({ password: null }).expect(200);
+
+    await prisma.shareLink.update({
+      where: { noteId: starter.body.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect((await request(server).get(link).expect(200)).body).toMatchObject({
+      content: 'Feed the starter culture first.',
+      links: {},
+    });
+  });
+
+  it('leads from a single shared note to a note that only a shared notebook covers: it does not', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const notebook = await request(server).post('/api/notebooks').set(auth).send({ name: 'Kitchen' }).expect(201);
+    await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Starter', notebookId: notebook.body.id })
+      .expect(201);
+    await request(server)
+      .post(`/api/notebooks/${notebook.body.id as string}/share`)
+      .set(auth)
+      .expect(200);
+    const bread = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Bread', content: 'See [[Starter]].' });
+    const shared = await request(server).post(`/api/notes/${bread.body.id}/share`).set(auth).expect(200);
+
+    const read = await request(server)
+      .get(`/api/public/notes/${shared.body.token as string}`)
+      .expect(200);
+    expect(read.body).toMatchObject({ content: 'See Starter.', links: {} });
+  });
 });
 
 describe('import and export', () => {
@@ -1449,6 +1853,20 @@ describe('import and export', () => {
   });
 });
 
+/** A second app on the same database, with other settings. One proxy is trusted, so a test can come from several addresses. */
+async function startApp(settings: Partial<AppConfig>): Promise<INestApplication<App>> {
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(APP_CONFIG)
+    .useValue({ ...loadConfig(), ...settings })
+    .overrideProvider(MAIL_TRANSPORT)
+    .useValue(fakeTransport)
+    .compile();
+  const nest: INestApplication<App> = moduleRef.createNestApplication();
+  setupApp(nest, { trustProxy: 1 });
+  await nest.init();
+  return nest;
+}
+
 /**
  * The suites above run with a throttle limit too high to notice. This one
  * has an app of its own with a limit of three, to see the routes that check
@@ -1459,25 +1877,21 @@ describe('password guesses with a low throttle limit', () => {
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(APP_CONFIG)
-      .useValue({ ...loadConfig(), authThrottleLimit: 3 })
-      .overrideProvider(MAIL_TRANSPORT)
-      .useValue(fakeTransport)
-      .compile();
-    limited = moduleRef.createNestApplication();
-    setupApp(limited);
-    await limited.init();
+    limited = await startApp({ authThrottleLimit: 3, publicThrottleLimit: 5 });
   });
 
   afterAll(async () => {
     await limited.close();
   });
 
+  const from = (address: string) => ({ 'X-Forwarded-For': address });
+  let accounts = 0;
+  /** Signs up from an address of its own: one address gets three sign-ups a minute here. */
   const account = async (name: string) => {
     const response = await request(limited.getHttpServer())
       .post('/api/auth/register')
-      .send({ email: `${name}-${Date.now()}@example.com`, name, password: 'password123' })
+      .set(from(`192.0.2.${100 + ++accounts}`))
+      .send({ email: `${name}-${Date.now()}-${accounts}@example.com`, name, password: 'password123' })
       .expect(201);
     return bearer(response.body.token);
   };
@@ -1489,6 +1903,80 @@ describe('password guesses with a low throttle limit', () => {
     await request(server).get('/api/docs-json').expect(404);
     await request(server).get('/api/docs/swagger-ui.css').expect(404);
     await request(server).get('/api/health').expect(200);
+  });
+
+  const shareWithPassword = async (owner: { Authorization: string }, title: string) => {
+    const server = limited.getHttpServer();
+    const note = await request(server).post('/api/notes').set(owner).send({ title }).expect(201);
+    const link = await request(server)
+      .post(`/api/notes/${note.body.id}/share`)
+      .set(owner)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    return `/api/public/notes/${link.body.token as string}`;
+  };
+
+  it('lets a client read a handful of shared notes a minute, with the roomy allowance and not the strict one', async () => {
+    const server = limited.getHttpServer();
+    const link = await shareWithPassword(await account('sharer'), 'First');
+
+    for (let i = 0; i < 5; i++) {
+      await request(server).get(link).set(from('203.0.113.1')).expect(403);
+    }
+    const refused = await request(server).get(link).set(from('203.0.113.1')).expect(429);
+    expect(refused.headers['retry-after']).toBeDefined();
+    // Not to be kept either, although no handler ran.
+    expect(refused.headers['cache-control']).toBe('no-store');
+    await request(server).get(link).set(from('203.0.113.2')).expect(403);
+  });
+
+  it('takes three wrong passwords a minute for a link, whoever sends them, and never holds the owner back', async () => {
+    const server = limited.getHttpServer();
+    const owner = await account('sharer');
+    const first = await shareWithPassword(owner, 'First');
+    const second = await shareWithPassword(owner, 'Second');
+    const guess = (link: string, address: string, password: string) =>
+      request(server).post(link).set(from(address)).send({ password });
+
+    // Guessing from a new address every time: the link itself stops taking passwords after three wrong ones.
+    await guess(first, '198.51.100.1', 'guess-1').expect(403);
+    await guess(first, '198.51.100.2', 'guess-2').expect(403);
+    await guess(first, '198.51.100.3', 'guess-3').expect(403);
+    const refused = await guess(first, '198.51.100.4', 'guess-4').expect(429);
+    expect(refused.body.message).toBe('Too many wrong passwords for this link. Try again in a minute.');
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+    expect(refused.headers['cache-control']).toBe('no-store');
+    // The right password does not get through either until the minute is over.
+    await guess(first, '198.51.100.5', 'open sesame').expect(429);
+
+    // The owner, signed in, is not held back by what others did to the link.
+    await guess(first, '198.51.100.6', 'open sesame').set(owner).expect(200);
+    await guess(first, '198.51.100.6', 'mistyped').set(owner).expect(403);
+
+    // Another link is not affected.
+    await guess(second, '198.51.100.7', 'open sesame').expect(200);
+  });
+
+  it('does not count right passwords against a link, only against the client that sends them', async () => {
+    const server = limited.getHttpServer();
+    const link = await shareWithPassword(await account('sharer'), 'Popular');
+    const open = (address: string, password = 'open sesame') =>
+      request(server).post(link).set(from(address)).send({ password });
+
+    // More readers in a minute than the link takes wrong passwords.
+    for (let reader = 1; reader <= 5; reader++) {
+      await open(`192.0.2.${reader}`).expect(200);
+    }
+    // Two wrong ones leave room for a third attempt.
+    await open('192.0.2.10', 'guess-1').expect(403);
+    await open('192.0.2.11', 'guess-2').expect(403);
+    await open('192.0.2.12').expect(200);
+
+    // One address still has only its own three requests a minute on the route.
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(429);
   });
 
   it('caps the guesses against one account across the routes that check the password', async () => {
@@ -1527,5 +2015,64 @@ describe('password guesses with a low throttle limit', () => {
     // Another account, from the same address, still has its own guesses.
     await guessOnPassword(other).expect(403);
     await guessOnToken(other).expect(403);
+  });
+});
+
+/**
+ * AUTH_THROTTLE_LIMIT and PUBLIC_THROTTLE_LIMIT each rule their own routes.
+ * The suite above has the strict limit below the roomy one. Here it is the
+ * other way round and far apart: if reading shared notes were counted on
+ * the password routes as well, they would close after two requests.
+ */
+describe('throttle limits far apart', () => {
+  let nest: INestApplication<App>;
+
+  beforeAll(async () => {
+    nest = await startApp({ authThrottleLimit: 8, publicThrottleLimit: 2 });
+  });
+
+  afterAll(async () => {
+    await nest.close();
+  });
+
+  it('gives every route the allowance that is meant for it', async () => {
+    const server = nest.getHttpServer();
+    const email = `far-apart-${Date.now()}@example.com`;
+    const signedUp = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Far', password: 'password123' })
+      .expect(201);
+    const auth = { Authorization: `Bearer ${signedUp.body.token as string}` };
+    const note = await request(server).post('/api/notes').set(auth).send({ title: 'Open' }).expect(201);
+    const link = await request(server).post(`/api/notes/${note.body.id}/share`).set(auth).expect(200);
+    const shared = `/api/public/notes/${link.body.token as string}`;
+
+    /** How many requests in a row are answered with `status` before the first 429. */
+    const allowance = async (send: () => request.Test, status: number): Promise<number> => {
+      for (let count = 0; count < 20; count++) {
+        const response = await send();
+        if (response.status === 429) return count;
+        expect(response.status).toBe(status);
+      }
+      return 20;
+    };
+
+    // Reading shared notes: two.
+    expect(await allowance(() => request(server).get(shared), 200)).toBe(2);
+
+    // Everything that takes a password or sends mail: eight, not two.
+    const login = () => request(server).post('/api/auth/login').send({ email, password: 'guess' });
+    expect(await allowance(login, 401)).toBe(8);
+    const forgot = () => request(server).post('/api/auth/password-reset').send({ email: 'nobody@example.com' });
+    expect(await allowance(forgot, 204)).toBe(8);
+    const change = () =>
+      request(server)
+        .patch('/api/auth/password')
+        .set(auth)
+        .send({ currentPassword: 'guess', newPassword: 'x'.repeat(12) });
+    expect(await allowance(change, 403)).toBe(8);
+    const register = () => request(server).post('/api/auth/register').send({ email: 'not an address' });
+    // One was used to sign up above.
+    expect(await allowance(register, 400)).toBe(7);
   });
 });

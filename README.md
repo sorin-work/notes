@@ -56,9 +56,16 @@ Markdown import/export.
   to keep: your text, theirs, or yours with theirs saved in the history.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
-- **Share links**: a read-only public page for a single note at `/s/<token>`,
-  with a view count. Stopping sharing kills the link; notes in the trash are
-  never served.
+- **Share links**: a read-only public page at `/s/<token>` for a single note,
+  or for a notebook with everything in it, the notebooks inside it and the
+  notes you add later included. A link has a view count that leaves out your
+  own visits, and can be given a date on which it runs out and a password
+  that readers have to type. In a shared notebook, `[[links]]` between its
+  notes work for readers. Anywhere else a link works only when the other note
+  has a link of its own with no password that has not run out; every other
+  link shows as its words. Notes and notebooks that a shared notebook makes
+  public say so, and moving something into a shared notebook asks first.
+  Stopping sharing kills the link; notes in the trash are never served.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
@@ -175,8 +182,8 @@ reset.
 
 ### Limits per visitor
 
-Logins, sign-ups, password resets and the account changes that ask for the
-password are limited per client address. The API sits behind nginx, so the
+Logins, sign-ups, password resets, the account changes that ask for the
+password, and reading shared notes are limited per client address. The API sits behind nginx, so the
 stack sets `TRUST_PROXY=1`: the API then takes the address nginx reports in
 `X-Forwarded-For` instead of nginx's own, which would be the same for
 everyone and let one visitor use up the allowance of all. Requests made
@@ -213,7 +220,11 @@ After each dump only the newest seven are kept. Files with any other name are
 left alone: rename a dump to keep it for good. How old a dump is, and which
 ones are the oldest, is read from the time in the file name and never from
 the file's modification time. A dump dated in the future, which is what a
-clock that was set back leaves behind, counts as made now and not as overdue.
+clock that was wrong leaves behind, counts as made now and not as overdue.
+Such dumps are never removed and do not count towards the seven, so they
+cannot push out the real ones. The same goes for a name with a day that does
+not exist, such as 31 February. Every run names them in a warning in the
+log, and deleting them is up to you.
 
 | Variable                  | Default     | Purpose                               |
 | ------------------------- | ----------- | ------------------------------------- |
@@ -227,22 +238,29 @@ A dump right now, for example before an upgrade:
 docker compose --profile backup run --rm backup once
 ```
 
-To restore, stop the API, name the dump and start the API again:
+To restore, stop what is connected to the database, name the dump and start
+things again. That is the API, and the backup service too, since a dump that
+is being made holds a connection as well:
 
 ```bash
-docker compose stop api
+docker compose --profile backup stop api backup
 docker compose --profile backup run --rm backup restore notes-20261120T030000Z.dump
-docker compose start api
+docker compose --profile backup start api backup
 ```
 
+Leave `backup` out of the first and the last line if you do not run the
+backup service.
+
 `restore` without a file name lists the dumps. The restore replaces the whole
-database, so everything written after the dump is gone. The dump is loaded
-into a new database first, and that one takes the place of the old one only
-when the load worked: a damaged file, or an API that is still running, leaves
-the data as it was. Should the very last step fail, giving the new database
-its name, the script says where the restored data is and prints the command
-that finishes the job. When the API starts again it applies any migrations
-that are newer than the dump.
+database, so everything written after the dump is gone. It goes in three
+steps. The dump is loaded into a new database. Then, in one transaction, the
+old database is renamed aside and the new one gets its name. Last, the old
+one is dropped. So a damaged file leaves the data as it was, and so does
+anything still connected to the database: the script then lists who is
+connected. At no point is there no database, also if the restore is killed
+half way. If only the last step fails, the restore is done and the script
+says which old copy is left to remove. When the API starts again it applies
+any migrations that are newer than the dump.
 
 After losing the volume, or on another machine, it is the same command: put
 the dump in `./backups`, run the `restore` line (it starts the database by
@@ -302,6 +320,7 @@ npm run dev
 | `TRASH_RETENTION_DAYS`     | `30`       | Days before trashed notes are deleted for good                           |
 | `AUTH_THROTTLE_LIMIT`      | `10`       | Per-minute limit on the routes that take a password                      |
 | `API_TOKEN_THROTTLE_LIMIT` | `120`      | Requests a minute that one API token may make                            |
+| `PUBLIC_THROTTLE_LIMIT`    | `60`       | Shared notes that one client may open in a minute                        |
 | `API_DOCS`                 | `true`     | `false` turns off the page and the document at `/api/docs`               |
 | `SMTP_HOST`                | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
 | `SMTP_PORT`                | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
@@ -361,7 +380,11 @@ It starts with `scripts/check-backup-loop.sh`, which needs neither Docker nor
 a database and can be run by itself. That one drives the daily loop with
 stand-ins for `pg_dump` and `sleep` and with dump files dated in the past and
 in the future, and fails if the loop makes more than one dump, makes two
-without a pause, or leaves fewer dumps behind than it should.
+without a pause, or leaves fewer dumps behind than it should. It also walks
+a restore through its steps with stand-ins and fails if the database would
+be touched when the dump does not load or the swap is refused. With the real
+database the check then restores over a database that holds something else,
+tries a damaged dump, and tries with a second client connected.
 
 ## Project layout
 
@@ -584,6 +607,61 @@ still work and offers to revoke them all in one click
 (`DELETE /auth/tokens`). A password reset by mail does revoke them all. A
 token also ends when it is revoked by itself or the account is deleted. An
 account can have 20 of them.
+
+A shared note is read with `GET /public/notes/:token`, without a login. Three
+things can come back besides the note:
+
+- `404` for a link that was mistyped, was revoked, has run out, or whose note
+  is in the trash. The answer is the same for all of them, so nobody outside
+  can tell which, or that a link ever existed.
+- `403` with `"passwordRequired": true` for a link with a password. The note
+  then comes from `POST /public/notes/:token` with `{ "password": "..." }`.
+  The password is only ever sent in a body, never in an address, where it
+  would end up in logs and histories. A wrong password gets the same `403`.
+- `429` when a client reads more than `PUBLIC_THROTTLE_LIMIT` shared notes a
+  minute, or sends more than `AUTH_THROTTLE_LIMIT` passwords a minute. A link
+  also takes only `AUTH_THROTTLE_LIMIT` wrong passwords a minute in total,
+  from all clients together, so guessing from many addresses does not get
+  more tries. A right password does not count against the link. Once the
+  wrong ones are used up, the link refuses every password, the right one
+  too, until the minute that began with the first wrong one is over, and
+  the `429` carries `Retry-After`. So someone who keeps guessing can keep
+  readers out for as long as they keep at it, without getting closer to the
+  note. The owner, signed in, is never counted or refused by the link's
+  limit.
+
+Every answer of the public routes carries `Cache-Control: no-store`, so that
+a link that is revoked, runs out or gets a password stops working at once
+everywhere. A request that carries the owner's login is not counted as a
+view. The owner sets the options with `PATCH /notes/:id/share`:
+`{ "expiresAt": "2026-03-01T12:00:00Z", "password": "..." }`, where `null`
+takes either away. The password is stored as a hash, made the same way as
+account passwords.
+
+A notebook is shared the same way under `/notebooks/:id/share`. Its link
+answers with `"kind": "notebook"`, the name and the list of its notes, and
+`GET /public/notes/:token/:noteId` gives one of them. Which notes belong to
+the notebook is looked up with every request: a note added later is there,
+and one that is moved out or put in the trash answers `404` from then on.
+The answer to the right password has an `access` value. Sent back in an
+`X-Share-Access` header it opens the notes of the notebook for an hour, so
+the password is typed once and only real attempts count against the limit.
+It is worth nothing for another link, or after the password changed.
+
+In a shared note a `[[link]]` stays a link only where the reader may follow
+it. Its title is looked up first among the notes of the same shared
+notebook, when the note is read through one, and then among the notes whose
+own link has no password and has not run out. A note outside those never
+counts, so a private note with the same title changes nothing. `links` in
+the answer says where each kept link leads. Every other link is replaced by
+the words a reader sees for it, the alias or else the title as written. That
+covers a link to a private note, to a note behind a password, to one whose
+link has run out, to one that does not exist, and, from a single shared
+note, to a note that only a shared notebook covers: `[[Private plan]]`
+becomes `Private plan`, with `links: {}`.
+
+`GET /notes/:id` and `GET /notebooks` carry `sharedThrough`, the notebook
+whose live link makes the note or notebook public, or `null`.
 
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 

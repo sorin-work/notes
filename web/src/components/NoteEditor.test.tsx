@@ -8,7 +8,7 @@ import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
 import { expectNoAxeViolations } from '../test/axe';
-import { note, user } from '../test/fixtures';
+import { note, notebook, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
 import { Notices } from './Notices';
@@ -45,6 +45,48 @@ describe('NoteEditor', () => {
     const textarea = screen.getByLabelText('Note content');
     fireEvent.change(textarea, { target: { value: '# Fresh heading' } });
     expect(screen.getByRole('heading', { name: 'Fresh heading' })).toBeInTheDocument();
+  });
+
+  it('asks before a move into a shared notebook, and says afterwards that the note is public', async () => {
+    const recipes = { id: 'nb-recipes', name: 'Recipes' };
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notebooks': {
+          body: [
+            notebook({ id: 'nb-recipes', name: 'Recipes', shared: true, sharedThrough: recipes }),
+            notebook({ id: 'nb-work', name: 'Work' }),
+          ],
+        },
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+          const { notebookId } = body as { notebookId: string | null };
+          return { body: { ...note(), notebookId, sharedThrough: notebookId === 'nb-recipes' ? recipes : null } };
+        },
+      }),
+    );
+    renderEditor();
+    const select = await screen.findByLabelText('Notebook');
+    await screen.findByRole('option', { name: 'Recipes' });
+    const patches = () => calls.filter((call) => call.method === 'PATCH');
+
+    // A notebook nobody can read: no question.
+    await userEvent.selectOptions(select, 'nb-work');
+    await waitFor(() => expect(patches()).toHaveLength(1));
+
+    await userEvent.selectOptions(select, 'nb-recipes');
+    expect(await screen.findByRole('dialog', { name: 'Make this note public?' })).toHaveTextContent(
+      'can be read by anyone who has that link',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(patches()).toHaveLength(1);
+    expect(screen.queryByText(/can read this note/)).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(select, 'nb-recipes');
+    await userEvent.click(await screen.findByRole('button', { name: 'Move it' }));
+    await waitFor(() => expect(patches()).toHaveLength(2));
+    expect(patches()[1]?.body).toEqual({ notebookId: 'nb-recipes' });
+    expect(
+      await screen.findByText('Anyone with the link to the shared notebook “Recipes” can read this note.'),
+    ).toBeInTheDocument();
   });
 
   it('autosaves edits to the title and content', async () => {
