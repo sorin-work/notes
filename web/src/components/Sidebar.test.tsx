@@ -4,6 +4,7 @@ import { Route, Routes } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
+import { formatDay, localDay } from '../lib/days';
 import { readStash, stashDraft } from '../lib/draftStash';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
@@ -119,6 +120,44 @@ describe('Sidebar', () => {
     expect(await screen.findByRole('link', { name: 'Templates' })).toHaveAttribute('href', '/notes?view=templates');
     await screen.findByRole('link', { name: /Work/ });
     expect(screen.queryByRole('combobox', { name: 'New from template' })).not.toBeInTheDocument();
+  });
+
+  it('opens the note of today, with the day and its title worked out here', async () => {
+    const calls = mockFetch({
+      'GET /api/auth/me': {
+        body: { ...user, preferences: { dailyNotes: { notebookId: null, templateId: null, dateFormat: 'long' } } },
+      },
+      'GET /api/notebooks': { body: [] },
+      'GET /api/tags': { body: [] },
+      'POST /api/notes/daily': { body: note({ id: 'today' }) },
+    });
+    renderSidebar('/notes?view=pinned');
+
+    const before = localDay();
+    await userEvent.click(await screen.findByRole('button', { name: 'Today' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    const sent = calls.find((call) => call.method === 'POST')?.body as { date: string; title: string };
+    expect(sent).toEqual({
+      date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      // In the format the account has chosen.
+      title: expect.stringMatching(/^\d{1,2} [A-Z][a-z]+ \d{4}$/),
+      placeholders: { date: sent.date, time: expect.stringMatching(/^\d{2}:\d{2}$/) },
+    });
+    // The day is the one the clock here shows, also when the test runs across midnight.
+    expect([before, localDay()]).toContain(sent.date);
+    expect(sent.title).toBe(formatDay(sent.date, 'long'));
+  });
+
+  it('says so when the note of today cannot be opened', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: [] },
+      'GET /api/tags': { body: [] },
+      'POST /api/notes/daily': { status: 500, body: { message: 'Internal server error' } },
+    });
+    renderSidebar();
+    await userEvent.click(await screen.findByRole('button', { name: 'Today' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Today’s note could not be opened.');
   });
 
   describe('signing out', () => {
