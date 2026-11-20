@@ -20,12 +20,28 @@ export interface DemoNote {
   content: string;
 }
 
-export const DEMO_NOTEBOOKS: { name: string; children?: string[] }[] = [
-  { name: 'Work', children: ['Project Atlas', 'Meetings'] },
-  { name: 'Personal', children: ['Recipes', 'Travel'] },
+export interface DemoNotebook {
+  name: string;
+  children?: DemoNotebook[];
+}
+
+export const DEMO_NOTEBOOKS: DemoNotebook[] = [
+  {
+    name: 'Work',
+    children: [{ name: 'Project Atlas' }, { name: 'Meetings', children: [{ name: 'One-to-ones' }] }],
+  },
+  { name: 'Personal', children: [{ name: 'Recipes' }, { name: 'Travel' }] },
   { name: 'Reading' },
-  { name: 'Learning', children: ['Rust'] },
+  { name: 'Learning', children: [{ name: 'Rust' }] },
 ];
+
+/** Every demo notebook as the names that lead to it, each one after the notebook it is in. */
+export function demoNotebookPaths(notebooks: DemoNotebook[] = DEMO_NOTEBOOKS, above: string[] = []): string[][] {
+  return notebooks.flatMap((notebook) => {
+    const path = [...above, notebook.name];
+    return [path, ...demoNotebookPaths(notebook.children ?? [], path)];
+  });
+}
 
 const atlasOverview = `# Project Atlas
 
@@ -468,7 +484,7 @@ export const DEMO_NOTES: DemoNote[] = [
   },
   {
     title: '1:1 with Dana',
-    notebook: ['Work', 'Meetings'],
+    notebook: ['Work', 'Meetings', 'One-to-ones'],
     tags: ['meeting'],
     createdDaysAgo: 200,
     updatedDaysAgo: 8,
