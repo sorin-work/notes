@@ -395,7 +395,15 @@ the routes marked `@SessionOnly()`, which are the token endpoints under
 `/auth/tokens` and the account changes. Decided on the open points: no scopes
 beyond read-only, and requests are throttled per token
 (`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
-minute. "Sign out everywhere" and a password change leave tokens alone. Still
-to come in a second step: the OpenAPI document at `/api/docs` and the
-`/capture` page. Still open after that: a token made from a stolen login
+minute. "Sign out everywhere" and a password change leave tokens alone.
+
+The second step documented the API. `@nestjs/swagger` builds an OpenAPI
+document from the DTO classes at build time and serves it, with a page to try
+it on, at `/api/docs`. It names the two credentials and says for every route
+which of them it takes, read from the same marks the guard goes by. The
+endpoint table in the README shrank to the few a script wants. And
+`/capture?title=&url=` in the web app opens a new note with a link to a page,
+which a bookmarklet from the README turns into one click. It saves nothing
+by itself, since any site can send a visitor there. Still open: the document
+describes requests but not answers, and a token made from a stolen login
 outlives signing out, so creating one could ask for the password.
