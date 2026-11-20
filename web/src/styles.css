@@ -1769,6 +1769,24 @@ ul.error-box {
   font-size: 0.9rem;
 }
 
+/* Changes made offline that are not on the server yet. */
+.pending-changes {
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.pending-changes p,
+.pending-changes ul {
+  margin: 0;
+}
+
+.pending-changes ul {
+  padding-left: 1.2rem;
+}
+
 /* The files of a note, under the editor. */
 .attachments {
   margin-top: 1.25rem;

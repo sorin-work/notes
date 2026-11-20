@@ -117,6 +117,12 @@ Markdown import/export.
   after a reload. A line at the top says when you are offline and that what
   is shown may be out of date. Search, backlinks and history need a
   connection and say so.
+- **Writing offline**: text typed without a connection, and new notes made
+  without one, are kept on the device and sent when the server can be
+  reached again, also after a reload. A line at the top counts what is
+  waiting. If the note was changed elsewhere meanwhile, the usual question
+  comes up when it is opened; a change the server cannot take is listed
+  until you decide. Signing out with unsent changes asks first.
 
 | Shortcut             | Action                            |
 | -------------------- | --------------------------------- |
@@ -788,6 +794,76 @@ lets go of what it holds and starts again as that user. A copy is only ever
 written while the token names its user. A device that never comes back online
 keeps its copy until then, up to seven days per note.
 
+Writing without a connection goes through an outbox (`web/src/lib/outbox.ts`),
+in IndexedDB as well, one entry per note and per user. When a save cannot
+reach the server, the editor puts the text there, and every later save of
+that note goes there too until it has been sent, so the changes to a note
+arrive in order. "+ New note" without a connection makes the note in the
+browser with an id of its own (a random UUID), which `POST /notes` accepts as
+`id`. The outbox sends when the browser is back online, when the app starts
+and every half minute while something waits, one tab at a time (a Web Lock),
+through the same `PATCH` as the editor, on the revision the text was written
+on. So a note changed elsewhere meanwhile is never overwritten: the entry is
+kept and the editor asks the usual question when the note is opened. A text
+the server already has (the answer to an earlier send got lost) is taken as
+sent, and a create whose id turns out to be the user's own note is too, so a
+connection that comes and goes applies nothing twice. A change the server
+refuses for another reason (the note is in the trash, say) stays, with the
+reason, until the user discards it.
+
+The outbox and the draft stash of the editor do not overlap: the outbox has
+what the server never saw, and the stash, in the tab's `sessionStorage`, only
+a draft the server refused when nobody was left to ask (the session had
+ended, or the note changed once more on the way out).
+
+What waits in the outbox belongs to the user who wrote it. It goes when that
+user signs out and agrees to throw it away, when the account is deleted and
+when another user signs in on this browser, who is asked first. It stays when
+the session ends by itself (a 401, "Sign out everywhere", or a sign-out in
+another tab): unsent changes stay in that browser until the same person signs
+in there again and they are sent, or someone else signs in there and they are
+deleted. Settings says so beside "Sign out everywhere". Unsent text has no
+expiry, and nothing can wipe it remotely: on a lost or stolen device it stays
+in that browser's storage, readable by whoever can open the browser profile,
+until one of those things happens there. Only text and new notes wait: a pin,
+a tag, a notebook or a move to the trash still need a connection.
+
+A change is only ever queued on top of text the editor has seen. Each save
+names the text the editor started from. If the note already has text waiting
+that came from another tab, and is not that text, nothing is written over it:
+the editor asks the usual question, with the other tab's text as "theirs".
+"Keep mine, put theirs in the history" keeps the other text as a new note of
+its own, made once however often it is tried. "Keep mine" replaces the other
+text only while it is still exactly what the question showed. A note left with
+the question open keeps the other tab's waiting text untouched, and this tab's
+text becomes a new note, "(kept when leaving)"; a notice says which holds
+which, and the draft counts as saved only once that note is safely queued. In the same way, the revision a change is based on is the one this
+editor loaded or saved, or one this tab sent itself. When another tab sends a
+change of the note, an editor open on it here only says that it is out of
+date; its next change meets the other one as a conflict.
+
+Every send checks that the login token still names the user the change
+belongs to, so a sign-in as someone else in another tab never sends it under
+their name. Changes are written and read under a lock shared by the tabs (Web
+Locks), held only briefly. A text is marked as maybe sent before its request
+goes, and a send is put back only if the entry did not change meanwhile; a
+newer text written on top of it stays and goes next, on the revision the
+answer named. Each request of a send gives up after 15 seconds, and signing
+out waits at most 10 seconds for what is being sent. A server error is tried
+again later, waiting longer each time, up to ten minutes. A change to a note
+that is gone, no longer shared, or in the trash is listed with "Save as a new
+note", "Copy text" and "Discard this change", and is tried again every few
+minutes, so restoring the note from the trash sends it. New text of that note
+never goes into such a stuck change. A change discarded while its request was
+already on its way may still reach the server; then a notice says so, and the
+text before it is in the history of the note.
+
+Writing offline needs a secure context: the app served over HTTPS, or from
+localhost, because Web Locks and `crypto.randomUUID` exist only there. Served
+over plain HTTP from another address, the outbox is off. The offline line says
+so, saving works as before while there is a connection, and text that cannot
+be saved stays in the editor as an unsaved change.
+
 ## API overview
 
 The API describes itself. With the stack running, http://localhost:5181/api/docs
@@ -815,6 +891,10 @@ carries the note as it is now:
 The check only applies when `title` or `content` is sent, and a request
 without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
+
+`POST /notes` takes an `"id"`, a random UUID made by the client, for a note
+made offline. If any note has that id the answer is a `409` with
+`"code": "note_exists"`, the same whoever's note it is.
 
 `POST /notes` with `"templateId"` makes the note from that template, and
 `"placeholders": {"date": "...", "time": "..."}` gives the text to fill in,
