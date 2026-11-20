@@ -19,7 +19,7 @@ import {
   UpdateNoteDto,
 } from './dto/note.dto';
 import { templateNotes, workingNotes } from './note-scope';
-import { IN_TRASH, refusedWrite, writeNoteText } from './note-text';
+import { IN_TRASH, NoteExistsException, refusedWrite, writeNoteText } from './note-text';
 import { noteInclude, NoteSummary, NoteView, NoteWithRelations, toSummary, toView } from './note-view';
 import { fillPlaceholders } from './placeholders';
 
@@ -103,18 +103,25 @@ export class NotesService {
     if (dto.templateId && !template) {
       throw new NotFoundException('Template not found');
     }
-    const created = await this.prisma.$transaction((tx) =>
-      this.insert(tx, userId, {
-        title: template?.title ?? (dto.title || DEFAULT_TITLE),
-        content: dto.content ?? template?.content ?? '',
-        tags: dto.tags ?? template?.tags ?? [],
-        notebookId: dto.notebookId ?? null,
-        pinned: dto.pinned ?? false,
-        favorite: dto.favorite ?? false,
-        isTemplate: dto.isTemplate ?? false,
-        dailyDate: null,
-      }),
-    );
+    const created = await this.prisma
+      .$transaction((tx) =>
+        this.insert(tx, userId, {
+          id: dto.id,
+          title: template?.title ?? (dto.title || DEFAULT_TITLE),
+          content: dto.content ?? template?.content ?? '',
+          tags: dto.tags ?? template?.tags ?? [],
+          notebookId: dto.notebookId ?? null,
+          pinned: dto.pinned ?? false,
+          favorite: dto.favorite ?? false,
+          isTemplate: dto.isTemplate ?? false,
+          dailyDate: null,
+        }),
+      )
+      .catch((error: unknown) => {
+        // The id is the primary key: a taken one fails the insert, also in a race.
+        const taken = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+        throw dto.id && taken ? new NoteExistsException() : error;
+      });
     return toView(created);
   }
 
@@ -276,6 +283,8 @@ export class NotesService {
     userId: string,
     note: Pick<Note, 'title' | 'content' | 'notebookId' | 'pinned' | 'favorite' | 'isTemplate' | 'dailyDate'> & {
       tags: string[];
+      /** Made by the client, for a note created offline. Otherwise the database makes one. */
+      id?: string;
     },
   ): Promise<NoteWithRelations> {
     const { tags, ...data } = note;

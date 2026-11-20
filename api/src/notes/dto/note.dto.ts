@@ -52,6 +52,16 @@ export class PlaceholdersDto {
 }
 
 export class CreateNoteDto {
+  /**
+   * An id made by the client, for a note created without a connection. A
+   * random UUID (version 4). If any note already has it, the answer is a 409
+   * with `code: "note_exists"`, the same whoever's note it is. Sending the
+   * same create twice therefore makes one note: the second gets the 409.
+   */
+  @IsOptional()
+  @IsUUID('4')
+  id?: string;
+
   @IsOptional()
   @Trim()
   @IsString()
