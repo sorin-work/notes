@@ -52,14 +52,14 @@ describe('ImportService', () => {
   });
 
   it('requires at least one file', async () => {
-    await expect(service.import(USER, [])).rejects.toThrow('Choose at least one Markdown file');
+    await expect(service.import(USER, [])).rejects.toThrow('Choose at least one Markdown, Evernote or zip file');
   });
 
   it('imports a Markdown file using its front matter', async () => {
     const text = '---\ntitle: Weekly plan\ntags: [work, plan]\npinned: true\ncreated: 2026-01-02\n---\nSee [[Atlas]]';
     const result = await service.import(USER, [file('plan.md', text)]);
 
-    expect(result).toEqual({ imported: 1, notebooksCreated: 0, skipped: [] });
+    expect(result).toEqual({ imported: 1, notebooksCreated: 0, duplicates: 0, attachmentsSkipped: 0, skipped: [] });
     expect(prisma.note.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         userId: USER,
@@ -120,10 +120,143 @@ describe('ImportService', () => {
     expect(result).toEqual({
       imported: 0,
       notebooksCreated: 0,
+      duplicates: 0,
+      attachmentsSkipped: 0,
       skipped: [
-        { file: 'photo.jpg', reason: 'Not a Markdown, text or zip file' },
+        { file: 'photo.jpg', reason: 'Not a Markdown, text, Evernote or zip file' },
         { file: 'broken.zip', reason: 'Not a valid zip file' },
       ],
     });
+  });
+
+  describe('the same file twice', () => {
+    it('leaves out notes whose title, notebook and text are there already, unless told not to', async () => {
+      prisma.note.findFirst.mockResolvedValueOnce({ id: 'there' }).mockResolvedValueOnce(null);
+      const result = await service.import(USER, [file('a.md', 'same'), file('b.md', 'new')]);
+
+      expect(result).toMatchObject({ imported: 1, duplicates: 1 });
+      expect(prisma.note.findFirst.mock.calls[0][0].where).toEqual({
+        userId: USER,
+        notebookId: null,
+        title: 'a',
+        content: 'same',
+        deletedAt: null,
+      });
+      expect(prisma.note.create.mock.calls.map(([call]) => call.data.title)).toEqual(['b']);
+
+      prisma.note.findFirst.mockResolvedValue({ id: 'there' });
+      prisma.note.create.mockClear();
+      const again = await service.import(USER, [file('a.md', 'same')], { skipExisting: false });
+      expect(again).toMatchObject({ imported: 1, duplicates: 0 });
+    });
+  });
+
+  describe('Evernote', () => {
+    const enex = (notes: string) =>
+      `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export4.dtd">\n<en-export application="Evernote">${notes}</en-export>`;
+    const note = (title: string, html: string, extra = '') =>
+      `<note><title>${title}</title><content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note>${html}</en-note>]]></content>${extra}</note>`;
+
+    it('takes the notes into a notebook named after the file, with tags and dates, as Markdown', async () => {
+      const xml = enex(
+        note(
+          'Trip &amp; plans',
+          '<h1>Packing</h1><div><en-todo checked="true"/>Passport</div><p>See <b>this</b>&nbsp;&lt;b&gt;</p><en-media hash="ab" type="image/png"/>',
+          '<created>20240102T101112Z</created><updated>20240305T080000Z</updated><tag>travel</tag><tag>Two Words</tag><resource><data encoding="base64">aGk=</data></resource>',
+        ) + note('Second', '<div>Plain</div>'),
+      );
+      const result = await service.import(USER, [file('Holidays.enex', xml)]);
+
+      expect(result).toMatchObject({ imported: 2, notebooksCreated: 1, attachmentsSkipped: 1, skipped: [] });
+      expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: null, name: 'Holidays' } });
+      const first = prisma.note.create.mock.calls[0][0].data;
+      expect(first).toMatchObject({
+        title: 'Trip & plans',
+        content: '# Packing\n\n[x] Passport\n\nSee **this** <b>',
+        createdAt: new Date('2024-01-02T10:11:12Z'),
+        updatedAt: new Date('2024-03-05T08:00:00Z'),
+      });
+      expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'note-Trip & plans', ['travel', 'Two Words']);
+    });
+
+    it('drops scripts and styles, so nothing of the HTML survives', async () => {
+      await service.import(USER, [
+        file(
+          'x.enex',
+          enex(
+            note(
+              'X',
+              '<script>alert(1)</script><style>p{}</style><iframe src="https://e.x"></iframe><p onclick="x()">Hi</p>',
+            ),
+          ),
+        ),
+      ]);
+      expect(prisma.note.create.mock.calls[0][0].data.content).toBe('Hi');
+    });
+
+    it('refuses a file that declares entities, and one that uses an entity XML does not know', async () => {
+      const bomb =
+        '<?xml version="1.0"?><!DOCTYPE en-export [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]><en-export><note><title>&b;</title></note></en-export>';
+      const external =
+        '<?xml version="1.0"?><!DOCTYPE en-export [<!ENTITY x SYSTEM "file:///etc/passwd">]><en-export><note><title>&x;</title></note></en-export>';
+      const unknown = '<en-export><note><title>&nbsp;</title></note></en-export>';
+      const result = await service.import(USER, [
+        file('bomb.enex', bomb),
+        file('external.enex', external),
+        file('unknown.enex', unknown),
+      ]);
+      expect(result.imported).toBe(0);
+      expect(result.skipped.map((entry) => entry.file)).toEqual(['bomb.enex', 'external.enex', 'unknown.enex']);
+      expect(result.skipped[0].reason).toBe('The file declares a DTD of its own');
+      expect(result.skipped[2].reason).toMatch(/^Not a readable Evernote export/);
+      expect(prisma.note.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses XML that is not an Evernote export', async () => {
+      const result = await service.import(USER, [file('feed.enex', '<rss><note><title>x</title></note></rss>')]);
+      expect(result.skipped).toEqual([{ file: 'feed.enex', reason: 'Not an Evernote export' }]);
+    });
+  });
+
+  describe('Notion', () => {
+    const id = (n: number) =>
+      String(n)
+        .repeat(32)
+        .slice(0, 32)
+        .replace(/\d/g, (d) => 'abcdef0123'[Number(d)]);
+
+    it('strips the ids, keeps folders as notebooks and turns links between pages into wiki links', async () => {
+      const zip = new JSZip();
+      zip.file(
+        `Plans ${id(1)}.md`,
+        `# Plans\n\nSee [Trip](Plans%20${id(1)}/Trip%20${id(2)}.md), [the budget](Plans%20${id(1)}/Budget%20${id(3)}.md) and [a site](https://example.com/x.md).`,
+      );
+      zip.file(`Plans ${id(1)}/Trip ${id(2)}.md`, `# Trip\n\nBack to [Plans](../Plans%20${id(1)}.md).`);
+      zip.file(`Plans ${id(1)}/Budget ${id(3)}.md`, '# Budget\n\n```\n[not a link](Trip%20x.md)\n```');
+      zip.file(`Plans ${id(1)}/photo.png`, 'png');
+      const result = await service.import(USER, [file('Export.zip', await zip.generateAsync({ type: 'nodebuffer' }))]);
+
+      expect(result).toMatchObject({ imported: 3, notebooksCreated: 1 });
+      expect(result.skipped).toEqual([{ file: `Plans ${id(1)}/photo.png`, reason: 'Not a Markdown or text file' }]);
+      const created = Object.fromEntries(
+        prisma.note.create.mock.calls.map(([call]) => [call.data.title, [call.data.notebookId, call.data.content]]),
+      );
+      expect(created).toEqual({
+        Plans: [null, 'See [[Trip]], [[Budget|the budget]] and [a site](https://example.com/x.md).'],
+        Trip: ['nb-1', 'Back to [[Plans]].'],
+        Budget: ['nb-1', '```\n[not a link](Trip%20x.md)\n```'],
+      });
+      expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: null, name: 'Plans' } });
+      expect(links.sync).toHaveBeenCalledWith(prisma, 'note-Trip', 'Back to [[Plans]].');
+    });
+  });
+
+  it('keeps imported text within the limits of a typed note', async () => {
+    const result = await service.import(USER, [
+      file('long.md', 'x'.repeat(1_000_001)),
+      file(`${'t'.repeat(300)}.md`, 'x'),
+    ]);
+    expect(result.skipped).toEqual([{ file: 'long.md', reason: 'The note is too long' }]);
+    expect(prisma.note.create.mock.calls[0][0].data.title).toHaveLength(200);
   });
 });

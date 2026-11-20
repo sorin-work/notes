@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import JSZip from 'jszip';
 import { LinksService } from '../links/links.service';
 import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TagsService } from '../tags/tags.service';
-import { parseFrontMatter } from './front-matter';
+import { ArchiveRefused, readArchive, UnpackBudget, ARCHIVE_LIMITS } from './archive';
+import { EnexRefused, readEnex } from './enex';
+import { FrontMatter, parseFrontMatter } from './front-matter';
+import { fromNotion, isNotionExport } from './notion';
 
 export const MAX_IMPORT_NOTES = 2000;
 const NOTE_EXTENSIONS = /\.(md|markdown|txt)$/i;
@@ -14,9 +16,18 @@ export interface UploadedFile {
   buffer: Buffer;
 }
 
+export interface ImportOptions {
+  /** Leave out notes whose title, notebook and text the account already has. */
+  skipExisting: boolean;
+}
+
 export interface ImportResult {
   imported: number;
   notebooksCreated: number;
+  /** Notes left out because the account already has them. */
+  duplicates: number;
+  /** Attachments and images in Evernote notes, which are not imported. */
+  attachmentsSkipped: number;
   skipped: { file: string; reason: string }[];
 }
 
@@ -24,6 +35,8 @@ interface Candidate {
   path: string;
   text: string;
   modified?: Date;
+  /** Title, tags and dates read already. Set for notes that do not come from a Markdown file. */
+  data?: FrontMatter;
 }
 
 /** Splits "Work/Projects/Plan.md" into the notebook path and the file's base name. */
@@ -55,10 +68,6 @@ function toTags(value: unknown): string[] {
   return [];
 }
 
-function ignored(path: string): boolean {
-  return path.split('/').some((part) => part.startsWith('.') || part === '__MACOSX');
-}
-
 @Injectable()
 export class ImportService {
   constructor(
@@ -67,36 +76,63 @@ export class ImportService {
     private readonly links: LinksService,
   ) {}
 
-  /** Imports .md / .markdown / .txt files and zips of them. */
-  async import(userId: string, files: UploadedFile[]): Promise<ImportResult> {
+  /**
+   * Imports .md / .markdown / .txt files, Evernote .enex files, and zips of
+   * Markdown such as an Obsidian vault or a Notion export.
+   */
+  async import(
+    userId: string,
+    files: UploadedFile[],
+    options: ImportOptions = { skipExisting: true },
+  ): Promise<ImportResult> {
     if (!files.length) {
-      throw new BadRequestException('Choose at least one Markdown file or zip to import');
+      throw new BadRequestException('Choose at least one Markdown, Evernote or zip file to import');
     }
-    const result: ImportResult = { imported: 0, notebooksCreated: 0, skipped: [] };
+    const result: ImportResult = {
+      imported: 0,
+      notebooksCreated: 0,
+      duplicates: 0,
+      attachmentsSkipped: 0,
+      skipped: [],
+    };
     const candidates: Candidate[] = [];
+    const budget = new UnpackBudget(ARCHIVE_LIMITS.totalBytes);
 
     for (const file of files) {
-      const name = file.originalname;
+      const name = file.originalname.split(/[\\/]/).pop() ?? file.originalname;
       if (/\.zip$/i.test(name)) {
-        let zip: JSZip;
         try {
-          zip = await JSZip.loadAsync(file.buffer);
-        } catch {
-          result.skipped.push({ file: name, reason: 'Not a valid zip file' });
-          continue;
+          const contents = await readArchive(
+            file.buffer,
+            (path) => NOTE_EXTENSIONS.test(path),
+            'Not a Markdown or text file',
+            budget,
+          );
+          result.skipped.push(...contents.skipped);
+          const paths = contents.files.map((entry) => entry.path);
+          candidates.push(...(isNotionExport(paths) ? fromNotion(contents.files) : contents.files));
+        } catch (error) {
+          if (!(error instanceof ArchiveRefused)) throw error;
+          result.skipped.push({ file: name, reason: error.message });
         }
-        for (const entry of Object.values(zip.files)) {
-          if (entry.dir || ignored(entry.name)) continue;
-          if (!NOTE_EXTENSIONS.test(entry.name)) {
-            result.skipped.push({ file: entry.name, reason: 'Not a Markdown or text file' });
-            continue;
+      } else if (/\.enex$/i.test(name)) {
+        try {
+          const contents = readEnex(file.buffer.toString('utf8'), name);
+          result.skipped.push(...contents.skipped);
+          result.attachmentsSkipped += contents.resourcesSkipped;
+          // An Evernote export is one notebook, and the file is named after it.
+          const notebook = name.replace(/\.enex$/i, '');
+          for (const note of contents.notes) {
+            candidates.push({ path: `${notebook}/${note.title}`, text: note.markdown, data: note.data });
           }
-          candidates.push({ path: entry.name, text: await entry.async('string'), modified: entry.date });
+        } catch (error) {
+          if (!(error instanceof EnexRefused)) throw error;
+          result.skipped.push({ file: name, reason: error.message });
         }
       } else if (NOTE_EXTENSIONS.test(name)) {
-        candidates.push({ path: name.split(/[\\/]/).pop() ?? name, text: file.buffer.toString('utf8') });
+        candidates.push({ path: name, text: file.buffer.toString('utf8') });
       } else {
-        result.skipped.push({ file: name, reason: 'Not a Markdown, text or zip file' });
+        result.skipped.push({ file: name, reason: 'Not a Markdown, text, Evernote or zip file' });
       }
     }
 
@@ -106,7 +142,9 @@ export class ImportService {
 
     const notebooks = new NotebookResolver(this.prisma, userId);
     for (const candidate of candidates) {
-      const { data, body } = parseFrontMatter(candidate.text);
+      const { data, body } = candidate.data
+        ? { data: candidate.data, body: candidate.text }
+        : parseFrontMatter(candidate.text);
       if (body.length > MAX_CONTENT_LENGTH) {
         result.skipped.push({ file: candidate.path, reason: 'The note is too long' });
         continue;
@@ -117,6 +155,17 @@ export class ImportService {
         MAX_TITLE_LENGTH,
       );
       const notebookId = await notebooks.resolve(notebookPath(folders));
+      const finalTitle = title || 'Untitled';
+      if (
+        options.skipExisting &&
+        (await this.prisma.note.findFirst({
+          where: { userId, notebookId, title: finalTitle, content: body, deletedAt: null },
+          select: { id: true },
+        }))
+      ) {
+        result.duplicates++;
+        continue;
+      }
       const created = toDate(data.created) ?? candidate.modified ?? new Date();
       const updated = toDate(data.updated) ?? candidate.modified ?? created;
 
@@ -125,7 +174,7 @@ export class ImportService {
           data: {
             userId,
             notebookId,
-            title: title || 'Untitled',
+            title: finalTitle,
             content: body,
             pinned: data.pinned === true,
             favorite: data.favorite === true || data.favourite === true,
