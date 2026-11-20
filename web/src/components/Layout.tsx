@@ -1,9 +1,11 @@
 import { MouseEvent, useCallback, useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Outlet, useMatch } from 'react-router';
+import { useOnline } from '../hooks/useOnline';
 import { Notices } from './Notices';
 import { QuickSwitcher } from './QuickSwitcher';
 import { Sidebar } from './Sidebar';
+import { OfflineBanner } from './States';
 
 function isTyping(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
@@ -27,6 +29,7 @@ function skipTo(event: MouseEvent<HTMLAnchorElement>) {
 }
 
 export function Layout() {
+  const online = useOnline();
   const noteOpen = useMatch('/notes/:noteId') !== null;
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -80,6 +83,7 @@ export function Layout() {
       <Sidebar onNavigate={() => setMenuOpen(false)} />
       {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
       <main className="main" id="main" tabIndex={-1}>
+        {!online && <OfflineBanner />}
         <Outlet />
       </main>
       {switcherOpen && <QuickSwitcher onClose={closeSwitcher} />}

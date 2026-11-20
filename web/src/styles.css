@@ -1739,3 +1739,13 @@ ul.error-box {
   color: var(--text);
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
 }
+
+/* Shown at the top of the main area while there is no connection. */
+.offline-banner {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.9rem;
+}

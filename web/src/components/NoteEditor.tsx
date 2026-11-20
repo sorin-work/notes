@@ -59,6 +59,13 @@ interface Draft {
 
 export function NoteEditor({ noteId }: { noteId: string }) {
   const note = useQuery({ queryKey: ['note', noteId], queryFn: () => getNote(noteId) });
+  if (note.isPending && note.fetchStatus === 'paused') {
+    return (
+      <div className="editor-missing">
+        <p>This note has not been opened on this device before, so it cannot be shown without a connection.</p>
+      </div>
+    );
+  }
   if (note.isLoading) return <Spinner />;
   if (note.error) {
     const missing = note.error instanceof ApiError && note.error.status === 404;
