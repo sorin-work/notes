@@ -35,8 +35,8 @@ describe('LinksService', () => {
   describe('graph', () => {
     it('asks for nodes and edges in one query and maps the answer', async () => {
       const nodes = [
-        { id: 'a', title: 'Atlas' },
-        { id: 'b', title: 'Budget' },
+        { id: 'a', title: 'Atlas', links: 3 },
+        { id: 'b', title: 'Budget', links: 1 },
       ];
       prisma.$queryRaw.mockResolvedValue([{ total: BigInt(412), nodes, edges: [{ source: 'a', target: 'b' }] }]);
 

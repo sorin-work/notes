@@ -23,6 +23,12 @@ export interface OutgoingLink {
 export interface GraphNode {
   id: string;
   title: string;
+  /**
+   * How many links the note has to and from other notes outside the trash,
+   * wherever those are. More than the edges it has in the graph when some of
+   * them lead to notes that the filters or the limit left out.
+   */
+  links: number;
 }
 
 /** A link from one note in the graph to another, each pair once in each direction at most. */
@@ -129,7 +135,9 @@ export class LinksService {
    * Notes outside the trash as nodes, and the links between them as edges,
    * in one query. A link leads to the note its title resolves to: the most
    * recently edited one with that title, as everywhere else. Links to notes
-   * outside the graph, to missing notes and from a note to itself are left out.
+   * outside the graph, to missing notes and from a note to itself are left
+   * out of the edges. Each node says how many links it has in all, so that a
+   * note whose links all lead outside the graph is not taken for one without.
    *
    * `notebookIds` narrows the graph to those notebooks, or with "none" to
    * the notes outside any notebook. `tag` narrows it to the notes with that tag.
@@ -166,17 +174,26 @@ export class LinksService {
         ) named
         ORDER BY key, updated_at DESC
       ),
-      linked AS (
+      connected AS (
         SELECT DISTINCT link.source_id AS source, titled.id AS target
         FROM note_links link
-        JOIN picked origin ON origin.id = link.source_id
+        JOIN notes origin ON origin.id = link.source_id
         JOIN titled ON titled.key = link.target_key
-        JOIN picked destination ON destination.id = titled.id
-        WHERE link.source_id <> titled.id
+        WHERE origin.user_id = ${userId}::uuid AND origin.deleted_at IS NULL AND link.source_id <> titled.id
+      ),
+      linked AS (
+        SELECT connected.source, connected.target
+        FROM connected
+        JOIN picked origin ON origin.id = connected.source
+        JOIN picked destination ON destination.id = connected.target
       )
       SELECT
         (SELECT count(*) FROM matching) AS total,
-        (SELECT coalesce(json_agg(json_build_object('id', id, 'title', title) ORDER BY updated_at DESC, id), '[]'::json)
+        (SELECT coalesce(json_agg(json_build_object(
+                  'id', id,
+                  'title', title,
+                  'links', (SELECT count(*) FROM connected WHERE connected.source = picked.id OR connected.target = picked.id)
+                ) ORDER BY updated_at DESC, id), '[]'::json)
            FROM picked) AS nodes,
         (SELECT coalesce(json_agg(json_build_object('source', source, 'target', target) ORDER BY source, target), '[]'::json)
            FROM linked) AS edges`;
