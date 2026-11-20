@@ -33,15 +33,29 @@ describe('VersionChanges', () => {
     expect(container.querySelector('.diff')).toBeNull();
   });
 
-  it('falls back to a message when a long note changed from top to bottom', () => {
-    const long = (word: string) => Array.from({ length: 3_500 }, (_, index) => `${word} ${index}`).join('\n');
+  it('falls back to a message when more lines changed than it compares', () => {
+    const long = (word: string) => Array.from({ length: 1_100 }, (_, index) => `${word} ${index}`).join('\n');
     const { container } = render(
       <VersionChanges
         version={{ title: 'Log', content: long('old') }}
         current={{ title: 'Log', content: long('new') }}
       />,
     );
-    expect(screen.getByText(/Too much has changed in this long note/)).toBeInTheDocument();
+    expect(screen.getByText(/More than 2,000 lines differ/)).toBeInTheDocument();
     expect(container.querySelector('.diff')).toBeNull();
+  });
+
+  it('stops after a few thousand rows and says how many more lines changed', () => {
+    const entries = Array.from({ length: 2_500 }, (_, index) => `Entry ${index + 1}`).join('\n');
+    const { container } = render(
+      <VersionChanges
+        version={{ title: 'Log', content: `# Log\n${entries}` }}
+        current={{ title: 'Log', content: '# Log' }}
+      />,
+    );
+    expect(container.querySelectorAll('.diff-line')).toHaveLength(2_000);
+    expect(screen.getByText('Entry 1999')).toBeInTheDocument();
+    expect(screen.queryByText('Entry 2000')).not.toBeInTheDocument();
+    expect(screen.getByText('501 more changed lines are not shown')).toBeInTheDocument();
   });
 });
