@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
-import { ApiError } from '../api/client';
+import { ApiError, getToken } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
 import {
   createNote,
@@ -13,20 +13,26 @@ import {
   outgoingLinks,
   renameLinks,
   resolveTitle,
+  staleNote,
   trashNote,
   updateNote,
 } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
+import { useUserId } from '../auth/AuthContext';
 import { useActiveOption } from '../hooks/useActiveOption';
 import { useAutosave } from '../hooks/useAutosave';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
+import { dropStash, readStash, stashDraft } from '../lib/draftStash';
+import { notify } from '../lib/notices';
 import { toggleTask } from '../lib/tasks';
+import { registerUnsavedWork } from '../lib/unsavedWork';
 import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
+import { ConflictDialog } from './ConflictDialog';
 import { PinIcon } from './Icons';
 import { LinkSuggestions, suggestionAt, suggestionCount, suggestionId, SUGGESTIONS_ID } from './LinkSuggestions';
 import { MarkdownPreview } from './MarkdownPreview';
@@ -73,7 +79,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
-  const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
   const readOnly = note.deletedAt !== null;
 
@@ -83,18 +89,198 @@ function LoadedEditor({ note }: { note: Note }) {
     void queryClient.invalidateQueries({ queryKey: ['tags'] });
   }, [queryClient]);
 
-  const saveDraft = useCallback(
-    async (draft: Draft) => {
-      const saved = await updateNote(note.id, draft);
+  // The revision the text in this editor is based on. `note.revision` will
+  // not do: the cached note is refreshed and changed by other things, while
+  // the text here only moves on with a save, a restore or a settled conflict.
+  const revision = useRef(note.revision);
+  // Set by "keep mine, put theirs in the history" for the save that follows.
+  const keepTheirs = useRef(false);
+
+  // The user this editor was opened for. It is still known when the session has ended under it.
+  const [ownerId] = useState(useUserId());
+  // A draft that could not be saved the last time this note was left in this
+  // tab. It is only ever looked for under the id of the user who is signed in.
+  const [stashed, setStashed] = useState(() => {
+    const kept = ownerId ? readStash(ownerId, note.id) : null;
+    const alreadySaved = kept && savedTitle(kept.title) === note.title && kept.content === note.content;
+    if (ownerId && alreadySaved) dropStash(ownerId, note.id);
+    return kept && !alreadySaved ? kept : null;
+  });
+  // Whether the stash in the storage is the text now in the editor, to be dropped once that is saved.
+  const stashInEditor = useRef(false);
+  // Whether the stash is still on offer, neither restored nor discarded.
+  const offeredStash = useRef(stashed !== null);
+  // What this tab sent in saves that were never answered. One of them may have been written all the same.
+  const unanswered = useRef<Draft[]>([]);
+
+  const adopt = useCallback(
+    (saved: Note) => {
+      revision.current = saved.revision;
+      if (ownerId && stashInEditor.current) {
+        dropStash(ownerId, note.id);
+        stashInEditor.current = false;
+      }
       queryClient.setQueryData(['note', note.id], saved);
       void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
       void queryClient.invalidateQueries({ queryKey: ['versions', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
-    [note.id, queryClient],
+    [note.id, ownerId, queryClient],
   );
-  const autosave = useAutosave(saveDraft);
+
+  const saveDraft = useCallback(
+    async (draft: Draft) => {
+      const isText = (server: Note, sent: Draft) =>
+        server.title === savedTitle(sent.title) && server.content === sent.content;
+      for (;;) {
+        const changes = { ...draft, revision: revision.current, keepVersion: keepTheirs.current || undefined };
+        try {
+          adopt(await updateNote(note.id, changes));
+          break;
+        } catch (error) {
+          const theirs = staleNote(error);
+          if (theirs && isText(theirs, draft)) {
+            // The server already holds exactly this text. There is nothing to decide.
+            adopt(theirs);
+            break;
+          }
+          if (theirs && unanswered.current.some((sent) => isText(theirs, sent))) {
+            // What the server holds is what this tab sent before: the answer
+            // got lost, not the save. No other tab is involved, so the newer
+            // text simply goes on top of that revision.
+            unanswered.current = [];
+            revision.current = theirs.revision;
+            continue;
+          }
+          // Without an answer, or with an error of the server, the text may have been written all the same.
+          const refused = error instanceof ApiError && error.status >= 400 && error.status < 500;
+          if (!refused) unanswered.current = [...unanswered.current.slice(-9), draft];
+          throw error;
+        }
+      }
+      unanswered.current = [];
+      keepTheirs.current = false;
+    },
+    [note.id, adopt],
+  );
+
+  // Leaving the note with a conflict still open must not drop anything, and
+  // there is nobody left to ask. The draft is saved and the other text goes
+  // into the history. Should the note change yet again meanwhile, try anew.
+  // Nobody watched it happen, so a notice says what was done.
+  const saveOverConflict = useCallback(
+    async (draft: Draft, conflict: unknown) => {
+      let theirs = staleNote(conflict);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          adopt(await updateNote(note.id, { ...draft, revision: theirs?.revision, keepVersion: true }));
+          break;
+        } catch (error) {
+          theirs = staleNote(error);
+          if (!theirs || attempt === 2) throw error;
+        }
+      }
+      notify(
+        `“${savedTitle(draft.title)}” had been changed somewhere else when you left it. Your text was saved, and the other version was moved to the history of the note.`,
+      );
+    },
+    [note.id, adopt],
+  );
+
+  // A draft that is still unsaved when the editor closes is put aside in this
+  // tab before the last save is tried, and taken out again when that worked.
+  // A draft from an earlier visit that is still on offer is not replaced
+  // unless the new one could not be saved either.
+  const farewell = useMemo(() => {
+    if (!ownerId) return undefined;
+    let draftLeft: Draft | null = null;
+    const put = (draft: Draft) => stashDraft(ownerId, note.id, { ...draft, revision: revision.current });
+    return {
+      keep: (draft: Draft) => {
+        draftLeft = draft;
+        if (!offeredStash.current) put(draft);
+      },
+      saved: () => {
+        if (!offeredStash.current) dropStash(ownerId, note.id);
+      },
+      failed: () => {
+        if (!draftLeft) return;
+        put(draftLeft);
+        // After a sign-out there is nobody to tell. The draft is offered when the note is opened again.
+        if (getToken()) {
+          notify(
+            `Your last changes to “${savedTitle(draftLeft.title)}” could not be saved. They are kept in this tab: open the note again to get them back.`,
+          );
+        }
+      },
+    };
+  }, [ownerId, note.id]);
+
+  const autosave = useAutosave(
+    saveDraft,
+    undefined,
+    {
+      isConflict: (error) => staleNote(error) !== null,
+      onConflict: () => setDialog('conflict'),
+      saveOver: saveOverConflict,
+    },
+    farewell,
+  );
+  const theirs = staleNote(autosave.conflict);
+
+  // Signing out asks whether everything is saved, and can give the draft up.
+  useEffect(
+    () =>
+      registerUnsavedWork({
+        save: async () => {
+          await autosave.leave();
+          return !autosave.hasPending();
+        },
+        discard: autosave.discard,
+      }),
+    [autosave],
+  );
+
+  // "Keep mine" and "keep mine, put theirs in the history": save again, on the revision of the conflict.
+  const keepMine = (withTheirsInHistory: boolean) => {
+    if (!theirs) return;
+    setDialog(null);
+    revision.current = theirs.revision;
+    keepTheirs.current = withTheirsInHistory;
+    void autosave.retry();
+  };
+
+  // "Take theirs" fetches the note as it is now. The copy that came with the
+  // refused save may be old by the time the choice is made.
+  const takeTheirs = useMutation({
+    mutationFn: () => getNote(note.id),
+    onSuccess: (current) => {
+      keepTheirs.current = false;
+      unanswered.current = [];
+      autosave.discard();
+      setTitle(current.title);
+      setContent(current.content);
+      adopt(current);
+      setDialog(null);
+    },
+  });
+
+  const restoreStash = () => {
+    if (!stashed) return;
+    // Saved on the revision it was written on: if the note has moved on since, the usual question comes up.
+    revision.current = stashed.revision;
+    stashInEditor.current = true;
+    offeredStash.current = false;
+    setStashed(null);
+    change({ title: stashed.title, content: stashed.content });
+  };
+
+  const discardStash = () => {
+    if (ownerId) dropStash(ownerId, note.id);
+    offeredStash.current = false;
+    setStashed(null);
+  };
 
   const change = (next: Partial<Draft>) => {
     const draft = { title, content, ...next };
@@ -125,8 +311,9 @@ function LoadedEditor({ note }: { note: Note }) {
       queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, ...changes } : old));
     },
     onSuccess: (saved) => {
+      // The cached text goes with the cached revision: neither is taken from this answer.
       queryClient.setQueryData<Note>(['note', note.id], (old) =>
-        old ? { ...saved, title: old.title, content: old.content } : saved,
+        old ? { ...saved, title: old.title, content: old.content, revision: old.revision } : saved,
       );
       refreshLists();
     },
@@ -135,7 +322,7 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const trash = useMutation({
     mutationFn: async () => {
-      await autosave.flush();
+      await autosave.leave();
       await trashNote(note.id);
     },
     onSuccess: () => {
@@ -300,7 +487,9 @@ function LoadedEditor({ note }: { note: Note }) {
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        void autosave.flush();
+        // With a conflict open there is nothing to send before it is settled.
+        if (autosave.status === 'conflict') setDialog('conflict');
+        else void autosave.flush();
       } else if (mod && event.key.toLowerCase() === 'e') {
         event.preventDefault();
         cycleMode();
@@ -316,6 +505,7 @@ function LoadedEditor({ note }: { note: Note }) {
     pending: 'Unsaved changes',
     saving: 'Saving…',
     error: 'Could not save. Retrying on the next change.',
+    conflict: 'Not saved. This note was changed somewhere else.',
   }[autosave.status];
 
   return (
@@ -413,6 +603,28 @@ function LoadedEditor({ note }: { note: Note }) {
         disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
+      {stashed && !readOnly && (
+        <div className="banner banner-info" role="status">
+          <span>
+            Changes to this note from {formatDateTime(stashed.at)} could not be saved before you left it. They are kept
+            in this tab.
+          </span>
+          <button type="button" className="button button-primary" onClick={restoreStash}>
+            Put them back
+          </button>
+          <button type="button" className="button" onClick={discardStash}>
+            Discard them
+          </button>
+        </div>
+      )}
+      {autosave.status === 'conflict' && dialog !== 'conflict' && (
+        <div className="banner banner-info" role="alert">
+          <span>This note was changed somewhere else, and what you typed here is not saved.</span>
+          <button type="button" className="button button-primary" onClick={() => setDialog('conflict')}>
+            Decide what to keep
+          </button>
+        </div>
+      )}
       {offering && (orphanedCount > 0 || skipped > 0) && (
         <div className="banner banner-info" role="status">
           {orphanedCount > 0 && (
@@ -494,7 +706,12 @@ function LoadedEditor({ note }: { note: Note }) {
       </div>
 
       <footer className="editor-footer">
-        <span className={autosave.status === 'error' ? 'save-status error' : 'save-status'} role="status">
+        <span
+          className={
+            autosave.status === 'error' || autosave.status === 'conflict' ? 'save-status error' : 'save-status'
+          }
+          role="status"
+        >
           {statusText}
         </span>
         <span className="muted">
@@ -510,13 +727,30 @@ function LoadedEditor({ note }: { note: Note }) {
           noteId={note.id}
           current={{ title, content }}
           onClose={() => setDialog(null)}
+          beforeRestore={async () => {
+            // A restore replaces what is in the editor. Saved first, that text
+            // is on the server, where the restore keeps it as a version.
+            await autosave.flush();
+            if (autosave.hasPending()) {
+              throw new Error('Your latest changes are not saved yet, so nothing was restored. Save them first.');
+            }
+          }}
           onRestored={(restored) => {
             setTitle(restored.title);
             setContent(restored.content);
-            queryClient.setQueryData(['note', note.id], restored);
-            void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
+            adopt(restored);
             refreshLists();
           }}
+        />
+      )}
+      {dialog === 'conflict' && theirs && (
+        <ConflictDialog
+          onKeepBoth={() => keepMine(true)}
+          onKeepMine={() => keepMine(false)}
+          onTakeTheirs={() => takeTheirs.mutate()}
+          busy={takeTheirs.isPending}
+          error={takeTheirs.error}
+          onClose={() => setDialog(null)}
         />
       )}
       {dialog === 'share' && <ShareDialog noteId={note.id} onClose={() => setDialog(null)} />}
