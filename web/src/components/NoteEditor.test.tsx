@@ -121,6 +121,26 @@ describe('NoteEditor', () => {
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([4, 14]);
   });
 
+  it('compares versions with the text in the editor, saved or not', async () => {
+    const version = { id: 'v1', title: 'Project Atlas', characters: 30, createdAt: '2026-01-01T10:00:00Z' };
+    mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1/versions': { body: [version] },
+        'GET /api/notes/n1/versions/v1': { body: { ...version, content: 'Links to [[Atlas data model]].' } },
+      }),
+    );
+    renderEditor();
+
+    fireEvent.change(await screen.findByLabelText('Note content'), {
+      target: { value: 'Links to [[Atlas data model]].\nNot saved yet' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Changes' }));
+
+    expect(screen.getByText('Not saved yet').closest('.diff-line')).toHaveClass('diff-added');
+    expect(screen.getByText('Links to [[Atlas data model]].').closest('.diff-line')).toHaveClass('diff-same');
+  });
+
   it('shows notes in the trash as read-only', async () => {
     mockFetch(
       baseRoutes({

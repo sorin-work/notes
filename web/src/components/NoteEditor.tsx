@@ -404,6 +404,7 @@ function LoadedEditor({ note }: { note: Note }) {
       {dialog === 'history' && (
         <VersionHistoryDialog
           noteId={note.id}
+          current={{ title, content }}
           onClose={() => setDialog(null)}
           onRestored={(restored) => {
             setTitle(restored.title);
