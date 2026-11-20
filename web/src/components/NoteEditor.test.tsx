@@ -94,6 +94,53 @@ describe('NoteEditor', () => {
     expect(textarea).toHaveValue('See [[Weekly sync]]');
   });
 
+  it('ticks tasks from the preview and saves the change like typed text', async () => {
+    const content = 'For [[Dinner]]:\n\n- [x] Lemons\n- [ ] Bread flour\n';
+    const calls = mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ content }) } }));
+    renderEditor();
+
+    const flour = await screen.findByRole('checkbox', { name: 'Bread flour' });
+    const textarea = screen.getByLabelText<HTMLTextAreaElement>('Note content');
+    textarea.setSelectionRange(4, 14);
+
+    await userEvent.click(flour);
+    expect(textarea).toHaveValue('For [[Dinner]]:\n\n- [x] Lemons\n- [x] Bread flour\n');
+    // The box is still the same element, so keyboard users keep their place.
+    expect(flour).toBeChecked();
+    expect(flour).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Lemons' }));
+    const ticked = 'For [[Dinner]]:\n\n- [ ] Lemons\n- [x] Bread flour\n';
+    expect(textarea).toHaveValue(ticked);
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true), { timeout: 2000 });
+    expect(calls.filter((call) => call.method === 'PATCH').map((call) => call.body)).toEqual([
+      { title: 'Project Atlas', content: ticked },
+    ]);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([4, 14]);
+  });
+
+  it('compares versions with the text in the editor, saved or not', async () => {
+    const version = { id: 'v1', title: 'Project Atlas', characters: 30, createdAt: '2026-01-01T10:00:00Z' };
+    mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1/versions': { body: [version] },
+        'GET /api/notes/n1/versions/v1': { body: { ...version, content: 'Links to [[Atlas data model]].' } },
+      }),
+    );
+    renderEditor();
+
+    fireEvent.change(await screen.findByLabelText('Note content'), {
+      target: { value: 'Links to [[Atlas data model]].\nNot saved yet' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Changes' }));
+
+    expect(screen.getByText('Not saved yet').closest('.diff-line')).toHaveClass('diff-added');
+    expect(screen.getByText('Links to [[Atlas data model]].').closest('.diff-line')).toHaveClass('diff-same');
+  });
+
   it('puts the cursor in the text when the quick switcher opened the note', async () => {
     mockFetch(baseRoutes());
     renderEditor({ focusEditor: true });
@@ -108,10 +155,15 @@ describe('NoteEditor', () => {
   });
 
   it('shows notes in the trash as read-only', async () => {
-    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ deletedAt: '2026-01-03T00:00:00Z' }) } }));
+    mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': { body: note({ content: '- [ ] Call the bank', deletedAt: '2026-01-03T00:00:00Z' }) },
+      }),
+    );
     renderEditor();
     expect(await screen.findByText(/This note is in the trash/)).toBeInTheDocument();
     expect(screen.getByLabelText('Note content')).toHaveAttribute('readonly');
+    expect(screen.getByRole('checkbox')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
 

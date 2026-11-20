@@ -6,16 +6,23 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
 import { Modal } from './Modal';
 import { ErrorMessage, Spinner } from './States';
+import { VersionChanges } from './VersionChanges';
 
 interface Props {
   noteId: string;
+  /** Title and text as they are in the editor, saved or not. Versions are compared with these. */
+  current: { title: string; content: string };
   onClose(): void;
   onRestored(note: Note): void;
 }
 
-export function VersionHistoryDialog({ noteId, onClose, onRestored }: Props) {
+const VIEWS = ['preview', 'changes'] as const;
+const VIEW_LABELS: Record<(typeof VIEWS)[number], string> = { preview: 'Preview', changes: 'Changes' };
+
+export function VersionHistoryDialog({ noteId, current, onClose, onRestored }: Props) {
   const versions = useQuery({ queryKey: ['versions', noteId], queryFn: () => listVersions(noteId) });
   const [selected, setSelected] = useState<string | null>(null);
+  const [view, setView] = useState<(typeof VIEWS)[number]>('preview');
   const selectedId = selected ?? versions.data?.[0]?.id ?? null;
 
   const version = useQuery({
@@ -69,17 +76,36 @@ export function VersionHistoryDialog({ noteId, onClose, onRestored }: Props) {
                     <strong>{version.data.title}</strong>
                     <div className="muted">{formatDateTime(version.data.createdAt)}</div>
                   </div>
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    onClick={() => restore.mutate()}
-                    disabled={restore.isPending}
-                  >
-                    {restore.isPending ? 'Restoring…' : 'Restore this version'}
-                  </button>
+                  <div className="history-actions">
+                    <div className="toolbar-group" role="group" aria-label="Show">
+                      {VIEWS.map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className={view === value ? 'segment active' : 'segment'}
+                          aria-pressed={view === value}
+                          onClick={() => setView(value)}
+                        >
+                          {VIEW_LABELS[value]}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={() => restore.mutate()}
+                      disabled={restore.isPending}
+                    >
+                      {restore.isPending ? 'Restoring…' : 'Restore this version'}
+                    </button>
+                  </div>
                 </div>
                 {restore.error && <ErrorMessage error={restore.error} />}
-                <MarkdownPreview content={version.data.content} />
+                {view === 'preview' ? (
+                  <MarkdownPreview content={version.data.content} />
+                ) : (
+                  <VersionChanges version={version.data} current={current} />
+                )}
               </>
             )}
           </div>

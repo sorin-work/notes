@@ -7,6 +7,13 @@ export function countWords(markdown: string): number {
   return words.length;
 }
 
+export const DEFAULT_TITLE = 'Untitled';
+
+/** The title the API stores for what was typed in the editor: trimmed, and "Untitled" when nothing is left. */
+export function savedTitle(draft: string): string {
+  return draft.trim() || DEFAULT_TITLE;
+}
+
 /** Minutes at about 220 words a minute, at least one for any text. */
 export function readingMinutes(words: number): number {
   return words === 0 ? 0 : Math.max(1, Math.round(words / 220));
