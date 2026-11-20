@@ -88,6 +88,18 @@ describe('NoteEditor', () => {
     ).toBeInTheDocument();
   });
 
+  it('puts the preview on the page while printing in "Edit", and only then', async () => {
+    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ content: '# Printed heading' }) } }));
+    renderEditor(undefined, 'edit');
+    await screen.findByLabelText('Note content');
+    expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument();
+
+    fireEvent(window, new Event('beforeprint'));
+    expect(screen.getByRole('heading', { name: 'Printed heading' })).toBeInTheDocument();
+    fireEvent(window, new Event('afterprint'));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument());
+  });
+
   it('autosaves edits to the title and content', async () => {
     const calls = mockFetch(baseRoutes());
     renderEditor();
