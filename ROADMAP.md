@@ -29,7 +29,7 @@ couple of weekends, **L** several weeks of spare time.
 | 8   | Edit conflict detection                | Later   | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Later   | both     | M    | -          |
-| 11  | Account settings and sessions          | Later   | both     | M    | -          |
+| 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Later   | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
@@ -210,28 +210,10 @@ A share link is all or nothing: one note, public until I stop sharing.
   text because `MarkdownPreview` gets no `onWikiLink` there. When the target
   is shared as well (always true inside a shared notebook) it could link to
   that share.
-- The public endpoint is not rate limited (`ThrottlerGuard` is only on
-  sign-up and login) and every fetch bumps `viewCount`, my own included.
-  Throttle it, and skip the count when the request carries the owner's token.
-
-### 11. Account settings and sessions
-
-Settings can change the password and nothing else about the account.
-
-- Change name and email: `PATCH /auth/me`, asking for the current password
-  when the email changes. The Account card in `SettingsPage` shows both
-  read-only for now.
-- Delete account: `DELETE /auth/me` with the password. The schema already
-  cascades from `User` to notebooks, notes and tags, so it is one delete plus
-  a confirm dialog that offers the export first.
-- Sign out everywhere: logins are stateless JWTs valid for `JWT_EXPIRES_IN`
-  (seven days) and `JwtAuthGuard` only checks the signature, so changing the
-  password does not end a forgotten session. A `tokenVersion` on `User`, put
-  in the token and compared in the guard, fixes that at the price of a user
-  lookup per request.
-- Password reset by email belongs here too, but needs outgoing mail (SMTP
-  settings, and something like mailpit in compose for development). I would
-  do it last.
+- The public endpoint is not rate limited (`ThrottlerGuard` is only on the
+  routes that take a password) and every fetch bumps `viewCount`, my own
+  included. Throttle it, and skip the count when the request carries the
+  owner's token.
 
 ### 12. More import sources and export formats
 
@@ -390,3 +372,17 @@ keeping two, a restore into a scratch database and a row count of every
 table. Still open: the dumps are not encrypted, they stay on the same machine
 unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
 apart from the service log.
+
+### 11. Account settings and sessions
+
+Settings can now change the name and the email (`PATCH /auth/me`, the email
+only with the current password), delete the account with everything in it
+(`DELETE /auth/me` with the password, behind a dialog that offers the export
+first) and sign out everywhere (`POST /auth/logout-all`). Sessions end
+through a `tokenVersion` on `User` that every token carries and
+`JwtAuthGuard` compares on each request, at the price of one small query per
+request. Changing the password bumps it too and gives the browser that made
+the change a new token. Different from the design: a wrong password on these
+routes answers `403` instead of `401`, because the web app signs out on any
+`401`, and the routes are throttled like login. Still open: password reset
+by email, which needs outgoing mail, and a new email address is not verified.
