@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Notebook, Prisma } from '@prisma/client';
+import { templateNotes, WORKING_NOTE } from '../notes/note-scope';
 import { sharedThrough, SharedThrough } from '../notes/note-view';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotebookDto, UpdateNotebookDto } from './dto/notebook.dto';
@@ -9,6 +10,11 @@ export interface NotebookView {
   name: string;
   parentId: string | null;
   noteCount: number;
+  /**
+   * Templates are not counted as notes, but they are in the notebook all the
+   * same, and deleting it moves them to the trash with the notes.
+   */
+  templateCount: number;
   /** Whether the notebook has a share link of its own. */
   shared: boolean;
   /**
@@ -21,16 +27,20 @@ export interface NotebookView {
 }
 
 const notebookInclude = {
-  _count: { select: { notes: { where: { deletedAt: null } } } },
+  _count: { select: { notes: { where: WORKING_NOTE } } },
   share: { select: { expiresAt: true } },
   parent: { select: { id: true, name: true, share: { select: { expiresAt: true } } } },
 } satisfies Prisma.NotebookInclude;
 
-function toNotebookView(notebook: Prisma.NotebookGetPayload<{ include: typeof notebookInclude }>): NotebookView {
+function toNotebookView(
+  notebook: Prisma.NotebookGetPayload<{ include: typeof notebookInclude }>,
+  templateCount: number,
+): NotebookView {
   const { _count, userId: _userId, share, parent, ...rest } = notebook;
   return {
     ...rest,
     noteCount: _count.notes,
+    templateCount,
     shared: share !== null,
     sharedThrough: sharedThrough({ id: rest.id, name: rest.name, share, parent }),
   };
@@ -46,7 +56,8 @@ export class NotebooksService {
       orderBy: { name: 'asc' },
       include: notebookInclude,
     });
-    return notebooks.map(toNotebookView);
+    const templates = await this.templateCounts(userId);
+    return notebooks.map((notebook) => toNotebookView(notebook, templates.get(notebook.id) ?? 0));
   }
 
   async create(userId: string, dto: CreateNotebookDto): Promise<NotebookView> {
@@ -59,7 +70,7 @@ export class NotebooksService {
       data: { userId, name: dto.name, parentId },
       include: notebookInclude,
     });
-    return toNotebookView(notebook);
+    return toNotebookView(notebook, 0);
   }
 
   async update(userId: string, id: string, dto: UpdateNotebookDto): Promise<NotebookView> {
@@ -123,7 +134,18 @@ export class NotebooksService {
 
   private async view(userId: string, id: string): Promise<NotebookView> {
     const notebook = await this.prisma.notebook.findFirstOrThrow({ where: { id, userId }, include: notebookInclude });
-    return toNotebookView(notebook);
+    const templates = await this.templateCounts(userId, id);
+    return toNotebookView(notebook, templates.get(id) ?? 0);
+  }
+
+  /** How many templates each notebook holds, by notebook id. */
+  private async templateCounts(userId: string, notebookId?: string): Promise<Map<string, number>> {
+    const groups = await this.prisma.note.groupBy({
+      by: ['notebookId'],
+      where: { ...templateNotes(userId), notebookId: notebookId ?? { not: null } },
+      _count: { _all: true },
+    });
+    return new Map(groups.map((group) => [group.notebookId ?? '', group._count._all]));
   }
 
   private async assertCanBeParent(userId: string, parentId: string): Promise<void> {

@@ -9,6 +9,7 @@ interface ExportableNote {
   content: string;
   pinned: boolean;
   favorite: boolean;
+  isTemplate?: boolean;
   createdAt: Date;
   updatedAt: Date;
   tags: { tag: { name: string } }[];
@@ -26,6 +27,7 @@ export function toMarkdownFile(note: ExportableNote): string {
   if (tags.length) data.tags = tags;
   if (note.pinned) data.pinned = true;
   if (note.favorite) data.favorite = true;
+  if (note.isTemplate) data.template = true;
   data.created = note.createdAt.toISOString();
   data.updated = note.updatedAt.toISOString();
   const body = note.content.endsWith('\n') || note.content === '' ? note.content : `${note.content}\n`;

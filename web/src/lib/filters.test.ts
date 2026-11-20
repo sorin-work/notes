@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { newNoteFor, readFilters, withFilters } from './filters';
+import { leavingTemplates, newNoteFor, readFilters, withFilters } from './filters';
 
 const read = (search: string) => readFilters(new URLSearchParams(search));
 
@@ -38,5 +38,20 @@ describe('newNoteFor', () => {
 
   it('leaves the notebook empty for the notes without one', () => {
     expect(newNoteFor(read('notebook=none'))).toEqual({ notebookId: null });
+  });
+});
+
+describe('the templates view', () => {
+  it('is a view of its own, and a note created in it is a template', () => {
+    const filters = readFilters(new URLSearchParams('view=templates&notebook=nb'));
+    expect(filters).toEqual({ notebook: 'nb', tag: null, view: 'templates' });
+    expect(newNoteFor(filters)).toMatchObject({ notebookId: 'nb', isTemplate: true });
+    expect(newNoteFor(readFilters(new URLSearchParams('notebook=nb'))).isTemplate).toBeUndefined();
+  });
+
+  it('is left behind for a note that is no template', () => {
+    expect(leavingTemplates('?view=templates&notebook=nb')).toBe('notebook=nb');
+    expect(leavingTemplates('?view=pinned&tag=x')).toBe('view=pinned&tag=x');
+    expect(leavingTemplates('')).toBe('');
   });
 });

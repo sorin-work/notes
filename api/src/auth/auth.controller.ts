@@ -9,7 +9,9 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import type { Preferences } from './preferences';
 
 /**
  * Everything here that is not public needs a login. An API token gets as far
@@ -56,6 +58,15 @@ export class AuthController {
   @Patch('me')
   updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto): Promise<PublicUser> {
     return this.auth.updateProfile(user.id, dto);
+  }
+
+  /**
+   * Changes the choices kept with the account, such as where daily notes go.
+   * They come back with `GET /auth/me`. Only what is sent changes.
+   */
+  @Patch('preferences')
+  updatePreferences(@CurrentUser() user: AuthUser, @Body() dto: UpdatePreferencesDto): Promise<Preferences> {
+    return this.auth.updatePreferences(user.id, dto);
   }
 
   /** Deletes the account with everything in it. */

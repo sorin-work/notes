@@ -6,11 +6,13 @@ import { ApiError, getToken } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
 import {
   createNote,
+  duplicateNote,
   exportNote,
   getNote,
   noteTitles,
   orphanedLinkCount,
   outgoingLinks,
+  releaseDailyNote,
   renameLinks,
   resolveTitle,
   staleNote,
@@ -26,9 +28,11 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
+import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { notify } from '../lib/notices';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
+import { fromTemplate } from '../lib/templates';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
@@ -75,6 +79,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const navigate = useNavigate();
   const location = useLocation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
   const [title, setTitle] = useState(note.title);
@@ -311,6 +316,13 @@ function LoadedEditor({ note }: { note: Note }) {
   useEffect(() => {
     if (focusText) (textareaRef.current ?? previewRef.current)?.focus();
   }, [focusText]);
+  // A note made from a template starts untitled, so its title is the first thing to write.
+  const focusTitle = (location.state as { focusTitle?: boolean } | null)?.focusTitle === true;
+  useEffect(() => {
+    if (!focusTitle) return;
+    titleRef.current?.focus();
+    titleRef.current?.select();
+  }, [focusTitle]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -326,12 +338,17 @@ function LoadedEditor({ note }: { note: Note }) {
     onMutate: (changes) => {
       queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, ...changes } : old));
     },
-    onSuccess: (saved) => {
+    onSuccess: (saved, changes) => {
       // The cached text goes with the cached revision: neither is taken from this answer.
       queryClient.setQueryData<Note>(['note', note.id], (old) =>
         old ? { ...saved, title: old.title, content: old.content, revision: old.revision } : saved,
       );
       refreshLists();
+      // A template is no backlink and no link suggestion, and a note again is both.
+      if (changes.isTemplate !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
+        void queryClient.invalidateQueries({ queryKey: ['titles'] });
+      }
     },
     onError: () => void queryClient.invalidateQueries({ queryKey: ['note', note.id] }),
   });
@@ -348,6 +365,46 @@ function LoadedEditor({ note }: { note: Note }) {
       refreshLists();
       navigate({ pathname: '/notes', search: location.search });
     },
+  });
+
+  // A copy, or a note made from this template, is opened as soon as it is there.
+  const openNew = (created: Note, fromTemplate = false) => {
+    refreshLists();
+    navigate(
+      {
+        pathname: `/notes/${created.id}`,
+        search: created.isTemplate ? location.search : leavingTemplates(location.search),
+      },
+      { state: fromTemplate ? { focusTitle: true } : null },
+    );
+  };
+
+  const duplicate = useMutation({
+    mutationFn: async () => {
+      // The copy is made on the server, so what is typed here has to be there first.
+      await autosave.flush();
+      if (autosave.hasPending()) throw new Error('Your latest changes are not saved yet, so the note was not copied.');
+      return duplicateNote(note.id);
+    },
+    onSuccess: openNew,
+  });
+
+  // A note can be the daily note only because its title was the day. This lets it go.
+  const releaseDaily = useMutation({
+    mutationFn: () => releaseDailyNote(note.id),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, dailyDate: saved.dailyDate } : old));
+    },
+  });
+
+  const useTemplate = useMutation({
+    mutationFn: async () => {
+      await autosave.flush();
+      if (autosave.hasPending()) throw new Error('Your latest changes are not saved yet, so no note was made.');
+      const { notebookId } = newNoteFor(readFilters(new URLSearchParams(location.search)));
+      return createNote(fromTemplate(note.id, notebookId));
+    },
+    onSuccess: (created) => openNew(created, true),
   });
 
   // Links point at titles, so a rename leaves the links to the old title
@@ -413,12 +470,28 @@ function LoadedEditor({ note }: { note: Note }) {
     enabled: linkQuery !== null,
   });
   const titleOptions = (suggestions.data ?? []).filter((item) => item.id !== note.id);
+  // The suggestions leave templates out, but a link to a template's title
+  // still leads to it, so "New note" is offered only for a title that leads
+  // nowhere. Until that is known it is not offered.
+  const linkTarget = useQuery({
+    queryKey: ['resolve', linkQuery === null ? null : normalizeTitle(linkQuery)],
+    queryFn: async () => {
+      try {
+        return (await resolveTitle(linkQuery ?? '')).id;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: linkQuery !== null && linkQuery.trim() !== '',
+  });
+  const titleTaken = !(linkTarget.isSuccess && linkTarget.data === null && linkQuery === (link?.query ?? null));
   const {
     activeIndex: activeSuggestion,
     setActiveIndex: setActiveSuggestion,
     onArrowKey,
-  } = useActiveOption(link ? suggestionCount(titleOptions, link.query) : 0);
-  const suggesting = link !== null && suggestionCount(titleOptions, link.query) > 0;
+  } = useActiveOption(link ? suggestionCount(titleOptions, link.query, titleTaken) : 0);
+  const suggesting = link !== null && suggestionCount(titleOptions, link.query, titleTaken) > 0;
 
   const openWikiLink = useCallback(
     async (target: string) => {
@@ -486,7 +559,7 @@ function LoadedEditor({ note }: { note: Note }) {
     } else if (onArrowKey(event)) {
       return;
     } else if (event.key === 'Enter' || event.key === 'Tab') {
-      const target = suggestionAt(titleOptions, link.query, activeSuggestion);
+      const target = suggestionAt(titleOptions, link.query, activeSuggestion, titleTaken);
       if (target) {
         event.preventDefault();
         insertLink(target);
@@ -593,6 +666,36 @@ function LoadedEditor({ note }: { note: Note }) {
         >
           Export
         </button>
+        <button
+          type="button"
+          className="button"
+          title="Make a copy of this note"
+          disabled={readOnly || duplicate.isPending}
+          onClick={() => duplicate.mutate()}
+        >
+          Duplicate
+        </button>
+        {note.dailyDate && !readOnly && (
+          <button
+            type="button"
+            className="button"
+            title={`This is the daily note of ${note.dailyDate}. Make it an ordinary note, and "Today" starts a new one.`}
+            disabled={releaseDaily.isPending}
+            onClick={() => releaseDaily.mutate()}
+          >
+            Not the daily note
+          </button>
+        )}
+        <button
+          type="button"
+          className={note.isTemplate ? 'button button-shared' : 'button'}
+          aria-pressed={note.isTemplate}
+          title={note.isTemplate ? 'Make this an ordinary note again' : 'Use this note as a template for new notes'}
+          disabled={readOnly}
+          onClick={() => updateMeta.mutate({ isTemplate: !note.isTemplate })}
+        >
+          Template
+        </button>
         {!readOnly && (
           <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
             Delete
@@ -601,6 +704,7 @@ function LoadedEditor({ note }: { note: Note }) {
       </div>
 
       <input
+        ref={titleRef}
         className="title-input"
         aria-label="Title"
         placeholder="Untitled"
@@ -623,6 +727,25 @@ function LoadedEditor({ note }: { note: Note }) {
         disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
+      {note.isTemplate && !readOnly && (
+        <div className="banner banner-info">
+          <span>
+            This is a template. It stays out of the lists and the search, and new notes start from it with{' '}
+            <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code> and <code>{'{{title}}'}</code> filled in.
+          </span>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={useTemplate.isPending}
+            onClick={() => useTemplate.mutate()}
+          >
+            New note from this template
+          </button>
+        </div>
+      )}
+      {(duplicate.error || useTemplate.error || releaseDaily.error) && (
+        <ErrorMessage error={duplicate.error ?? useTemplate.error ?? releaseDaily.error} />
+      )}
       {note.sharedThrough && !readOnly && (
         <p className="shared-through muted">
           Anyone with the link to the shared notebook “{note.sharedThrough.name}” can read this note.
@@ -712,6 +835,7 @@ function LoadedEditor({ note }: { note: Note }) {
               <LinkSuggestions
                 titles={titleOptions}
                 query={link.query}
+                taken={titleTaken}
                 activeIndex={activeSuggestion}
                 onPick={insertLink}
               />

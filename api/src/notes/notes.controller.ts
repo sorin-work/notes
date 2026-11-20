@@ -18,7 +18,15 @@ import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
 import { ExportService } from '../transfer/export.service';
-import { CreateNoteDto, ListNotesQuery, RenameLinksDto, ResolveQuery, TitleQuery, UpdateNoteDto } from './dto/note.dto';
+import {
+  CreateNoteDto,
+  DailyNoteDto,
+  ListNotesQuery,
+  RenameLinksDto,
+  ResolveQuery,
+  TitleQuery,
+  UpdateNoteDto,
+} from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService, RenamedLinks } from './notes.service';
 
@@ -55,10 +63,36 @@ export class NotesController {
     return this.notes.create(user.id, dto);
   }
 
+  /**
+   * The daily note of a day: opens the one there is and makes it when there
+   * is none. Asked twice for the same day, it answers with the same note.
+   */
+  @Post('daily')
+  @HttpCode(HttpStatus.OK)
+  daily(@CurrentUser() user: AuthUser, @Body() dto: DailyNoteDto): Promise<NoteView> {
+    return this.notes.daily(user.id, dto);
+  }
+
   /** One note with its text. */
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
     return this.notes.get(user.id, id);
+  }
+
+  /**
+   * Takes a daily note off its day. It stays an ordinary note, the next
+   * `POST /notes/daily` for that day makes a new one, and its title no longer
+   * makes it the note of a day.
+   */
+  @Delete(':id/daily')
+  releaseDaily(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
+    return this.notes.releaseDaily(user.id, id);
+  }
+
+  /** Makes a copy of a note: its text, tags and notebook, and nothing else of it. */
+  @Post(':id/duplicate')
+  duplicate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
+    return this.notes.duplicate(user.id, id);
   }
 
   /** Changes a note. The text it had before is kept as a version, at most every ten minutes. */

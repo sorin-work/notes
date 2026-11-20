@@ -2,11 +2,12 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { Link, Route, Routes, useParams } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
@@ -148,7 +149,8 @@ describe('NoteEditor', () => {
     await userEvent.clear(textarea);
     await userEvent.type(textarea, 'See [[[[Wee');
     const option = await screen.findByRole('option', { name: 'Weekly sync' });
-    expect(screen.getByRole('option', { name: /New note Wee/ })).toBeInTheDocument();
+    // Offered once it is known that no note, and no template, has that title.
+    expect(await screen.findByRole('option', { name: /New note Wee/ })).toBeInTheDocument();
     // The text field tells a screen reader where the list is and which option is highlighted.
     expect(textarea).toHaveAttribute('aria-controls', screen.getByRole('listbox', { name: 'Link to note' }).id);
     expect(textarea).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'Weekly review' }).id);
@@ -160,6 +162,30 @@ describe('NoteEditor', () => {
     expect(textarea).toHaveValue('See [[Weekly sync]]');
     expect(textarea).not.toHaveAttribute('aria-controls');
     expect(textarea).not.toHaveAttribute('aria-activedescendant');
+  });
+
+  it('offers no new note for the title of a template, which a link already leads to', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/titles': { body: [] },
+        'GET /api/notes/resolve': { body: { id: 't1', title: 'Weekly review template' } },
+      }),
+    );
+    renderEditor();
+
+    const textarea = await screen.findByLabelText('Note content');
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, 'See [[[[weekly review template');
+    await waitFor(() => expect(calls.some((call) => call.url.startsWith('/api/notes/resolve?'))).toBe(true));
+    await waitFor(() => expect(calls.filter((call) => call.url.startsWith('/api/notes/titles?'))).not.toHaveLength(0));
+    expect(screen.queryByRole('option', { name: /New note/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('puts the cursor in the title of a note made from a template', async () => {
+    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ title: 'Untitled' }) } }));
+    renderEditor({ focusTitle: true });
+    await waitFor(() => expect(screen.getByLabelText('Title')).toHaveFocus());
   });
 
   it('ticks tasks from the preview and saves the change like typed text', async () => {
@@ -469,6 +495,7 @@ describe('NoteEditor', () => {
       renderEditor();
       const { textarea } = await typeIntoConflict();
       expect(screen.getByRole('status')).toHaveTextContent('Not saved. This note was changed somewhere else.');
+      await expectNoAxeViolations({ part: true });
 
       await userEvent.click(screen.getByRole('button', { name: choice }));
       await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
@@ -842,6 +869,77 @@ describe('NoteEditor', () => {
     ).toBeInTheDocument();
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
     expect(textarea).toHaveValue('Typed a moment ago.');
+  });
+
+  it('duplicates the note after saving what is typed, and opens the copy', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'POST /api/notes/n1/duplicate': { body: note({ id: 'n2', title: 'Project Atlas (copy)' }) },
+      }),
+    );
+    renderEditor();
+    fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed just now.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Duplicate' }));
+
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/notes/n1/duplicate')).toBe(true));
+    const sent = calls.filter((call) => call.method !== 'GET').map((call) => `${call.method} ${call.url}`);
+    expect(sent).toEqual(['PATCH /api/notes/n1', 'POST /api/notes/n1/duplicate']);
+    expect(calls.find((call) => call.method === 'PATCH')?.body).toMatchObject({ content: 'Typed just now.' });
+  });
+
+  it('turns a note into a template, which is no edit, and makes a note from it', async () => {
+    let saved = note();
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': () => ({ body: saved }),
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+          saved = { ...saved, ...(body as object) };
+          return { body: saved };
+        },
+        'POST /api/notes': { body: note({ id: 'n2', title: 'Project Atlas' }) },
+      }),
+    );
+    const { queryClient } = renderEditor();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const toggle = await screen.findByRole('button', { name: 'Template' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByText(/This is a template/)).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'));
+    // No title, no content and no revision: like a pin, it cannot conflict with typing.
+    expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({ isTemplate: true });
+    // A template is no backlink and no link suggestion, so neither waits for its cache time.
+    const refreshed = invalidate.mock.calls.map(([filters]) => filters?.queryKey?.[0]);
+    expect(refreshed).toEqual(expect.arrayContaining(['backlinks', 'titles']));
+
+    expect(screen.getByText(/This is a template/)).toBeInTheDocument();
+    await expectNoAxeViolations({ part: true });
+    await userEvent.click(screen.getByRole('button', { name: 'New note from this template' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      templateId: 'n1',
+      notebookId: null,
+      placeholders: {
+        date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        time: expect.stringMatching(/^\d{2}:\d{2}$/),
+      },
+    });
+  });
+
+  it('lets a daily note go from its day, and offers that only on a daily note', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': { body: note({ title: '2026-11-21', dailyDate: '2026-11-21' }) },
+        'DELETE /api/notes/n1/daily': { body: note({ title: '2026-11-21', dailyDate: null }) },
+      }),
+    );
+    renderEditor();
+    await userEvent.click(await screen.findByRole('button', { name: 'Not the daily note' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Not the daily note' })).not.toBeInTheDocument());
+    expect(calls.filter((call) => call.method === 'DELETE').map((call) => call.url)).toEqual(['/api/notes/n1/daily']);
+    // Nothing of the text was sent.
+    expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
   });
 
   it('shows notes in the trash as read-only', async () => {

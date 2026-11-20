@@ -8,6 +8,7 @@ const notebook = (id: string, sharedThrough: Notebook['sharedThrough']): Noteboo
   name: id,
   parentId: null,
   noteCount: 0,
+  templateCount: 0,
   shared: false,
   sharedThrough,
   createdAt: '',
