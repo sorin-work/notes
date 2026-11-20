@@ -1,5 +1,5 @@
 import { onlineManager } from '@tanstack/react-query';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { Link, Route, Routes, useParams } from 'react-router';
@@ -8,6 +8,7 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { outboxEntryFor, queueText } from '../lib/outbox';
 import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, user } from '../test/fixtures';
@@ -692,19 +693,25 @@ describe('NoteEditor', () => {
     }
 
     it('puts the draft aside when the tab has to reload into a new version without saving it', async () => {
+      let failing = true;
       mockFetch(
         baseRoutes({
           'GET /api/auth/me': { body: user },
-          'PATCH /api/notes/n1': { status: 500, body: { message: 'Down' } },
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) =>
+            failing ? { status: 500, body: { message: 'Down' } } : { body: { ...note(), ...(body as object) } },
         }),
       );
-      renderSignedIn();
+      const { unmount } = renderSignedIn();
       fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed before the reload.' } });
       putUnsavedWorkAside();
       expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed before the reload.', revision: 3 });
+      // Left behind, the editor still saves on its way out. Let that go through, so nothing outlives the test.
+      failing = false;
+      unmount();
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull());
     });
 
-    it('keeps the draft in the tab, says so, and offers it when the note is opened again', async () => {
+    it('keeps text the server could not take on the device, and sends it once it can be reached', async () => {
       let online = false;
       let saved = note();
       const calls = mockFetch(
@@ -713,6 +720,79 @@ describe('NoteEditor', () => {
           'GET /api/notes/n1': () => ({ body: saved }),
           'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
             if (!online) throw new TypeError('Failed to fetch');
+            saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
+            return { body: saved };
+          },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), {
+        target: { value: 'Typed with no connection.' },
+      });
+      await userEvent.click(screen.getByRole('link', { name: 'Leave' }));
+
+      // In the outbox, and then no longer in the tab's stash, where it waited only until the outbox had it.
+      await waitFor(
+        () => expect(outboxEntryFor('n1')).toMatchObject({ content: 'Typed with no connection.', baseRevision: 3 }),
+        { timeout: 1500 },
+      );
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull(), { timeout: 1500 });
+      expect(screen.queryByText(/could not be saved/)).not.toBeInTheDocument();
+
+      // Opened again before it is sent: the text from the device, not the older one of the server.
+      await userEvent.click(screen.getByRole('link', { name: 'Back' }));
+      expect(await screen.findByLabelText('Note content')).toHaveValue('Typed with no connection.');
+
+      online = true;
+      fireEvent(window, new Event('online'));
+      await waitFor(() => expect(saved.content).toBe('Typed with no connection.'), { timeout: 3000 });
+      expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 3 });
+      await waitFor(() => expect(outboxEntryFor('n1')).toBeNull());
+    });
+
+    it('asks the usual question when offline changes meet a newer note, and sends them only as told', async () => {
+      let saved = note({ content: 'Changed on the phone', revision: 4 });
+      const calls = mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'GET /api/notes/n1': () => ({ body: saved }),
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            const sent = body as { content: string; revision: number };
+            if (sent.revision !== saved.revision) {
+              return {
+                status: 409,
+                body: { statusCode: 409, error: 'Conflict', message: 'changed', code: 'stale_revision', note: saved },
+              };
+            }
+            saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
+            return { body: saved };
+          },
+        }),
+      );
+      // Typed on the train, on revision 3, before the phone saved revision 4.
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'Typed on the train' }, 3);
+      renderSignedIn();
+
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      // The editor shows what was typed offline, and nothing was overwritten.
+      expect(screen.getByLabelText('Note content')).toHaveValue('Typed on the train');
+      expect(saved.content).toBe('Changed on the phone');
+
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+      await waitFor(() => expect(saved.content).toBe('Typed on the train'));
+      expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 4, keepVersion: true });
+      await waitFor(() => expect(outboxEntryFor('n1')).toBeNull());
+    });
+
+    it('keeps a draft the server refused in the tab, says so, and offers it when the note is opened again', async () => {
+      let online = false;
+      let saved = note();
+      const calls = mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'GET /api/notes/n1': () => ({ body: saved }),
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            if (!online) return { status: 503, body: { message: 'Down for a moment' } };
             saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
             return { body: saved };
           },
