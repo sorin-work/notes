@@ -241,6 +241,12 @@ describe('password reset', () => {
       .send({ email, name: 'Ada', password: 'password123' })
       .expect(201);
 
+    const apiToken = await request(server)
+      .post('/api/auth/tokens')
+      .set(bearer(session.body.token))
+      .send({ name: 'cron job', currentPassword: 'password123' })
+      .expect(201);
+
     const status = await request(server).get('/api/auth/password-reset').expect(200);
     expect(status.body).toEqual({ enabled: true });
 
@@ -258,11 +264,28 @@ describe('password reset', () => {
     expect(mail.text).not.toContain('Ada');
 
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'short' }).expect(400);
-    await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password456' }).expect(204);
+    const done = await request(server)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token, password: 'password456' })
+      .expect(200);
 
     await request(server).get('/api/auth/me').set(bearer(session.body.token)).expect(401);
     await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(401);
     await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+
+    // The answer signs the browser that did the reset in again.
+    expect(done.body.user.email).toBe(email);
+    const fresh = bearer(done.body.token);
+    await request(server).get('/api/auth/me').set(fresh).expect(200);
+
+    // The API token made before is still good. It is not revoked behind the
+    // owner's back, but the new login can list it and end it with the rest.
+    await request(server).get('/api/notes').set(bearer(apiToken.body.token)).expect(200);
+    const listed = await request(server).get('/api/auth/tokens').set(fresh).expect(200);
+    expect(listed.body.map((entry: { name: string }) => entry.name)).toEqual(['cron job']);
+    const revoked = await request(server).delete('/api/auth/tokens').set(fresh).expect(200);
+    expect(revoked.body).toEqual({ revoked: 1 });
+    await request(server).get('/api/notes').set(bearer(apiToken.body.token)).expect(401);
 
     // The link worked once.
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password789' }).expect(400);
@@ -285,7 +308,7 @@ describe('password reset', () => {
     await request(server)
       .post('/api/auth/password-reset/confirm')
       .send({ token: first, password: 'password456' })
-      .expect(204);
+      .expect(200);
     // And once one is used, the other no longer sets a password.
     await request(server)
       .post('/api/auth/password-reset/confirm')
@@ -342,9 +365,27 @@ describe('api tokens', () => {
     const server = app.getHttpServer();
     const { auth } = await signUp();
 
-    await request(server).post('/api/auth/tokens').set(auth).send({}).expect(400);
-    await request(server).post('/api/auth/tokens').set(auth).send({ name: 'script', readOnly: null }).expect(400);
-    const created = await request(server).post('/api/auth/tokens').set(auth).send({ name: ' script ' }).expect(201);
+    const currentPassword = 'password123';
+    await request(server).post('/api/auth/tokens').set(auth).send({ currentPassword }).expect(400);
+    await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'script', readOnly: null, currentPassword })
+      .expect(400);
+    // A login alone does not make a token: it would outlive that login.
+    await request(server).post('/api/auth/tokens').set(auth).send({ name: 'script' }).expect(400);
+    await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'script', currentPassword: 'wrong-one' })
+      .expect(403);
+    expect((await request(server).get('/api/auth/tokens').set(auth).expect(200)).body).toEqual([]);
+
+    const created = await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: ' script ', currentPassword })
+      .expect(201);
     expect(created.body).toMatchObject({ name: 'script', readOnly: false, lastUsedAt: null });
     expect(created.body.token).toMatch(/^nt_[\w-]{43}$/);
     const token = bearer(created.body.token);
@@ -364,7 +405,8 @@ describe('api tokens', () => {
 
     // Managing the account and the tokens takes a login.
     await request(server).get('/api/auth/tokens').set(token).expect(403);
-    await request(server).post('/api/auth/tokens').set(token).send({ name: 'more' }).expect(403);
+    await request(server).post('/api/auth/tokens').set(token).send({ name: 'more', currentPassword }).expect(403);
+    await request(server).delete('/api/auth/tokens').set(token).expect(403);
     await request(server).delete(`/api/auth/tokens/${created.body.id}`).set(token).expect(403);
     await request(server).patch('/api/auth/me').set(token).send({ name: 'Mallory' }).expect(403);
     await request(server)
@@ -378,7 +420,7 @@ describe('api tokens', () => {
     const reader = await request(server)
       .post('/api/auth/tokens')
       .set(auth)
-      .send({ name: 'reader', readOnly: true })
+      .send({ name: 'reader', readOnly: true, currentPassword })
       .expect(201);
     const readOnly = bearer(reader.body.token);
     await request(server).get(`/api/notes/${note.body.id}`).set(readOnly).expect(200);
@@ -398,8 +440,10 @@ describe('api tokens', () => {
       .send({ email, name: 'Ada', password: 'password123' })
       .expect(201);
     const auth = bearer(session.body.token);
-    const first = await request(server).post('/api/auth/tokens').set(auth).send({ name: 'first' }).expect(201);
-    const second = await request(server).post('/api/auth/tokens').set(auth).send({ name: 'second' }).expect(201);
+    const make = (name: string) =>
+      request(server).post('/api/auth/tokens').set(auth).send({ name, currentPassword: 'password123' }).expect(201);
+    const first = await make('first');
+    const second = await make('second');
 
     await request(server).post('/api/auth/logout-all').set(auth).expect(204);
     await request(server).get('/api/notes').set(auth).expect(401);
@@ -690,7 +734,7 @@ describe('password guesses with a low throttle limit', () => {
     return bearer(response.body.token);
   };
 
-  it('caps the guesses against one account across the three routes together', async () => {
+  it('caps the guesses against one account across the routes that check the password', async () => {
     const server = limited.getHttpServer();
     const victim = await account('victim');
     const other = await account('other');
@@ -704,6 +748,8 @@ describe('password guesses with a low throttle limit', () => {
         .send({ currentPassword: 'guess-2', newPassword: 'password456' });
     const guessOnDelete = (auth: { Authorization: string }) =>
       request(server).delete('/api/auth/me').set(auth).send({ password: 'guess-3' });
+    const guessOnToken = (auth: { Authorization: string }) =>
+      request(server).post('/api/auth/tokens').set(auth).send({ name: 'mine now', currentPassword: 'guess-4' });
 
     // One guess on each route uses up the three the account gets.
     await guessOnProfile(victim).expect(403);
@@ -716,11 +762,13 @@ describe('password guesses with a low throttle limit', () => {
     expect(refused.headers['retry-after']).toBeDefined();
     await guessOnProfile(victim).expect(429);
     await guessOnDelete(victim).expect(429);
+    await guessOnToken(victim).expect(429);
 
     // The right password does not get through either until the minute is over.
     await request(server).delete('/api/auth/me').set(victim).send({ password: 'password123' }).expect(429);
 
     // Another account, from the same address, still has its own guesses.
     await guessOnPassword(other).expect(403);
+    await guessOnToken(other).expect(403);
   });
 });
