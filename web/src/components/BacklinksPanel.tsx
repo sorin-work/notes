@@ -6,7 +6,7 @@ import { UnlinkedMentions } from './UnlinkedMentions';
 
 export function BacklinksPanel({ noteId }: { noteId: string }) {
   const location = useLocation();
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, isPending, fetchStatus } = useQuery({
     queryKey: ['backlinks', noteId],
     queryFn: () => backlinks(noteId),
   });
@@ -17,6 +17,7 @@ export function BacklinksPanel({ noteId }: { noteId: string }) {
         <h2 id="backlinks-heading">
           Backlinks{data && data.length > 0 && <span className="count">{data.length}</span>}
         </h2>
+        {isPending && fetchStatus === 'paused' && <p className="muted">Backlinks need a connection.</p>}
         {isLoading && <p className="muted">Loading…</p>}
         {isError && <p className="muted">Backlinks could not be loaded.</p>}
         {data && data.length === 0 && (

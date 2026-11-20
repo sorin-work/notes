@@ -49,6 +49,23 @@ const routes = {
 };
 
 describe('Layout', () => {
+  it('says plainly when it is offline, and what that means for what is on screen', async () => {
+    mockFetch(routes);
+    renderLayout('/notes/n1');
+    expect(await screen.findByLabelText('Title')).toHaveValue('Project Atlas');
+    expect(screen.queryByText(/You are offline/)).not.toBeInTheDocument();
+
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    fireEvent(window, new Event('offline'));
+    expect(screen.getByText(/You are offline/)).toHaveTextContent('may be out of date');
+    expect(screen.getByText(/You are offline/)).toHaveTextContent('Search, backlinks and history need a connection.');
+    await expectNoAxeViolations({ part: true });
+
+    online.mockReturnValue(true);
+    fireEvent(window, new Event('online'));
+    expect(screen.queryByText(/You are offline/)).not.toBeInTheDocument();
+  });
+
   it('opens the quick switcher with Ctrl+K while typing, and Enter lands in the chosen note', async () => {
     mockFetch(routes);
     renderLayout('/notes/n1');

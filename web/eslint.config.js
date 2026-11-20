@@ -18,4 +18,8 @@ export default tseslint.config(
     },
   },
   reactHooks.configs.flat.recommended,
+  {
+    files: ['sw-retire/**/*.js'],
+    languageOptions: { globals: { ...globals.serviceworker } },
+  },
 );

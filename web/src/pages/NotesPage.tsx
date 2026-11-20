@@ -7,7 +7,7 @@ import { listTags } from '../api/tags';
 import { FilterSelects } from '../components/FilterSelects';
 import { NoteEditor } from '../components/NoteEditor';
 import { NoteList } from '../components/NoteList';
-import { EmptyState, ErrorMessage, Spinner } from '../components/States';
+import { EmptyState, ErrorMessage, NeedsConnection, Spinner } from '../components/States';
 import { useStoredState } from '../hooks/useStoredState';
 import { newNoteFor, NO_NOTEBOOK, readFilters, withFilters } from '../lib/filters';
 import { notebookLabel } from '../lib/notebooks';
@@ -107,6 +107,9 @@ export function NotesPage() {
           onChange={(next) => setParams((current) => withFilters(current, next))}
         />
         <div className="list-scroll">
+          {notes.isPending && notes.fetchStatus === 'paused' && (
+            <NeedsConnection>This list has not been loaded on this device, so it needs a connection.</NeedsConnection>
+          )}
           {notes.isLoading && <Spinner />}
           {notes.error && <ErrorMessage error={notes.error} onRetry={() => void notes.refetch()} />}
           {notes.isSuccess && items.length === 0 && (

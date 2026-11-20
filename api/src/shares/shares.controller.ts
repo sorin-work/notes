@@ -176,6 +176,34 @@ export class PublicSharesController {
     }
   }
 
+  /**
+   * Fresh signed addresses of the shared note's files, for a page open
+   * longer than they work. Not counted as a view.
+   */
+  @Public()
+  @UseGuards(PublicThrottlerGuard)
+  @Get(':token/attachments')
+  async attachments(
+    @Param('token') token: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-share-access') access: string | undefined,
+  ): Promise<Record<string, string>> {
+    return this.shares.attachmentUrls(token, null, { userId: await this.viewerId(authorization), access });
+  }
+
+  /** The same, for a note of a shared notebook. */
+  @Public()
+  @UseGuards(PublicThrottlerGuard)
+  @Get(':token/:noteId/attachments')
+  async noteAttachments(
+    @Param('token') token: string,
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-share-access') access: string | undefined,
+  ): Promise<Record<string, string>> {
+    return this.shares.attachmentUrls(token, noteId, { userId: await this.viewerId(authorization), access });
+  }
+
   /** One note of a shared notebook. `404` for a note that is not in it, or not any more. */
   @Public()
   @UseGuards(PublicThrottlerGuard)

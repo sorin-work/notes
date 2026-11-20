@@ -1310,6 +1310,13 @@ mark {
   gap: 0.4rem;
 }
 
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
 .import-result {
   margin-top: 0.75rem;
 }
@@ -1853,5 +1860,187 @@ ul.error-box {
   .sidebar,
   .menu-open .sidebar {
     transition: none;
+  }
+}
+
+/* The offer to reload into a new version of the app. */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  z-index: 60;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.6rem 0.6rem 0.6rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+
+/* Shown at the top of the main area while there is no connection. */
+.offline-banner {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+/* The files of a note, under the editor. */
+.attachments {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.attachments-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.attachments-header h2 {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.attachment-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.attachment-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.attachment-missing {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* "Print" or "Save as PDF" in the browser: the note as the preview shows it, and nothing of the app around it. */
+.print-only {
+  display: none;
+}
+
+@media print {
+  :root {
+    --bg: #fff;
+    --surface: #fff;
+    --surface-2: #f3f3f3;
+    --text: #000;
+    --muted: #444;
+    --border: #bbb;
+    --accent: #000;
+  }
+
+  html,
+  body,
+  #root,
+  .app,
+  .main,
+  .notes-page,
+  .editor-pane,
+  .editor,
+  .shared-page {
+    display: block;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    background: #fff;
+    color: #000;
+    box-shadow: none;
+  }
+
+  .sidebar,
+  .mobile-bar,
+  .skip-link,
+  .scrim,
+  .list-pane,
+  .editor-toolbar,
+  .tag-input,
+  .banner,
+  .shared-through,
+  .editor-source,
+  .editor-footer,
+  .backlinks,
+  .notices,
+  .modal-backdrop,
+  .shared-footer,
+  .shared-locked,
+  .update-banner,
+  .offline-banner,
+  .attachments {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block;
+  }
+
+  .title-input {
+    border: none;
+    padding: 0;
+    font-size: 1.8rem;
+    font-weight: 650;
+    color: #000;
+    background: none;
+    width: 100%;
+  }
+
+  .editor-panes,
+  .editor-split .editor-panes {
+    display: block;
+    min-height: 0;
+  }
+
+  .editor-preview,
+  .editor-split .editor-preview {
+    border: none;
+    padding: 0;
+  }
+
+  .markdown {
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .markdown h1,
+  .markdown h2,
+  .markdown h3,
+  .markdown h4 {
+    break-after: avoid;
+  }
+
+  .markdown pre,
+  .markdown blockquote,
+  .markdown table,
+  .markdown img {
+    break-inside: avoid;
+  }
+
+  .markdown pre,
+  .markdown code {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* On paper a link cannot be followed, so its address is written after it. */
+  .markdown a[href^='http']::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.85em;
+    color: #444;
+    word-break: break-all;
   }
 }

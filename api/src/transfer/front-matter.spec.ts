@@ -24,9 +24,31 @@ describe('parseFrontMatter', () => {
     expect(parseFrontMatter(text).body).toBe('Body');
   });
 
-  it('ignores comments and lines it does not understand', () => {
+  it('ignores comments', () => {
+    const text = '---\n# a comment\ntitle: Plan # trailing\n---\nBody';
+    expect(parseFrontMatter(text)).toEqual({ data: { title: 'Plan' }, body: 'Body' });
+  });
+
+  it('leaves a block that is not clean YAML in the text, so nothing in it is lost', () => {
     const text = '---\n# a comment\ntitle: Plan # trailing\n  stray line\n---\nBody';
-    expect(parseFrontMatter(text).data).toEqual({ title: 'Plan' });
+    expect(parseFrontMatter(text)).toEqual({ data: {}, body: text });
+  });
+
+  it('reads what other apps write: numbers as text, nulls and maps left out, a one-line tag list', () => {
+    const text = '---\ntitle: 2026\nauthor: ~\nmeta: { a: 1 }\ntags: [1, two, null]\naliases: work, home\n---\nBody';
+    expect(parseFrontMatter(text).data).toEqual({ title: '2026', tags: ['1', 'two'], aliases: 'work, home' });
+  });
+
+  it('runs no code and expands nothing: custom tags and aliases are refused', () => {
+    for (const block of ['run: !!js/function "function () {}"', 'x: !custom thing', 'a: &a [1, 2]\nb: [*a, *a]']) {
+      const text = `---\n${block}\n---\nBody`;
+      expect(parseFrontMatter(text)).toEqual({ data: {}, body: text });
+    }
+  });
+
+  it('does not read a block longer than any real front matter', () => {
+    const text = `---\ntitle: Long\nnote: "${'x'.repeat(70 * 1024)}"\n---\nBody`;
+    expect(parseFrontMatter(text).data).toEqual({});
   });
 
   it('handles Windows line endings and a byte order mark', () => {

@@ -64,6 +64,9 @@ Markdown import/export.
   to keep: your text, theirs, or yours with theirs saved in the history.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
+- **Attachments**: paste or drop an image or a PDF into a note, or attach
+  one from the panel under the editor. It is uploaded and its link goes where
+  the cursor is. Images show in the preview and on shared pages.
 - **Share links**: a read-only public page at `/s/<token>` for a single note,
   or for a notebook with everything in it, the notebooks inside it and the
   notes you add later included. A link has a view count that leaves out your
@@ -78,7 +81,13 @@ Markdown import/export.
   be opened through it, and a link to one reads as its words.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
-  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault or a
+  Notion export (page ids are stripped and links between pages become
+  `[[wiki links]]`), and Evernote `.enex` files (each file becomes a notebook,
+  attachments are left out). Importing the same files again leaves out the
+  notes that are there already. A full JSON backup of one account (trash,
+  history and all) restores into an empty account. "Print" in the browser
+  gives the note alone, ready to save as PDF.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
@@ -108,6 +117,16 @@ Markdown import/export.
   are announced. Colours meet WCAG AA contrast in both themes, and nothing
   spins or slides when the system asks for reduced motion.
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
+- **Installable**: the browser can install the app, from the address bar on
+  a desktop or with "Add to Home Screen" on a phone. A service worker keeps
+  the files of the app, so it starts without a connection. When a new
+  version is out, a line at the bottom offers to reload into it. Nothing
+  reloads by itself, and "Reload" saves the open note first.
+- **Reading offline**: the notes, lists, notebooks and tags you have seen on
+  a device are kept there, so they can be read without a connection, also
+  after a reload. A line at the top says when you are offline and that what
+  is shown may be out of date. Search, backlinks and history need a
+  connection and say so.
 
 | Shortcut             | Action                            |
 | -------------------- | --------------------------------- |
@@ -175,10 +194,15 @@ database.
 | db      | `localhost:5441`      | Postgres 17, user/password/database `notes` |
 | mailpit | http://localhost:8041 | Shows the mail the API sends, delivers none |
 
+nginx serves `index.html`, `sw.js`, `version.json` and
+`manifest.webmanifest` with `Cache-Control: no-cache`, so the browser asks for
+them every time and finds a new version as soon as it is deployed. The fingerprinted files under
+`/assets/` are cached for a year.
+
 The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
 `MAILPIT_UI_PORT`. The API container runs `prisma migrate deploy` before it
-starts. Data lives in the `db-data` volume; `docker compose down -v` removes
-it. [Backup and restore](#backup-and-restore) is about keeping a copy of it.
+starts. Data lives in the `db-data` volume and the files of attachments in
+the `attachments` volume; `docker compose down -v` removes both. [Backup and restore](#backup-and-restore) is about keeping a copy of it.
 
 ### Mail
 
@@ -218,8 +242,10 @@ of the `api` service, or set `TRUST_PROXY=0`.
 ## Backup and restore
 
 "Export all notes" in Settings leaves out the trash, version history and
-share links. For a full copy there is a `backup` service that dumps the whole
-database with `pg_dump`. It is behind a Compose profile, so it only runs when
+share links. "Download a full backup" next to it keeps them: see
+[The JSON backup](#the-json-backup) below. For a copy of the whole database,
+every account in it, there is a `backup` service that dumps it with
+`pg_dump`. It is behind a Compose profile, so it only runs when
 asked for:
 
 ```bash
@@ -297,6 +323,115 @@ Good to know:
   every dump and every failure, and a failed dump is tried again a minute
   later.
 - `docker compose down -v` removes the database volume, not the dumps.
+- Beside each dump the files of attachments go into
+  `notes-<time>.files.tar`, made just before the dump. A file deleted in
+  between is in the archive without a row and is swept out after a restore.
+  A file uploaded in between has its row in the dump but is not in the
+  archive: after a restore that note shows the file as missing, and the
+  export and the JSON backup leave it out and list it. A backup of a stopped
+  stack has no such gap. Only regular files named like an attachment id go
+  in, never a link. A restore puts the files back after the database, and
+  refuses an archive that holds anything else, a hard link included, or that
+  unpacks into anything but plain files. It also refuses
+  to start while the API is connected, because the API writes and removes
+  files as it goes. A dump without an archive, from before there were
+  attachments, restores the database and leaves the files as they are.
+
+### The JSON backup
+
+`GET /export/backup` writes one account's data as a JSON file. It is written
+out as it is read, a batch of notes at a time. Settings, "Download a full
+backup", gets a link from `POST /export/backup/link` that works once, within
+a minute, without a login, and lets the browser follow it, so the browser
+saves the file to disk as it comes in instead of holding it in memory. The
+format is versioned. This is version 2:
+
+```json
+{
+  "format": "notes-backup",
+  "version": 2,
+  "exportedAt": "2026-11-20T21:00:00.000Z",
+  "preferences": {
+    "dailyNotes": { "notebookId": "…", "templateId": "…", "dateFormat": "iso" }
+  },
+  "notebooks": [
+    {
+      "id": "…",
+      "name": "Work",
+      "parentId": null,
+      "createdAt": "…",
+      "updatedAt": "…"
+    }
+  ],
+  "tags": [{ "name": "q1", "createdAt": "…" }],
+  "attachments": [
+    {
+      "id": "…",
+      "noteId": "…",
+      "fileName": "beach.png",
+      "createdAt": "…",
+      "data": "iVBORw0KGgo…"
+    }
+  ],
+  "shareLinks": [
+    {
+      "noteId": "…",
+      "notebookId": null,
+      "hasPassword": true,
+      "expiresAt": null,
+      "viewCount": 4,
+      "createdAt": "…"
+    }
+  ],
+  "notes": [
+    {
+      "id": "…",
+      "title": "Plan",
+      "content": "Markdown",
+      "notebookId": "…",
+      "tags": ["q1"],
+      "pinned": false,
+      "favorite": false,
+      "isTemplate": false,
+      "dailyDate": "2026-11-20",
+      "dailyReleased": false,
+      "revision": 7,
+      "createdAt": "…",
+      "updatedAt": "…",
+      "deletedAt": null,
+      "versions": [{ "title": "Plan", "content": "…", "createdAt": "…" }]
+    }
+  ]
+}
+```
+
+All times are UTC. `deletedAt` is set for a note in the trash. `versions` is
+the note's history, oldest first. Notebooks come before the notebooks inside
+them. `shareLinks` is a record of what was shared. It has no link addresses
+and no password hashes, so the file opens nothing for whoever holds it.
+Templates are notes with `isTemplate`, and `dailyDate` marks the daily note
+of a day. `preferences` holds the daily note choices, with ids from the file.
+`attachments` holds every file, in base64, with the note it belongs to. It
+comes before the notes, and a restore gives the notes' `attachment:` links the
+new ids. Its type is not in the file: a restore decides it from the bytes, as
+an upload does, and counts the files against the account limit.
+`missingAttachments` lists the ids of files that were missing from storage
+when the backup was made; they are left out rather than failing the whole
+backup. Version 1 had neither list, and a restore still reads it.
+
+`POST /import/backup` (Settings, "Restore") takes the file itself as the
+request body, sent as `application/octet-stream`, and puts it into an
+account that has no notes, notebooks or tags yet: the same notes with their
+history, revisions, tags, notebooks, trash, templates, daily notes and daily
+note choices, under new ids, with links synced. The file is read while it
+comes in and checked part by part against the app's own limits, so any
+backup the app writes restores, whatever its size, and only a batch of notes
+is in memory at a time. The parts come in the order the app writes them; the
+notebooks have to come before the notes. Everything is written in one
+transaction, so a refused or failed restore leaves the account empty. An
+account that has something in it gets `409`. Share links are not made again:
+a new link would have a new address, and a link that had a password would
+come back without one. Share again what should be shared.
 
 ## Running locally
 
@@ -326,30 +461,37 @@ npm install
 npm run dev
 ```
 
+There is no service worker under `npm run dev`. It is only built and
+registered by `npm run build`, so try it with `npm run preview` or the
+Docker stack.
+
 ### Configuration
 
-| Variable                   | Default    | Purpose                                                                  |
-| -------------------------- | ---------- | ------------------------------------------------------------------------ |
-| `DATABASE_URL`             | (required) | Postgres connection string                                               |
-| `JWT_SECRET`               | (required) | Signs login tokens, at least 32 characters                               |
-| `JWT_EXPIRES_IN`           | `7d`       | How long a login lasts                                                   |
-| `PORT`                     | `4401`     | API port                                                                 |
-| `CORS_ORIGINS`             | (none)     | Comma-separated browser origins, only needed without nginx               |
-| `LOG_LEVEL`                | `info`     | `debug`, `info`, `warn` or `error`                                       |
-| `SEED_DEMO`                | `false`    | Create the demo account on start-up                                      |
-| `TRASH_RETENTION_DAYS`     | `30`       | Days before trashed notes are deleted for good                           |
-| `AUTH_THROTTLE_LIMIT`      | `10`       | Per-minute limit on the routes that take a password                      |
-| `API_TOKEN_THROTTLE_LIMIT` | `120`      | Requests a minute that one API token may make                            |
-| `PUBLIC_THROTTLE_LIMIT`    | `60`       | Shared notes that one client may open in a minute                        |
-| `API_DOCS`                 | `true`     | `false` turns off the page and the document at `/api/docs`               |
-| `SMTP_HOST`                | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
-| `SMTP_PORT`                | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
-| `SMTP_FROM`                | (none)     | Sender of the mails, required with `SMTP_HOST`                           |
-| `SMTP_USER`                | (none)     | Login for the SMTP server, if it wants one                               |
-| `SMTP_PASSWORD`            | (none)     | Password for that login                                                  |
-| `SMTP_REQUIRE_TLS`         | `true`     | `false` lets mail go out without TLS, for a test server like mailpit     |
-| `APP_URL`                  | (none)     | Address of the web app for the links in mails, required with `SMTP_HOST` |
-| `TRUST_PROXY`              | `0`        | Reverse proxies in front of the API whose `X-Forwarded-For` counts       |
+| Variable                   | Default              | Purpose                                                                  |
+| -------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `DATABASE_URL`             | (required)           | Postgres connection string                                               |
+| `JWT_SECRET`               | (required)           | Signs login tokens, at least 32 characters                               |
+| `JWT_EXPIRES_IN`           | `7d`                 | How long a login lasts                                                   |
+| `PORT`                     | `4401`               | API port                                                                 |
+| `CORS_ORIGINS`             | (none)               | Comma-separated browser origins, only needed without nginx               |
+| `LOG_LEVEL`                | `info`               | `debug`, `info`, `warn` or `error`                                       |
+| `SEED_DEMO`                | `false`              | Create the demo account on start-up                                      |
+| `TRASH_RETENTION_DAYS`     | `30`                 | Days before trashed notes are deleted for good                           |
+| `AUTH_THROTTLE_LIMIT`      | `10`                 | Per-minute limit on the routes that take a password                      |
+| `API_TOKEN_THROTTLE_LIMIT` | `120`                | Requests a minute that one API token may make                            |
+| `PUBLIC_THROTTLE_LIMIT`    | `60`                 | Shared notes that one client may open in a minute                        |
+| `API_DOCS`                 | `true`               | `false` turns off the page and the document at `/api/docs`               |
+| `SMTP_HOST`                | (none)               | SMTP server. Without it no mail is sent and password reset is off        |
+| `SMTP_PORT`                | `587`                | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
+| `SMTP_FROM`                | (none)               | Sender of the mails, required with `SMTP_HOST`                           |
+| `SMTP_USER`                | (none)               | Login for the SMTP server, if it wants one                               |
+| `SMTP_PASSWORD`            | (none)               | Password for that login                                                  |
+| `SMTP_REQUIRE_TLS`         | `true`               | `false` lets mail go out without TLS, for a test server like mailpit     |
+| `APP_URL`                  | (none)               | Address of the web app for the links in mails, required with `SMTP_HOST` |
+| `TRUST_PROXY`              | `0`                  | Reverse proxies in front of the API whose `X-Forwarded-For` counts       |
+| `ATTACHMENTS_DIR`          | `./data/attachments` | Folder for the files of attachments                                      |
+| `ATTACHMENT_MAX_MB`        | `10`                 | Most one attached file may have, 50 at most                              |
+| `ATTACHMENT_ACCOUNT_MB`    | `500`                | Most all files of one account may have together                          |
 
 The API on its own sends no mail unless `SMTP_HOST` is set, and mailpit's
 SMTP port is not reachable from outside the Compose network. To work on
@@ -422,7 +564,7 @@ api/
     trash/              trash, restore and the hourly purge
     search/             Postgres full-text search
     shares/             read-only share links
-    transfer/           zip export, Markdown import, front matter
+    transfer/           zip export, Markdown/Evernote/Notion import
     mail/               outgoing mail over SMTP
     seed/               demo account
     common/, config/    shared helpers and environment configuration
@@ -435,6 +577,8 @@ web/
     hooks/              autosave, theme and small state helpers
     lib/                wiki links, task lists, templates, line diff, dates, text
     pages/              one component per route
+    sw/                 the service worker and what it does with each request
+  build/                the build step that writes the service worker
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
   check-backup.sh       dumps, restores and compares row counts, run by CI
@@ -601,6 +745,60 @@ trash as an ordinary note. The three formats are `2026-11-20`,
 with the account. Theme and editor mode are not: they belong to a screen and
 stay in the browser.
 
+## Offline and the installed app
+
+The service worker (`web/src/sw/worker.ts`, built into `/sw.js` by
+`web/build/service-worker.ts`) keeps the files of one build: the scripts,
+the styles, `index.html`, the icons and the manifest. Those are the same for
+everyone. It never stores anything under `/api/`, so no note, token or other
+private data sits in its cache. A page of the app is asked from the network
+first, and the cached `index.html` is used only when the network has not
+answered within three seconds, so the app starts without a connection but
+always sees a new `index.html` when there is one. Requests to the API,
+`/api/docs`, `/healthz` and `/version.json` go to the network as if there were
+no worker.
+
+A new build is found when the tab comes back into view and once an hour, by
+the worker and by comparing the build id in `/version.json` (served with
+`no-cache`) with the one the tab was built with. It installs next to the one
+in use and waits. "Reload" in the offer at the bottom saves the open note and
+lets the new worker take over. Every open tab then reloads, after saving its
+own open note, because the old files are gone with the old cache. A tab that
+cannot save puts the draft aside in the tab, where the note offers it again,
+and asks to be reloaded instead of running on with the old version.
+
+If the worker ever has to go, `web/sw-retire/sw.js` takes it out of use:
+deploy it in place of the built `/sw.js` (copy it over `dist/sw.js` before the
+image is built). Browsers that had the old worker pick it up at their next
+visit. It deletes the caches of the app, unregisters itself and reloads the
+open tabs, which then run straight from the network.
+
+What can be read offline is kept apart from the worker, in IndexedDB
+(`web/src/lib/offlineCache.ts`): the TanStack Query cache, written at most once
+a second, one record per user under the user's id. Only notes, note lists,
+notebooks, tags and the links of a note are written. Search results,
+backlinks, history, the settings pages, share links and the login token never
+are. The token stays in `localStorage`, where it always was. Each note or
+list carries the time it was fetched, and one fetched more than seven days ago
+is left out, however often the copy is written since. Past 5 MB the queries
+loaded longest ago are left out too. A refetch that fails because there is no
+connection, or because the server has a problem, keeps what was there. Only a
+404 or a 403 for a note takes it out.
+
+Started without a connection, the app reads the user id from the token and
+opens that user's copy, with no request to the server. If there is none, it
+says that it needs a connection. Once the connection is back it asks the
+server who is signed in, as usual.
+
+The copy is deleted when you sign out, when the server answers 401 (the
+session ended, the password changed, or "Sign out everywhere" was used on
+another device), when another tab of this browser signs out, when the account
+is deleted, and when a different user signs in on the same browser. A tab
+that sees another user signed in from another tab puts its open draft aside,
+lets go of what it holds and starts again as that user. A copy is only ever
+written while the token names its user. A device that never comes back online
+keeps its copy until then, up to seven days per note.
+
 ## API overview
 
 The API describes itself. With the stack running, http://localhost:5181/api/docs
@@ -761,6 +959,51 @@ becomes `Private plan`, with `links: {}`.
 `GET /notes/:id` and `GET /notebooks` carry `sharedThrough`, the notebook
 whose live link makes the note or notebook public, or `null`.
 
+A note's files are uploaded with `POST /notes/:id/attachments`, one per
+request, as `file`. The type is read from the bytes and has to be PNG, JPEG,
+GIF, WebP, PDF or plain UTF-8 text. SVG, HTML and anything else is a `400`,
+whatever the name says. A file may have `ATTACHMENT_MAX_MB`, an account
+`ATTACHMENT_ACCOUNT_MB` in all, and past either the answer is `413`. The
+files are kept under their ids in `ATTACHMENTS_DIR`, never under a name a
+user chose. A note links to a file as `attachment:<id>`, which is what the
+editor puts in. `GET /notes/:id/attachments` lists the files, each with a
+`url` that works without a login for five minutes:
+`/api/attachments/<id>?expires=…&signature=…`, an HMAC over the file, its
+owner and the expiry, so an `<img>` can load it. The web app asks again
+before they run out. The answer always has `X-Content-Type-Options: nosniff`
+and a sandboxing `Content-Security-Policy`, images come `inline`, and PDF
+and text only as downloads. A shared note's answer has `attachments`, the
+signed addresses of that note's own files only, and only once its password
+was given. A shared page renews them with `GET
+/public/notes/:token/attachments` (or `/:token/:noteId/attachments` in a
+shared notebook), which goes through the same checks and is not counted as a
+view. Deleting a note for good, emptying the trash, the purge and deleting
+the account remove the files with the rows. The purge job also sweeps out
+files that have no row, on start-up and every hour. The zip export puts the
+files under `attachments/<id>/` and links the notes to them by relative
+path, with every character a Markdown address could trip on encoded. It is
+written out as it is made, one file at a time, and a file missing from
+storage is left out and named in `attachments/MISSING.txt`. The import takes
+the images and PDFs a note links to or embeds (Obsidian's `![[photo.png]]`
+too) and makes them the note's attachments; one no note links to is skipped.
+Evernote attachments are still left out. The server never fetches anything
+from an address in a note.
+
+`POST /import` takes up to 50 files as `files`, 20 MB each, and the form
+field `skipExisting` (`true` unless `false` is sent), which leaves out notes
+whose title, notebook and text the account already has. The answer counts
+what was imported, the notebooks made, the notes left out as `duplicates`
+and the Evernote attachments that were not imported, and lists every file it
+skipped with the reason. Imported notes get the same limits as typed ones
+and their links are synced. Their text is stored as Markdown and never shown
+as HTML. Zips are read within limits: 10,000 entries, 12 folders deep, 4 MB
+unpacked per file and 100 MB per import, counted while unpacking. An entry
+whose path leads out of the zip is skipped, and a zip inside a zip is not
+opened. An `.enex` file is read without its DTD: one that declares a DTD of
+its own, or uses an entity beyond XML's five, is refused. Front matter is
+read as YAML with the core schema only (no custom tags, no aliases); a block
+that is not clean YAML stays at the top of the note as text.
+
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
 | Method & path                                | What it does                              |
@@ -770,4 +1013,7 @@ The endpoints a script is most likely to want. The rest is in `/api/docs`.
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
 | `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
 | `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
-| `POST /import`                               | Markdown, text or zip files, as `files`   |
+| `GET /export/backup`, `POST /import/backup`  | The JSON backup, and its restore          |
+| `GET/POST /notes/:id/attachments`            | A note's files, upload one as `file`      |
+| `DELETE /attachments/:id`                    | Remove a file                             |
+| `POST /import`                               | Markdown, text, `.enex` or zip, `files`   |

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
 import { Layout } from './components/Layout';
 import { lazyPage } from './components/LazyPage';
+import { UpdateBanner } from './components/UpdateBanner';
 import { CapturePage } from './pages/CapturePage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
@@ -19,6 +20,15 @@ import { TrashPage } from './pages/TrashPage';
 const GraphPage = lazyPage(() => import('./pages/GraphPage').then((module) => module.GraphPage));
 
 export function App() {
+  return (
+    <>
+      <UpdateBanner />
+      <AppRoutes />
+    </>
+  );
+}
+
+function AppRoutes() {
   return (
     <Routes>
       <Route
