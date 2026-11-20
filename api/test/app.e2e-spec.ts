@@ -1305,6 +1305,11 @@ describe('sharing', () => {
 
     await request(server).patch(path).set(auth).send({ expiresAt: 'next week' }).expect(400);
     await request(server).patch(path).set(auth).send({ expiresAt: '2020-01-01T00:00:00Z' }).expect(400);
+    // Forms that pass for ISO 8601 and that no date can be made of, or only with a guess at the zone.
+    for (const unreadable of ['2027-W01', '20270101', '2099-01-01T10:00']) {
+      const refused = await request(server).patch(path).set(auth).send({ expiresAt: unreadable }).expect(400);
+      expect(refused.body.message).toEqual(['expiresAt must be a date and time such as 2026-03-01T12:00:00Z']);
+    }
     const limited = await request(server)
       .patch(path)
       .set(auth)

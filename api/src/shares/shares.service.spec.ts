@@ -69,6 +69,11 @@ describe('SharesService', () => {
       expect(prisma.shareLink.update.mock.calls[1][0].data).toEqual({});
     });
 
+    it('refuses a date that cannot be read, should one get past the DTO', async () => {
+      await expect(service.update(USER, 'n1', { expiresAt: '2027-W01' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.shareLink.update).not.toHaveBeenCalled();
+    });
+
     it('refuses an expiry that has already passed', async () => {
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       await expect(service.update(USER, 'n1', { expiresAt: yesterday })).rejects.toBeInstanceOf(BadRequestException);

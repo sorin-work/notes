@@ -136,8 +136,10 @@ export class SharesService {
     const changes: { expiresAt?: Date | null; passwordHash?: string | null } = {};
     if (options.expiresAt !== undefined) {
       const expiresAt = options.expiresAt === null ? null : new Date(options.expiresAt);
-      if (expiresAt && expiresAt.getTime() <= Date.now()) {
-        throw new BadRequestException('expiresAt must be in the future');
+      // The first half repeats what the DTO checks. A date that cannot be
+      // read is "not a number", which is neither before nor after now.
+      if (expiresAt && !(expiresAt.getTime() > Date.now())) {
+        throw new BadRequestException('expiresAt must be a date and time in the future');
       }
       changes.expiresAt = expiresAt;
     }
