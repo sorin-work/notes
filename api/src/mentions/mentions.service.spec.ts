@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PaginationQuery } from '../common/pagination';
 import { LinksService } from '../links/links.service';
 import { ParsePool } from '../links/parse-pool';
@@ -31,6 +31,7 @@ describe('MentionsService', () => {
   const pool = new ParsePool();
   // More time than the app gives a parse: the test runner keeps the machine busy, and a small note should never time out here.
   pool.deadline = 2_000;
+  pool.totalDeadline = 10_000;
   afterAll(() => pool.onModuleDestroy());
   let prisma: PrismaMock;
   let links: jest.Mocked<Pick<LinksService, 'sync' | 'titleTaken'>>;
@@ -260,6 +261,40 @@ describe('MentionsService', () => {
         }),
       ).rejects.toThrow(new BadRequestException('That note is too long or too intricate to look for mentions in'));
       expect(run).toHaveBeenCalledTimes(1);
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps nothing for one note that another, or the same id with other text, could be served', async () => {
+      const run = jest.spyOn(pool, 'run');
+      prisma.$queryRaw.mockResolvedValue([{ id: 'a' }]);
+      prisma.note.findMany.mockResolvedValue([source('a', 'About Project Atlas.')]);
+      await service.list(USER, 'target', page());
+      // The same id and revision with other text, as after a note was deleted for good and made again offline.
+      prisma.note.findMany.mockResolvedValue([source('a', 'Project Atlas, again.')]);
+      const again = await service.list(USER, 'target', page());
+      expect(again.items[0]).toMatchObject({ offset: 0, match: 'Project Atlas' });
+      // And another account's note of that id and revision.
+      prisma.note.findMany.mockResolvedValue([source('a', 'Project Atlas, again.')]);
+      prisma.note.findFirst.mockResolvedValue({ ...target, userId: 'user-2' });
+      await service.list('user-2', 'target', page());
+      expect(run).toHaveBeenCalledTimes(3);
+    });
+
+    it('says mentions are not available when no worker gets to a note in time, and keeps no verdict for it', async () => {
+      const run = jest.spyOn(pool, 'run').mockResolvedValueOnce('unavailable');
+      prisma.$queryRaw.mockResolvedValue([{ id: 'a' }]);
+      prisma.note.findMany.mockResolvedValue([source('a', 'About Project Atlas.')]);
+      await expect(service.list(USER, 'target', page())).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(service.list(USER, 'target', page())).resolves.toMatchObject({ total: 1 });
+      expect(run).toHaveBeenCalledTimes(2);
+
+      // "Link" answers 400 for that, and 429 when too many notes wait.
+      run.mockResolvedValueOnce('unavailable').mockResolvedValueOnce('busy');
+      const at = { offset: 6, text: 'Project Atlas', version: 7 };
+      prisma.note.findFirst.mockResolvedValueOnce(target).mockResolvedValueOnce(source('a', 'About Project Atlas.'));
+      await expect(service.link(USER, 'target', 'a', at)).rejects.toBeInstanceOf(BadRequestException);
+      prisma.note.findFirst.mockResolvedValueOnce(target).mockResolvedValueOnce(source('a', 'About Project Atlas.'));
+      await expect(service.link(USER, 'target', 'a', at)).rejects.toMatchObject({ status: 429 });
       expect(prisma.note.updateMany).not.toHaveBeenCalled();
     });
 

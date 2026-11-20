@@ -23,7 +23,7 @@ import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
-import { PARSE_DEADLINE_MS, ParsePool } from '../src/links/parse-pool';
+import { PARSE_DEADLINE_MS, ParsePool, TOTAL_DEADLINE_MS } from '../src/links/parse-pool';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { TrashService } from '../src/trash/trash.service';
 import { setupApp } from '../src/setup-app';
@@ -1158,6 +1158,8 @@ describe('orphans and unlinked mentions', () => {
     // Room for the small note on a busy machine. The hostile ones take far longer than that.
     const pool = app.get(ParsePool);
     pool.deadline = 2_000;
+    // And for a stopped worker's place to be taken: under Jest a new one compiles its TypeScript first.
+    pool.totalDeadline = 10_000;
 
     const listing = request(server).get(`/api/notes/${target}/mentions`).set(auth);
     const started = Date.now();
@@ -1175,6 +1177,7 @@ describe('orphans and unlinked mentions', () => {
     expect(run).not.toHaveBeenCalled();
     run.mockRestore();
     pool.deadline = PARSE_DEADLINE_MS;
+    pool.totalDeadline = TOTAL_DEADLINE_MS;
   });
 
   it('lists the notes with no links in or out', async () => {
