@@ -5,7 +5,7 @@ import { listNotebooks } from '../api/notebooks';
 import { search } from '../api/search';
 import { listTags } from '../api/tags';
 import { FilterSelects } from '../components/FilterSelects';
-import { EmptyState, ErrorMessage, Spinner } from '../components/States';
+import { EmptyState, ErrorMessage, NeedsConnection, Spinner } from '../components/States';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { formatRelative } from '../lib/dates';
 import { readFilters, withFilters } from '../lib/filters';
@@ -98,6 +98,9 @@ export function SearchPage() {
         tag={tag}
         onChange={(next) => setParams((current) => withFilters(current, next), { replace: true })}
       />
+      {results.isPending && results.fetchStatus === 'paused' && (
+        <NeedsConnection>Search needs a connection. The notes you have opened can still be read.</NeedsConnection>
+      )}
       {results.isFetching && !results.isFetchingNextPage && <Spinner label="Searching…" />}
       {results.error && <ErrorMessage error={results.error} />}
       {results.data && (

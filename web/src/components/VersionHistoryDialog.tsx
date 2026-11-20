@@ -5,7 +5,7 @@ import { getVersion, listVersions, restoreVersion } from '../api/versions';
 import { formatDateTime, formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
 import { Modal } from './Modal';
-import { ErrorMessage, Spinner } from './States';
+import { ErrorMessage, NeedsConnection, Spinner } from './States';
 import { VersionChanges } from './VersionChanges';
 
 interface Props {
@@ -46,6 +46,9 @@ export function VersionHistoryDialog({ noteId, current, beforeRestore, onClose, 
 
   return (
     <Modal title="Version history" onClose={onClose} wide>
+      {versions.isPending && versions.fetchStatus === 'paused' && (
+        <NeedsConnection>The history of a note needs a connection.</NeedsConnection>
+      )}
       {versions.isLoading && <Spinner />}
       {versions.error && <ErrorMessage error={versions.error} />}
       {versions.data?.length === 0 && (

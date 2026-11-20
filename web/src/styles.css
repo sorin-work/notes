@@ -1728,6 +1728,34 @@ ul.error-box {
   }
 }
 
+/* The offer to reload into a new version of the app. */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  z-index: 60;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.6rem 0.6rem 0.6rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+
+/* Shown at the top of the main area while there is no connection. */
+.offline-banner {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.9rem;
+
 /* "Print" or "Save as PDF" in the browser: the note as the preview shows it, and nothing of the app around it. */
 .print-only {
   display: none;
@@ -1777,7 +1805,9 @@ ul.error-box {
   .notices,
   .modal-backdrop,
   .shared-footer,
-  .shared-locked {
+  .shared-locked,
+  .update-banner,
+  .offline-banner {
     display: none !important;
   }
 

@@ -88,6 +88,12 @@ connection for everything. Depends on item 8.
 - Search, backlinks and history stay online-only. Signing out has to clear
   the stored notes as well as the in-memory cache.
 
+Built so far, in three parts that ship together: the app can be installed
+(manifest, icons, a service worker that caches the files of the build and
+never anything under `/api/`, an offer to reload into a new version), and
+notes already opened can be read offline from a copy of the query cache kept
+in IndexedDB per user. Writing offline follows.
+
 ## Maybe
 
 ### 15. Deeper notebook nesting

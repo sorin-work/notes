@@ -100,6 +100,16 @@ Markdown import/export.
   are announced. Colours meet WCAG AA contrast in both themes, and nothing
   spins or slides when the system asks for reduced motion.
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
+- **Installable**: the browser can install the app, from the address bar on
+  a desktop or with "Add to Home Screen" on a phone. A service worker keeps
+  the files of the app, so it starts without a connection. When a new
+  version is out, a line at the bottom offers to reload into it. Nothing
+  reloads by itself, and "Reload" saves the open note first.
+- **Reading offline**: the notes, lists, notebooks and tags you have seen on
+  a device are kept there, so they can be read without a connection, also
+  after a reload. A line at the top says when you are offline and that what
+  is shown may be out of date. Search, backlinks and history need a
+  connection and say so.
 
 | Shortcut             | Action                            |
 | -------------------- | --------------------------------- |
@@ -166,6 +176,11 @@ database.
 | api     | http://localhost:4401 | `GET /api/health` checks the database too   |
 | db      | `localhost:5441`      | Postgres 17, user/password/database `notes` |
 | mailpit | http://localhost:8041 | Shows the mail the API sends, delivers none |
+
+nginx serves `index.html`, `sw.js`, `version.json` and
+`manifest.webmanifest` with `Cache-Control: no-cache`, so the browser asks for
+them every time and finds a new version as soon as it is deployed. The fingerprinted files under
+`/assets/` are cached for a year.
 
 The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
 `MAILPIT_UI_PORT`. The API container runs `prisma migrate deploy` before it
@@ -400,6 +415,10 @@ npm install
 npm run dev
 ```
 
+There is no service worker under `npm run dev`. It is only built and
+registered by `npm run build`, so try it with `npm run preview` or the
+Docker stack.
+
 ### Configuration
 
 | Variable                   | Default    | Purpose                                                                  |
@@ -508,6 +527,8 @@ web/
     hooks/              autosave, theme and small state helpers
     lib/                wiki links, task lists, templates, line diff, dates, text
     pages/              one component per route
+    sw/                 the service worker and what it does with each request
+  build/                the build step that writes the service worker
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
   check-backup.sh       dumps, restores and compares row counts, run by CI
@@ -630,6 +651,60 @@ trash as an ordinary note. The three formats are `2026-11-20`,
 `2026-11-20`. The notebook, the template and the format are preferences kept
 with the account. Theme and editor mode are not: they belong to a screen and
 stay in the browser.
+
+## Offline and the installed app
+
+The service worker (`web/src/sw/worker.ts`, built into `/sw.js` by
+`web/build/service-worker.ts`) keeps the files of one build: the scripts,
+the styles, `index.html`, the icons and the manifest. Those are the same for
+everyone. It never stores anything under `/api/`, so no note, token or other
+private data sits in its cache. A page of the app is asked from the network
+first, and the cached `index.html` is used only when the network has not
+answered within three seconds, so the app starts without a connection but
+always sees a new `index.html` when there is one. Requests to the API,
+`/api/docs`, `/healthz` and `/version.json` go to the network as if there were
+no worker.
+
+A new build is found when the tab comes back into view and once an hour, by
+the worker and by comparing the build id in `/version.json` (served with
+`no-cache`) with the one the tab was built with. It installs next to the one
+in use and waits. "Reload" in the offer at the bottom saves the open note and
+lets the new worker take over. Every open tab then reloads, after saving its
+own open note, because the old files are gone with the old cache. A tab that
+cannot save puts the draft aside in the tab, where the note offers it again,
+and asks to be reloaded instead of running on with the old version.
+
+If the worker ever has to go, `web/sw-retire/sw.js` takes it out of use:
+deploy it in place of the built `/sw.js` (copy it over `dist/sw.js` before the
+image is built). Browsers that had the old worker pick it up at their next
+visit. It deletes the caches of the app, unregisters itself and reloads the
+open tabs, which then run straight from the network.
+
+What can be read offline is kept apart from the worker, in IndexedDB
+(`web/src/lib/offlineCache.ts`): the TanStack Query cache, written at most once
+a second, one record per user under the user's id. Only notes, note lists,
+notebooks, tags and the links of a note are written. Search results,
+backlinks, history, the settings pages, share links and the login token never
+are. The token stays in `localStorage`, where it always was. Each note or
+list carries the time it was fetched, and one fetched more than seven days ago
+is left out, however often the copy is written since. Past 5 MB the queries
+loaded longest ago are left out too. A refetch that fails because there is no
+connection, or because the server has a problem, keeps what was there. Only a
+404 or a 403 for a note takes it out.
+
+Started without a connection, the app reads the user id from the token and
+opens that user's copy, with no request to the server. If there is none, it
+says that it needs a connection. Once the connection is back it asks the
+server who is signed in, as usual.
+
+The copy is deleted when you sign out, when the server answers 401 (the
+session ended, the password changed, or "Sign out everywhere" was used on
+another device), when another tab of this browser signs out, when the account
+is deleted, and when a different user signs in on the same browser. A tab
+that sees another user signed in from another tab puts its open draft aside,
+lets go of what it holds and starts again as that user. A copy is only ever
+written while the token names its user. A device that never comes back online
+keeps its copy until then, up to seven days per note.
 
 ## API overview
 
