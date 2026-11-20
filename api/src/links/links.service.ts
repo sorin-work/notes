@@ -65,21 +65,33 @@ export class LinksService {
   }
 
   /**
-   * The notes outside the trash with no links in or out: nothing in their own
-   * text links anywhere, and no other note links to their title.
+   * The notes outside the trash with no links in or out. A link counts, in
+   * either direction, when it leads from one note outside the trash to
+   * another one: the note its title resolves to, as in resolveKeys. A link
+   * to a title no note has, to a note in the trash or from a note to itself
+   * connects nothing.
    */
   async orphanIds(userId: string): Promise<string[]> {
-    // Titles are compared with link keys the way resolveKeys compares them.
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
-      SELECT n.id
-      FROM notes n
-      WHERE n.user_id = ${userId}::uuid AND n.deleted_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM note_links own WHERE own.source_id = n.id)
-        AND NOT EXISTS (
-          SELECT 1
-          FROM note_links incoming JOIN notes source ON source.id = incoming.source_id
-          WHERE source.user_id = ${userId}::uuid AND source.deleted_at IS NULL AND source.id <> n.id
-            AND incoming.target_key = lower(regexp_replace(btrim(n.title), '\\s+', ' ', 'g')))`;
+      WITH named AS (
+        SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at
+        FROM notes
+        WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+      ),
+      resolved AS (
+        SELECT DISTINCT ON (key) id, key FROM named ORDER BY key, updated_at DESC
+      ),
+      connected AS (
+        SELECT link.source_id AS source, resolved.id AS target
+        FROM note_links link
+        JOIN named origin ON origin.id = link.source_id
+        JOIN resolved ON resolved.key = link.target_key
+        WHERE resolved.id <> link.source_id
+      )
+      SELECT named.id
+      FROM named
+      WHERE NOT EXISTS (
+        SELECT 1 FROM connected WHERE connected.source = named.id OR connected.target = named.id)`;
     return rows.map((row) => row.id);
   }
 
