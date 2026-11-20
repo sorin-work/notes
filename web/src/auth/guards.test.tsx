@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { getToken, setToken } from '../api/client';
@@ -38,6 +38,23 @@ describe('RequireAuth', () => {
     mockFetch({ 'GET /api/auth/me': { body: user } });
     renderProtected();
     expect(await screen.findByText('Secret notes')).toBeInTheDocument();
+  });
+
+  it('signs out, and drops what it had loaded, when another tab removes the token', async () => {
+    setToken('tok');
+    mockFetch({ 'GET /api/auth/me': { body: user } });
+    const { queryClient } = renderProtected();
+    expect(await screen.findByText('Secret notes')).toBeInTheDocument();
+    queryClient.setQueryData(['notes'], ['a note of mine']);
+
+    // What the browser does in this tab when another one signs out.
+    act(() => {
+      setToken(null);
+      window.dispatchEvent(new StorageEvent('storage', { key: 'notes.token', newValue: null }));
+    });
+
+    expect(await screen.findByText('Login page')).toBeInTheDocument();
+    expect(queryClient.getQueryData(['notes'])).toBeUndefined();
   });
 
   it('signs out when the saved token has expired', async () => {
