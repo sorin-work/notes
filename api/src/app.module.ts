@@ -1,5 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, DiscoveryModule } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { RequestLoggerMiddleware } from './common/request-logger.middleware';
@@ -19,6 +19,8 @@ import { VersionsModule } from './versions/versions.module';
 @Module({
   imports: [
     ConfigModule,
+    // For docs.ts, which walks the controllers to describe the API.
+    DiscoveryModule,
     PrismaModule,
     AuthModule,
     NotebooksModule,
