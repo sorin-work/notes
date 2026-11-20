@@ -20,7 +20,7 @@ describe('sniffType', () => {
     for (const refused of [
       bytes('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
       bytes('  \n<!DOCTYPE html><p>hi'),
-      bytes('﻿<?xml version="1.0"?>'),
+      bytes('\uFEFF<?xml version="1.0"?>'),
       bytes('PK', [3, 4, 0, 0]),
       bytes('MZ', [0x90, 0]),
       bytes([0xc3, 0x28]),

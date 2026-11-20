@@ -43,5 +43,5 @@ function isPlainText(bytes: Buffer): boolean {
     return false;
   }
   // Markup of any kind, SVG and HTML among it, is not taken as text.
-  return !/^﻿?\s*</.test(text);
+  return !/^\uFEFF?\s*</.test(text);
 }

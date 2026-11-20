@@ -51,8 +51,8 @@ export interface ServedFile {
 /** The name a file came with, cut down to one plain line: it is shown, never used as a path. */
 export function cleanFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? '';
-  // eslint-disable-next-line no-control-regex
   const cleaned = base
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .trim()
     .slice(0, MAX_FILE_NAME_LENGTH);
@@ -136,15 +136,27 @@ export class AttachmentsService {
    * Null when the type is not allowed or the file is too large; the caller
    * says so in its own words.
    */
-  async store(fileName: string, bytes: Buffer): Promise<StoredFile | null> {
+  async store(fileName: string, bytes: Buffer, id?: string): Promise<StoredFile | null> {
     let stored: StoredFile;
     try {
       stored = await this.check(fileName, bytes);
     } catch {
       return null;
     }
+    if (id) stored.id = id;
     await this.storage.write(stored.id, bytes);
     return stored;
+  }
+
+  /** Whether the account has room for `extra` more bytes, counted under the user row lock. Call inside a transaction. */
+  async hasRoom(tx: Prisma.TransactionClient, userId: string, extra: number): Promise<boolean> {
+    try {
+      await this.assertRoom(tx, userId, extra);
+      return true;
+    } catch (error) {
+      if (error instanceof PayloadTooLargeException) return false;
+      throw error;
+    }
   }
 
   /** Refuses the bytes of `extra` more when the account would go past its limit. Call inside a transaction. */

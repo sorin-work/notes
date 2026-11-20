@@ -9,8 +9,10 @@ export interface ArchiveLimits {
   entries: number;
   /** Folders above a file. */
   depth: number;
-  /** Bytes one file may unpack to. */
+  /** Bytes one text file may unpack to. */
   fileBytes: number;
+  /** Bytes one file kept as bytes (an image, a PDF) may unpack to. */
+  binaryBytes: number;
 }
 
 export const ARCHIVE_LIMITS: ArchiveLimits = {
@@ -19,6 +21,8 @@ export const ARCHIVE_LIMITS: ArchiveLimits = {
   depth: 12,
   // A note may hold a million characters, which is up to four bytes each.
   fileBytes: 4 * 1024 * 1024,
+  // The most an attachment may have (ATTACHMENT_MAX_MB cannot go above it).
+  binaryBytes: 50 * 1024 * 1024,
 };
 
 export interface ArchiveFile {
@@ -28,8 +32,16 @@ export interface ArchiveFile {
   modified?: Date;
 }
 
+/** A file of the zip kept as bytes, such as an image a note shows. */
+export interface ArchiveBinary {
+  path: string;
+  bytes: Buffer;
+}
+
 export interface ArchiveContents {
   files: ArchiveFile[];
+  /** The files `binary` asked for, as bytes. */
+  binaries: ArchiveBinary[];
   skipped: { file: string; reason: string }[];
 }
 
@@ -72,6 +84,7 @@ export async function readArchive(
   reason: string,
   budget: UnpackBudget,
   limits: ArchiveLimits = ARCHIVE_LIMITS,
+  binary: (path: string) => boolean = () => false,
 ): Promise<ArchiveContents> {
   let zip: JSZip;
   try {
@@ -86,7 +99,7 @@ export async function readArchive(
     throw new ArchiveRefused(`The zip has more than ${limits.entries} entries`);
   }
 
-  const contents: ArchiveContents = { files: [], skipped: [] };
+  const contents: ArchiveContents = { files: [], binaries: [], skipped: [] };
   for (const entry of entries) {
     // JSZip cleans "../" out of `name`. What the zip really says is kept aside, and that is what counts.
     const original = (entry as JSZip.JSZipObject & { unsafeOriginalName?: string }).unsafeOriginalName ?? entry.name;
@@ -104,11 +117,15 @@ export async function readArchive(
       contents.skipped.push({ file: original, reason: 'A file packed inside the zip is not opened. Unpack it first' });
       continue;
     }
-    if (!wanted(original)) {
+    const asBytes = !wanted(original) && binary(original);
+    if (!wanted(original) && !asBytes) {
       contents.skipped.push({ file: original, reason });
       continue;
     }
-    const { bytes, unpacked } = await readBounded(entry, Math.min(limits.fileBytes, budget.remaining + 1));
+    const { bytes, unpacked } = await readBounded(
+      entry,
+      Math.min(asBytes ? limits.binaryBytes : limits.fileBytes, budget.remaining + 1),
+    );
     // What was unpacked counts, also for a file that turned out too large: entries
     // can share their packed data, and each of them would unpack it all again.
     budget.remaining -= unpacked;
@@ -119,7 +136,8 @@ export async function readArchive(
       contents.skipped.push({ file: original, reason: 'The file is too large' });
       continue;
     }
-    contents.files.push({ path: original, text: bytes.toString('utf8'), modified: entry.date });
+    if (asBytes) contents.binaries.push({ path: original, bytes });
+    else contents.files.push({ path: original, text: bytes.toString('utf8'), modified: entry.date });
   }
   return contents;
 }
