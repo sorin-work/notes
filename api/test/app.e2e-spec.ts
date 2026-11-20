@@ -10,6 +10,7 @@ import JSZip from 'jszip';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
@@ -211,6 +212,11 @@ describe('links and search', () => {
     expect((await search({ q: '"wee"' })).total).toBe(0);
     // A phrase that is still being typed searches as ordinary words.
     expect((await search({ q: '"weekly sy' })).total).toBe(3);
+    // A phrase is split the way the note was, so dots inside words and numbers survive.
+    const dotted = await post('/api/notes', { title: 'Setup', content: 'Use node.js today with a 3.5 mm jack.' });
+    expect((await search({ q: '"node.js today"' })).ids).toEqual([dotted]);
+    expect((await search({ q: '"3.5 mm" setup' })).ids).toEqual([dotted]);
+    expect((await search({ q: '"node today"' })).total).toBe(0);
 
     const first = await search({ q: 'weekly sync', pageSize: 2 });
     const second = await search({ q: 'weekly sync', pageSize: 2, page: 2 });
@@ -222,6 +228,42 @@ describe('links and search', () => {
     const foreign = await post('/api/notebooks', { name: 'Theirs' }, other.auth);
     await request(server).get('/api/search').query({ q: 'sync', notebookId: foreign }).set(auth).expect(404);
     await request(server).get('/api/search').query({ q: 'sync', notebookId: 'inbox' }).set(auth).expect(400);
+  });
+
+  it('answers 400, not 500, to filters and pages the database cannot take', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    await request(server).post('/api/notes').set(auth).send({ title: 'Sync', content: 'A sync.' }).expect(201);
+
+    for (const path of ['/api/search?q=sync', '/api/notes?sort=title']) {
+      await request(server).get(`${path}&notebookId=NONE`).set(auth).expect(400);
+      await request(server).get(`${path}&tag=%00`).set(auth).expect(400);
+      await request(server).get(`${path}&page=9223372036854775807`).set(auth).expect(400);
+      await request(server).get(`${path}&notebookId=none&tag=sync&page=100000`).set(auth).expect(200);
+    }
+    // A null character inside a phrase is dropped instead of reaching the database.
+    const phrase = await request(server).get('/api/search?q=%22a%00sync%22').set(auth).expect(200);
+    expect(phrase.body.total).toBe(1);
+  });
+
+  it('pages through equally ranked results without repeats or gaps', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const created = await request(server).post('/api/notes').set(auth).send({ title: 'Twin', content: 'Same text.' });
+      ids.push(created.body.id);
+    }
+    // Same text gives the same rank. With the same time as well, only the id is left to order by.
+    const sameTime = new Date('2026-01-01T00:00:00Z');
+    await app.get(PrismaService).note.updateMany({ where: { id: { in: ids } }, data: { updatedAt: sameTime } });
+
+    const paged: string[] = [];
+    for (const page of [1, 2, 3]) {
+      const response = await request(server).get('/api/search').query({ q: 'twin', pageSize: 2, page }).set(auth);
+      paged.push(...response.body.items.map((hit: { id: string }) => hit.id));
+    }
+    expect(paged).toEqual([...ids].sort());
   });
 });
 
