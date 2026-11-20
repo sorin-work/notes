@@ -74,7 +74,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   // "Today" is a day here, in the browser. The server finds the note of that day or makes it.
   const today = useMutation({
-    mutationFn: () => openDailyNote(todaysNote(user?.preferences.dailyNotes.dateFormat ?? 'iso')),
+    mutationFn: () => openDailyNote(todaysNote()),
     onSuccess: (note) => {
       for (const key of ['notes', 'notebooks', 'tags']) {
         void queryClient.invalidateQueries({ queryKey: [key] });
