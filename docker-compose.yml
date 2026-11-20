@@ -25,6 +25,7 @@ services:
       PORT: 4401
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-30}
+      API_TOKEN_THROTTLE_LIMIT: ${API_TOKEN_THROTTLE_LIMIT:-120}
       # Creates demo@example.com / demo-password with sample notes.
       SEED_DEMO: ${SEED_DEMO:-true}
       # Password reset mails. Unless told otherwise they go to the mailpit
