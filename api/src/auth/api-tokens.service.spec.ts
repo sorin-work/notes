@@ -59,6 +59,12 @@ describe('ApiTokensService', () => {
     expect(query.select).not.toHaveProperty('tokenHash');
   });
 
+  it('revokes every token of one account and says how many there were', async () => {
+    prisma.apiToken.deleteMany.mockResolvedValue({ count: 3 });
+    await expect(service.revokeAll('user-1')).resolves.toEqual({ revoked: 3 });
+    expect(prisma.apiToken.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
+  });
+
   describe('revoke', () => {
     it('deletes the token only if it belongs to the user', async () => {
       prisma.apiToken.deleteMany.mockResolvedValue({ count: 1 });

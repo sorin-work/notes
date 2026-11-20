@@ -165,6 +165,14 @@ describe('AuthService', () => {
     });
   });
 
+  describe('assertPassword', () => {
+    it('passes for the right password and answers 403 for a wrong one', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      await expect(service.assertPassword(user.id, 'correct-horse')).resolves.toBeUndefined();
+      await expect(service.assertPassword(user.id, 'wrong-one')).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
   describe('logoutEverywhere', () => {
     it('bumps the token version', async () => {
       prisma.user.update.mockResolvedValue({ ...user, tokenVersion: 1 });

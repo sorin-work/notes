@@ -62,7 +62,7 @@ export class ApiTokensService {
     return this.prisma.apiToken.findMany({ where: { userId }, orderBy: { createdAt: 'desc' }, select: VIEW });
   }
 
-  async create(userId: string, dto: CreateApiTokenDto): Promise<CreatedApiToken> {
+  async create(userId: string, dto: Pick<CreateApiTokenDto, 'name' | 'readOnly'>): Promise<CreatedApiToken> {
     if ((await this.prisma.apiToken.count({ where: { userId } })) >= MAX_API_TOKENS) {
       throw new BadRequestException(`An account can have ${MAX_API_TOKENS} API tokens. Revoke one first.`);
     }
@@ -79,6 +79,12 @@ export class ApiTokensService {
     if (count === 0) {
       throw new NotFoundException('API token not found');
     }
+  }
+
+  /** Ends every token of the account. Answers how many there were. */
+  async revokeAll(userId: string): Promise<{ revoked: number }> {
+    const { count } = await this.prisma.apiToken.deleteMany({ where: { userId } });
+    return { revoked: count };
   }
 
   /** Who the token belongs to, or null for a token that does not exist (any more). */
