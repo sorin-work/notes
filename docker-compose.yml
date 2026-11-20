@@ -109,12 +109,16 @@ services:
       PGDATABASE: notes
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      # The files of attachments, archived beside each dump and put back with it.
+      ATTACHMENTS_DIR: /attachments
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./scripts:/scripts:ro
       - ${BACKUP_DIR:-./backups}:/backups
+      # Written to only by a restore, which refuses to run while the API does.
+      - attachments:/attachments
 
 volumes:
   db-data:

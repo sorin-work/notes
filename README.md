@@ -309,10 +309,14 @@ Good to know:
   every dump and every failure, and a failed dump is tried again a minute
   later.
 - `docker compose down -v` removes the database volume, not the dumps.
-- A dump holds the database only. The files of attachments are in the
-  `attachments` volume, which needs a copy of its own (for example
-  `docker run --rm -v notes_attachments:/data -v "$PWD":/out alpine tar czf /out/attachments.tgz -C /data .`).
-  The JSON backup below carries them.
+- Beside each dump the files of attachments go into
+  `notes-<time>.files.tar`, made just before the dump, so no row in the dump
+  points at a file the archive lacks. Only regular files named like an
+  attachment id go in, never a link. A restore puts the files back after the
+  database, and refuses an archive that holds anything else. It also refuses
+  to start while the API is connected, because the API writes and removes
+  files as it goes. A dump without an archive, from before there were
+  attachments, restores the database and leaves the files as they are.
 
 ### The JSON backup
 
