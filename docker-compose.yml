@@ -28,6 +28,7 @@ services:
       API_TOKEN_THROTTLE_LIMIT: ${API_TOKEN_THROTTLE_LIMIT:-120}
       # The page and the OpenAPI document at /api/docs. false turns both off.
       API_DOCS: ${API_DOCS:-true}
+      PUBLIC_THROTTLE_LIMIT: ${PUBLIC_THROTTLE_LIMIT:-60}
       # Creates demo@example.com / demo-password with sample notes.
       SEED_DEMO: ${SEED_DEMO:-true}
       # Password reset mails. Unless told otherwise they go to the mailpit
