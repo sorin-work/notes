@@ -113,6 +113,8 @@ describe('AuthService', () => {
         ...user,
         preferences: { dailyNotes: { notebookId: NOTEBOOK, dateFormat: 'long' } },
       });
+      // Answers with what was stored, like the database does.
+      prisma.user.update.mockImplementation(({ data }) => Promise.resolve({ ...user, preferences: data.preferences }));
     });
 
     it('changes what is sent, keeps the rest and stores the whole', async () => {

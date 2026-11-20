@@ -79,6 +79,16 @@ export class NotesController {
     return this.notes.get(user.id, id);
   }
 
+  /**
+   * Takes a daily note off its day. It stays an ordinary note, the next
+   * `POST /notes/daily` for that day makes a new one, and its title no longer
+   * makes it the note of a day.
+   */
+  @Delete(':id/daily')
+  releaseDaily(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
+    return this.notes.releaseDaily(user.id, id);
+  }
+
   /** Makes a copy of a note: its text, tags and notebook, and nothing else of it. */
   @Post(':id/duplicate')
   duplicate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {

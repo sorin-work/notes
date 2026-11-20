@@ -39,9 +39,13 @@ export function formatDay(day: string, format: DateFormat): string {
   return day;
 }
 
-/** What to send to open today's note: the day, its title and the values a template may ask for. */
-export function todaysNote(format: DateFormat, now = new Date()) {
+/**
+ * What to send to open today's note: the day and the values a template may
+ * ask for. Not the title: the server writes it in the format the account has
+ * now, which a tab opened before it was changed elsewhere would not know.
+ */
+export function todaysNote(now = new Date()) {
   const date = localDay(now);
   const time = `${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}`;
-  return { date, title: formatDay(date, format), placeholders: { date, time } };
+  return { date, placeholders: { date, time } };
 }

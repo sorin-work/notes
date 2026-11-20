@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Note, Prisma } from '@prisma/client';
 import { readPreferences } from '../auth/preferences';
-import { dayTitles, dayToDate, parseDay } from '../common/day';
+import { dayTitles, dayToDate, formatDay, parseDay } from '../common/day';
 import { Page, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
 import { isLinkable, normalizeTitle, renameLinks } from '../links/wikilinks';
@@ -105,7 +105,7 @@ export class NotesService {
     }
     const created = await this.prisma.$transaction((tx) =>
       this.insert(tx, userId, {
-        title: dto.title || template?.title || DEFAULT_TITLE,
+        title: template?.title ?? (dto.title || DEFAULT_TITLE),
         content: dto.content ?? template?.content ?? '',
         tags: dto.tags ?? template?.tags ?? [],
         notebookId: dto.notebookId ?? null,
@@ -119,8 +119,11 @@ export class NotesService {
   }
 
   /**
-   * The daily note of a day: the one there is, or a new one. The day and its
-   * title are the browser's, because "today" depends on where the user is.
+   * The daily note of a day: the one there is, or a new one. The day is the
+   * browser's, because "today" depends on where the user is. The title of a
+   * new note is written here, from that day and the format the account has
+   * chosen: a tab that was opened before the format was changed on another
+   * device still gets a note titled the way the account now wants it.
    *
    * A user has one daily note per day, and the database sees to that with a
    * unique index on user and day. Two tabs that ask at the same moment both
@@ -131,9 +134,6 @@ export class NotesService {
     const day = parseDay(dto.date);
     if (!day) {
       throw new BadRequestException('date must be a day that exists, written as YYYY-MM-DD');
-    }
-    if (!dayTitles(day).includes(dto.title)) {
-      throw new BadRequestException('title must be the date, written in one of the formats of a daily note');
     }
     for (let attempt = 0; ; attempt++) {
       try {
@@ -160,10 +160,12 @@ export class NotesService {
 
     // A note that is titled with the day, in whichever format, is the note of
     // that day: one written by hand, or made before the format was changed.
+    // Not one that the user has taken off its day (see releaseDaily).
     const titled = await tx.note.findFirst({
       where: {
         ...workingNotes(userId),
         dailyDate: null,
+        dailyReleased: false,
         OR: dayTitles(day).map((title) => ({ title: { equals: title, mode: 'insensitive' as const } })),
       },
       orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
@@ -176,13 +178,14 @@ export class NotesService {
     // A new one, made the way the user set it up. A notebook or a template
     // that is gone by now is simply not used.
     const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { preferences: true } });
-    const { notebookId, templateId } = readPreferences(user.preferences).dailyNotes;
+    const { notebookId, templateId, dateFormat } = readPreferences(user.preferences).dailyNotes;
+    const title = formatDay(day, dateFormat);
     const notebook = notebookId ? await tx.notebook.findFirst({ where: { id: notebookId, userId } }) : null;
     const template = templateId
-      ? await this.fromTemplate(userId, templateId, { title: dto.title, placeholders: dto.placeholders }, tx)
+      ? await this.fromTemplate(userId, templateId, { title, placeholders: dto.placeholders }, tx)
       : null;
     return this.insert(tx, userId, {
-      title: dto.title,
+      title,
       content: template?.content ?? '',
       tags: template?.tags ?? [],
       notebookId: notebook?.id ?? null,
@@ -191,6 +194,22 @@ export class NotesService {
       isTemplate: false,
       dailyDate,
     });
+  }
+
+  /**
+   * Takes a note off its day: it stays as it is, an ordinary note, and the
+   * next "Today" makes a new note for that day. It is also never taken for
+   * the note of a day because of its title again, which is how a note that
+   * merely had the day as its title gets out of being the daily note.
+   */
+  async releaseDaily(userId: string, id: string): Promise<NoteView> {
+    await this.findActive(userId, id);
+    const released = await this.prisma.note.update({
+      where: { id },
+      data: { dailyDate: null, dailyReleased: true },
+      include: noteInclude,
+    });
+    return toView(released);
   }
 
   /**
@@ -225,11 +244,11 @@ export class NotesService {
    * What a note made from a template starts with: the title, text and tags
    * of the template, with the placeholders filled in. Its [[links]] come
    * along as text and are stored for the new note like any others. The values
-   * for {{date}} and {{time}} come with the request, {{title}} is the title
-   * the new note gets. Without a title in the request that is the title of
-   * the template, less a closing "template": a note made from "Weekly review
-   * template" is a "Weekly review", and does not share its title with the
-   * template it came from. Null when there is no such template.
+   * for {{date}} and {{time}} come with the request, and {{title}} is the
+   * title the user gives the new note. The title of the template is not used:
+   * without a title in the request the note starts as "Untitled", and
+   * {{title}} stays as written, like any placeholder that has no value.
+   * Null when there is no such template.
    */
   private async fromTemplate(
     userId: string,
@@ -242,15 +261,13 @@ export class NotesService {
       include: { tags: { include: { tag: true } } },
     });
     if (!template) return null;
-    const values = { date: dto.placeholders?.date, time: dto.placeholders?.time };
-    const ownTitle = template.title.replace(/\s+template$/i, '');
-    const filledTitle = fillPlaceholders(ownTitle, values).trim().slice(0, MAX_TITLE_LENGTH);
-    const title = dto.title || filledTitle || DEFAULT_TITLE;
-    const content = fillPlaceholders(template.content, { ...values, title });
+    const given = dto.title?.trim() || undefined;
+    const values = { date: dto.placeholders?.date, time: dto.placeholders?.time, title: given };
+    const content = fillPlaceholders(template.content, values);
     if (content.length > MAX_CONTENT_LENGTH) {
       throw new BadRequestException('With its placeholders filled in, this template is too long for a note');
     }
-    return { title, content, tags: template.tags.map((noteTag) => noteTag.tag.name) };
+    return { title: given ?? DEFAULT_TITLE, content, tags: template.tags.map((noteTag) => noteTag.tag.name) };
   }
 
   /** Writes a new note with its tags and links. Part of the caller's transaction. */

@@ -25,6 +25,7 @@ function note(overrides: Record<string, unknown> = {}) {
     favorite: false,
     isTemplate: false,
     dailyDate: null,
+    dailyReleased: false,
     deletedAt: null,
     createdAt: earlier,
     updatedAt: earlier,
@@ -170,7 +171,7 @@ describe('NotesService', () => {
       });
 
       it('copies the text and the tags with the placeholders filled in, and nothing else', async () => {
-        await service.create(USER, { templateId: 't1', placeholders, notebookId: 'nb' });
+        await service.create(USER, { templateId: 't1', title: 'Friday', placeholders, notebookId: 'nb' });
 
         // Only a template of this user, outside the trash, can be used.
         expect(prisma.note.findFirst.mock.calls[0][0].where).toEqual({
@@ -179,12 +180,12 @@ describe('NotesService', () => {
           isTemplate: true,
           id: 't1',
         });
-        const content = '# Weekly review 2026-11-20\n\nWritten at 19:30, see [[Deep Work]]. {{mood}}';
+        const content = '# Friday\n\nWritten at 19:30, see [[Deep Work]]. {{mood}}';
         // The new note is a note: not a template, not pinned, no star.
         expect(prisma.note.create).toHaveBeenCalledWith({
           data: {
             userId: USER,
-            title: 'Weekly review 2026-11-20',
+            title: 'Friday',
             content,
             notebookId: 'nb',
             pinned: false,
@@ -206,17 +207,13 @@ describe('NotesService', () => {
         expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'new', ['mine']);
       });
 
-      it('names the note after the template, without a closing "template"', async () => {
-        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'Weekly review  Template' });
-        await service.create(USER, { templateId: 't1' });
+      it('never takes its title from the template: without one the note is untitled', async () => {
+        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'How to write a template' });
+        await service.create(USER, { templateId: 't1', title: '   ' });
         expect(prisma.note.create.mock.calls[0][0].data).toMatchObject({
-          title: 'Weekly review',
-          content: '# Weekly review\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
+          title: 'Untitled',
+          content: '# {{title}}\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
         });
-
-        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'Template' });
-        await service.create(USER, { templateId: 't1' });
-        expect(prisma.note.create.mock.calls[1][0].data.title).toBe('Template');
       });
 
       it('404s when the template is not there, is not a template or is someone else’s', async () => {
@@ -250,11 +247,13 @@ describe('NotesService', () => {
 
   describe('daily', () => {
     const day = new Date('2026-11-20T00:00:00.000Z');
-    const today = { date: '2026-11-20', title: '20 November 2026' };
+    const today = { date: '2026-11-20' };
 
     beforeEach(() => {
       prisma.note.create.mockImplementation(({ data }) => Promise.resolve(note({ ...data, id: 'new' })));
-      prisma.note.findUniqueOrThrow.mockResolvedValue(withRelations({ id: 'new', title: today.title, dailyDate: day }));
+      prisma.note.findUniqueOrThrow.mockResolvedValue(
+        withRelations({ id: 'new', title: '2026-11-20', dailyDate: day }),
+      );
       prisma.note.update.mockImplementation(({ where, data }) => Promise.resolve(withRelations({ ...where, ...data })));
       prisma.user.findUniqueOrThrow.mockResolvedValue({ preferences: {} });
     });
@@ -281,6 +280,7 @@ describe('NotesService', () => {
         deletedAt: null,
         isTemplate: false,
         dailyDate: null,
+        dailyReleased: false,
         OR: ['2026-11-20', '20 November 2026', 'November 20, 2026'].map((title) => ({
           title: { equals: title, mode: 'insensitive' },
         })),
@@ -323,15 +323,15 @@ describe('NotesService', () => {
       expect(prisma.notebook.findFirst).toHaveBeenCalledWith({ where: { id: NOTEBOOK, userId: USER } });
     });
 
-    it('makes an empty note when the chosen notebook and template are gone', async () => {
+    it('makes an empty note when the chosen notebook and template are gone, titled in the stored format', async () => {
       prisma.user.findUniqueOrThrow.mockResolvedValue({
-        preferences: { dailyNotes: { notebookId: NOTEBOOK, templateId: TEMPLATE } },
+        preferences: { dailyNotes: { notebookId: NOTEBOOK, templateId: TEMPLATE, dateFormat: 'us' } },
       });
       prisma.note.findFirst.mockResolvedValue(null);
       prisma.notebook.findFirst.mockResolvedValue(null);
       await service.daily(USER, today);
       expect(prisma.note.create.mock.calls[0][0].data).toMatchObject({
-        title: '20 November 2026',
+        title: 'November 20, 2026',
         content: '',
         notebookId: null,
         dailyDate: day,
@@ -370,17 +370,18 @@ describe('NotesService', () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     });
 
-    it('refuses a day that does not exist and a title that is not that day', async () => {
-      await expect(service.daily(USER, { date: '2026-02-30', title: '2026-02-30' })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      await expect(service.daily(USER, { date: '2026-11-20', title: '21 November 2026' })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      await expect(service.daily(USER, { date: '2026-11-20', title: 'Anything' })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+    it('refuses a day that does not exist', async () => {
+      await expect(service.daily(USER, { date: '2026-02-30' })).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('takes a note off its day, so that neither the day nor the title leads back to it', async () => {
+      prisma.note.findFirst.mockResolvedValue(note({ id: 'd1', title: '2026-11-20', dailyDate: day }));
+      await expect(service.releaseDaily(USER, 'd1')).resolves.toMatchObject({ id: 'd1', dailyDate: null });
+      // Neither the text nor "last edited" is touched.
+      expect(prisma.note.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'd1' }, data: { dailyDate: null, dailyReleased: true } }),
+      );
     });
   });
 

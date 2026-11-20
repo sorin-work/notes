@@ -27,6 +27,8 @@ export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   revision: number;
   /** A template is kept out of the lists and the search, and new notes are made from it. */
   isTemplate: boolean;
+  /** The day, as YYYY-MM-DD, when this is the daily note of that day. */
+  dailyDate: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   shared: boolean;
   deletedAt: Date | null;
@@ -53,6 +55,7 @@ export function toView(note: NoteWithRelations): NoteView {
     content: note.content,
     revision: note.revision,
     isTemplate: note.isTemplate,
+    dailyDate: note.dailyDate ? note.dailyDate.toISOString().slice(0, 10) : null,
     notebookId: note.notebookId,
     notebook: note.notebook,
     tags: note.tags.map((noteTag) => noteTag.tag.name),

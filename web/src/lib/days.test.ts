@@ -1,12 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { DATE_FORMATS, formatDay, localDay, todaysNote } from './days';
 
+const zone = process.env.TZ;
+afterEach(() => {
+  if (zone === undefined) delete process.env.TZ;
+  else process.env.TZ = zone;
+});
+
 describe('days', () => {
-  it('takes the day from the local clock, also just before and just after midnight', () => {
-    // Built from local parts, so the test holds in any time zone.
-    expect(localDay(new Date(2026, 10, 20, 23, 59, 59))).toBe('2026-11-20');
-    expect(localDay(new Date(2026, 10, 21, 0, 0, 1))).toBe('2026-11-21');
-    expect(localDay(new Date(2026, 0, 5, 9, 0))).toBe('2026-01-05');
+  it('takes the day from the local clock, not from UTC', () => {
+    // Far from UTC on both sides, at instants where the local day and the UTC day differ.
+    process.env.TZ = 'Pacific/Kiritimati'; // UTC+14
+    const lateInUtc = new Date('2026-07-20T12:30:00Z');
+    expect(lateInUtc.toISOString().slice(0, 10)).toBe('2026-07-20');
+    expect(localDay(lateInUtc)).toBe('2026-07-21');
+
+    process.env.TZ = 'Pacific/Pago_Pago'; // UTC-11
+    const earlyInUtc = new Date('2026-07-21T05:00:00Z');
+    expect(localDay(earlyInUtc)).toBe('2026-07-20');
+    expect(localDay(new Date('2026-01-01T09:59:00Z'))).toBe('2025-12-31');
   });
 
   it('writes a day in each of the formats a daily note can have', () => {
@@ -17,11 +29,11 @@ describe('days', () => {
     ]);
   });
 
-  it('puts together what the server needs to open today’s note', () => {
-    expect(todaysNote('long', new Date(2026, 10, 20, 8, 5))).toEqual({
-      date: '2026-11-20',
-      title: '20 November 2026',
-      placeholders: { date: '2026-11-20', time: '08:05' },
+  it('puts together what the server needs to open today’s note, which is not the title', () => {
+    process.env.TZ = 'Pacific/Kiritimati';
+    expect(todaysNote(new Date('2026-11-20T18:05:00Z'))).toEqual({
+      date: '2026-11-21',
+      placeholders: { date: '2026-11-21', time: '08:05' },
     });
   });
 });
