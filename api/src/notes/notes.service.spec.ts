@@ -38,7 +38,7 @@ describe('NotesService', () => {
   let prisma: PrismaMock;
   let notebooks: jest.Mocked<Pick<NotebooksService, 'findOwned' | 'idsWithChildren'>>;
   let tags: jest.Mocked<Pick<TagsService, 'setNoteTags'>>;
-  let links: jest.Mocked<Pick<LinksService, 'sync'>>;
+  let links: jest.Mocked<Pick<LinksService, 'sync' | 'orphanIds'>>;
   let versions: jest.Mocked<Pick<VersionsService, 'snapshotIfDue'>>;
   let service: NotesService;
 
@@ -46,7 +46,7 @@ describe('NotesService', () => {
     prisma = createPrismaMock();
     notebooks = { findOwned: jest.fn(), idsWithChildren: jest.fn() };
     tags = { setNoteTags: jest.fn() };
-    links = { sync: jest.fn() };
+    links = { sync: jest.fn(), orphanIds: jest.fn() };
     versions = { snapshotIfDue: jest.fn() };
     service = new NotesService(
       asPrismaService(prisma),
@@ -62,6 +62,21 @@ describe('NotesService', () => {
     beforeEach(() => {
       prisma.note.findMany.mockResolvedValue([withRelations({ content: '# Plan\n\nThe body' })]);
       prisma.note.count.mockResolvedValue(1);
+    });
+
+    it('narrows the list to the notes without links when asked for orphans', async () => {
+      links.orphanIds.mockResolvedValue(['n1', 'n7']);
+      await service.list(USER, query({ orphans: true, tag: 'atlas' }));
+      expect(links.orphanIds).toHaveBeenCalledWith(USER);
+      expect(prisma.note.findMany.mock.calls[0][0].where).toMatchObject({
+        userId: USER,
+        deletedAt: null,
+        id: { in: ['n1', 'n7'] },
+        tags: { some: { tag: { name: 'atlas' } } },
+      });
+
+      await service.list(USER, query({ orphans: false }));
+      expect(links.orphanIds).toHaveBeenCalledTimes(1);
     });
 
     it('lists notes outside the trash with pinned ones first', async () => {

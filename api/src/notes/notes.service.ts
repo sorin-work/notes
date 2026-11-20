@@ -36,6 +36,7 @@ export class NotesService {
     }
     if (query.pinned !== undefined) where.pinned = query.pinned;
     if (query.favorite !== undefined) where.favorite = query.favorite;
+    if (query.orphans) where.id = { in: await this.links.orphanIds(userId) };
 
     const order = query.order ?? (query.sort === 'title' ? 'asc' : 'desc');
     const sortField = { updated: 'updatedAt', created: 'createdAt', title: 'title' } as const;

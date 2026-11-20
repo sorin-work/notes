@@ -121,6 +121,12 @@ export class ListNotesQuery extends NoteFilterQuery {
   @IsBoolean()
   favorite?: boolean;
 
+  /** Only notes with no links in or out. */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  orphans?: boolean;
+
   @IsOptional()
   @IsIn(NOTE_SORTS)
   sort: NoteSort = 'updated';

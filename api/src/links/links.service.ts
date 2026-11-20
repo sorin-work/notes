@@ -62,6 +62,25 @@ export class LinksService {
     }));
   }
 
+  /**
+   * The notes outside the trash with no links in or out: nothing in their own
+   * text links anywhere, and no other note links to their title.
+   */
+  async orphanIds(userId: string): Promise<string[]> {
+    // Titles are compared with link keys the way resolveKeys compares them.
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT n.id
+      FROM notes n
+      WHERE n.user_id = ${userId}::uuid AND n.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM note_links own WHERE own.source_id = n.id)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM note_links incoming JOIN notes source ON source.id = incoming.source_id
+          WHERE source.user_id = ${userId}::uuid AND source.deleted_at IS NULL AND source.id <> n.id
+            AND incoming.target_key = lower(regexp_replace(btrim(n.title), '\\s+', ' ', 'g')))`;
+    return rows.map((row) => row.id);
+  }
+
   /** The links written in a note, with the note each one currently resolves to. */
   async outgoing(userId: string, noteId: string): Promise<OutgoingLink[]> {
     const note = await this.prisma.note.findFirst({
