@@ -83,6 +83,14 @@ describe('ExportService', () => {
     expect(prisma.notebook.findMany.mock.calls[0][0].where).toEqual({ userId: 'user-1' });
   });
 
+  it('reads the notebooks and the notes in one repeatable-read snapshot', async () => {
+    prisma.notebook.findMany.mockResolvedValue([]);
+    prisma.note.findMany.mockResolvedValue([note('Plan')]);
+    await files();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'RepeatableRead' });
+  });
+
   it('keeps apart notebooks whose names come out the same, and a notebook from a note file of its name', async () => {
     prisma.notebook.findMany.mockResolvedValue([
       // Fine as notebook names side by side, the same once the slash is gone.

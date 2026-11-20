@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import JSZip from 'jszip';
 import { PrismaService } from '../prisma/prisma.service';
 import { safeFileName, UniquePaths } from './file-names';
@@ -78,18 +79,24 @@ export class ExportService {
    * sit at the top.
    */
   async exportAll(userId: string): Promise<Buffer> {
-    const [notebooks, notes] = await Promise.all([
-      this.prisma.notebook.findMany({
-        where: { userId },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        select: { id: true, name: true, parentId: true },
-      }),
-      this.prisma.note.findMany({
-        where: { userId, deletedAt: null },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: exportInclude,
-      }),
-    ]);
+    // One snapshot for both: a note moved to a notebook made a moment ago
+    // still finds its folder, and every folder is the one the note was in.
+    const [notebooks, notes] = await this.prisma.$transaction(
+      async (tx) =>
+        [
+          await tx.notebook.findMany({
+            where: { userId },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: { id: true, name: true, parentId: true },
+          }),
+          await tx.note.findMany({
+            where: { userId, deletedAt: null },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            include: exportInclude,
+          }),
+        ] as const,
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
     const zip = new JSZip();
     const paths = new UniquePaths();
