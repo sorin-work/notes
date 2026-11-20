@@ -3,6 +3,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import * as authApi from '../api/auth';
 import { getToken, onTokenRemovedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
+import { clearNotices } from '../lib/notices';
 
 type Status = 'loading' | 'signed-in' | 'signed-out';
 
@@ -30,6 +31,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setStatus('signed-out');
     queryClient.clear();
+    // Notices name notes. Whoever signs in next at this screen should not read them.
+    clearNotices();
   }, [queryClient]);
 
   useEffect(() => {
@@ -78,6 +81,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+/**
+ * The id of the signed-in user, or null. Unlike useAuth it also works where
+ * there is no provider, as in the tests of single components.
+ */
+export function useUserId(): string | null {
+  return useContext(AuthContext)?.user?.id ?? null;
 }
 
 export function useAuth(): AuthContextValue {

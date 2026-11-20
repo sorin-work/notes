@@ -7,6 +7,7 @@ export function note(overrides: Partial<Note> = {}): Note {
     id: 'n1',
     title: 'Project Atlas',
     content: 'Links to [[Atlas data model]].',
+    revision: 3,
     notebookId: null,
     notebook: null,
     tags: ['atlas'],

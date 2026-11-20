@@ -6,6 +6,8 @@ export class ApiError extends Error {
     message: string,
     /** Every validation message when the API returned a list. */
     readonly messages: string[] = [message],
+    /** The body of the error response, when it was JSON. Some errors carry more than a message. */
+    readonly body: unknown = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -72,7 +74,12 @@ async function errorFrom(response: Response): Promise<ApiError> {
   }
   const messages = Array.isArray(body?.message) ? body.message : body?.message ? [body.message] : [];
   const fallback = response.status >= 500 ? 'Something went wrong on the server' : response.statusText;
-  return new ApiError(response.status, messages[0] ?? (fallback || `Request failed (${response.status})`), messages);
+  return new ApiError(
+    response.status,
+    messages[0] ?? (fallback || `Request failed (${response.status})`),
+    messages,
+    body,
+  );
 }
 
 export async function request(path: string, init: RequestInit = {}): Promise<Response> {

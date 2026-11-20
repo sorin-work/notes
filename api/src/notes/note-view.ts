@@ -23,6 +23,8 @@ export interface NoteSummary {
 
 export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   content: string;
+  /** Counts the changes to the title and the content. A save names the revision it was based on. */
+  revision: number;
   notebook: { id: string; name: string; parentId: string | null } | null;
   shared: boolean;
   deletedAt: Date | null;
@@ -47,6 +49,7 @@ export function toView(note: NoteWithRelations): NoteView {
     id: note.id,
     title: note.title,
     content: note.content,
+    revision: note.revision,
     notebookId: note.notebookId,
     notebook: note.notebook,
     tags: note.tags.map((noteTag) => noteTag.tag.name),

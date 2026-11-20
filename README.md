@@ -45,6 +45,9 @@ Markdown import/export.
   previewed and restored; restoring saves the current text first. The Changes
   view shows line by line what differs between a version and the note as it
   is now, with a changed title above it.
+- **Edit conflicts**: with a note open in two tabs or on two devices, a save
+  that would overwrite the other one is held back, and the editor asks what
+  to keep: your text, theirs, or yours with theirs saved in the history.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
 - **Share links**: a read-only public page at `/s/<token>` for a single note,
@@ -440,6 +443,36 @@ out, and past that the view says so and shows no diff. A single block that
 was only added or only removed is shown whatever its size. The view lists
 2,000 rows at most and then says how many more lines changed.
 
+Every note has a revision, a number that goes up by one whenever its title or
+text changes: a save, a restored version, links rewritten after a rename.
+Pinning, favourites, tags, moving a note and the trash leave it alone. The
+editor sends the revision its text is based on with every save. When the note
+has moved on since, the save is refused and the editor asks what to keep.
+"Take theirs" fetches the note as it is at that moment. Closing the question
+decides nothing: the text stays in the editor, unsaved, and the browser warns
+before the tab is closed. Restoring a version first saves what is typed, and
+does not go ahead if that fails. A save that names no revision, as from a tab
+that was loaded before this existed or from a script, is never refused: the
+last write wins, as it always did.
+
+Leaving a note never drops what was typed in it without a word:
+
+- With the question still open, or when the other change is only noticed by
+  the save that leaving sets off, your text is saved and the other version
+  goes into the history of the note. A notice in the corner says so
+  afterwards, because nobody was looking when it happened.
+- When the text cannot be saved at all, because there is no connection or the
+  session has ended, it is kept in that browser tab under your account. A
+  notice says so, and the note offers to put the changes back the next time
+  you open it there. They are removed once they are saved or you discard
+  them, and are gone when the tab is closed. Another account never sees them.
+- "Sign out" saves the open note first. If that fails, it asks before it
+  throws the changes away.
+
+If the answer to a save gets lost on the way, the next save is told that the
+note has changed. The editor recognises its own text in that change and goes
+on without asking.
+
 ## API overview
 
 The API describes itself. With the stack running, http://localhost:5181/api/docs
@@ -458,6 +491,15 @@ All endpoints are under `/api` and, apart from sign-up, login, password
 reset, the health check and shared notes, need an
 `Authorization: Bearer <token>` header. Errors use Nest's shape:
 `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
+
+`GET /notes/:id` returns the note's `revision`. `PATCH /notes/:id` takes it
+back as `revision`, the one the new title or content was based on. If the
+note has changed since, nothing is written and the answer is a `409` that
+carries the note as it is now:
+`{"statusCode": 409, "error": "Conflict", "code": "stale_revision", "message": "...", "note": {...}}`.
+The check only applies when `title` or `content` is sent, and a request
+without `revision` is never refused. With `"keepVersion": true` the text that
+a save replaces is kept as a version whatever the usual interval.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
