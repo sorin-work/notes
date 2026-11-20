@@ -23,7 +23,8 @@ Markdown import/export.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
-  paragraph the link is in.
+  paragraph the link is in. After a note is renamed, the editor offers to
+  update the links other notes have to its old title.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted.
@@ -292,6 +293,18 @@ recently edited one wins. Renaming a note therefore leaves links to the old
 title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
 
+When a rename leaves links dangling, the editor shows how many notes still
+link to the old title and offers to update them. Nothing is rewritten before
+you click, because the title saves while you are still typing it. The update
+changes only the title inside `[[ ]]`: a `#heading`, an `|alias` and links in
+code stay as they are. The rewritten notes keep their place in "last edited"
+lists, and each one gets a version first, so the change can be undone from
+its history. There is no offer while another note has the old title, since
+the links still lead somewhere, and none when the new title contains `[`,
+`]`, `|`, `#` or a backtick, which cannot be written as a link. Notes in the
+trash and the links a note has to itself are left alone. The offer is made in
+the editor where the rename happened and is gone once you leave the note.
+
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
@@ -322,6 +335,7 @@ Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Re
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
 | `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
 | `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
+| `GET /notes/:id/rename-links?from=`, `POST .../rename-links`   | Count, then update, links to an old title |
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
