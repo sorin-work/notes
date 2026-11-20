@@ -15,6 +15,8 @@ describe('NotesController', () => {
     update: jest.fn(),
     trash: jest.fn(),
     titles: jest.fn(),
+    orphanedLinkCount: jest.fn(),
+    renameLinks: jest.fn(),
   };
   const links = { backlinks: jest.fn(), outgoing: jest.fn(), resolve: jest.fn() };
   const exporter = { exportNote: jest.fn() };
@@ -47,6 +49,18 @@ describe('NotesController', () => {
     expect(links.backlinks).toHaveBeenCalledWith('user-1', 'n1');
     expect(links.outgoing).toHaveBeenCalledWith('user-1', 'n1');
     expect(links.resolve).toHaveBeenCalledWith('user-1', 'Atlas');
+  });
+
+  it('counts and rewrites the links a rename left behind', async () => {
+    notes.orphanedLinkCount.mockResolvedValue(3);
+    notes.renameLinks.mockResolvedValue({ updated: 3, title: 'Project Atlas' });
+    await expect(controller.orphanedLinks(user, 'n1', { from: 'Atlas' })).resolves.toEqual({ count: 3 });
+    await expect(controller.renameLinks(user, 'n1', { from: 'Atlas' })).resolves.toEqual({
+      updated: 3,
+      title: 'Project Atlas',
+    });
+    expect(notes.orphanedLinkCount).toHaveBeenCalledWith('user-1', 'n1', 'Atlas');
+    expect(notes.renameLinks).toHaveBeenCalledWith('user-1', 'n1', 'Atlas');
   });
 
   it('passes the title query and limit through', async () => {
