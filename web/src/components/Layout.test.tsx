@@ -1,7 +1,7 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { NotesPage } from '../pages/NotesPage';
@@ -59,21 +59,46 @@ describe('Layout', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('Weekly review');
   });
 
-  it('closes the switcher with the same key and keeps it shut over another dialog', async () => {
+  it('closes the switcher with the same key, once however long it is held', async () => {
     mockFetch(routes);
     renderLayout('/notes');
 
     const search = await screen.findByLabelText('Search notes');
     await userEvent.click(search);
-    await userEvent.keyboard('{Meta>}k{/Meta}');
-    expect(screen.getByRole('combobox', { name: 'Note title' })).toHaveFocus();
-    await userEvent.keyboard('{Meta>}k{/Meta}');
+    await userEvent.keyboard('{Control>}k{/Control}');
+    const input = screen.getByRole('combobox', { name: 'Note title' });
+    expect(input).toHaveFocus();
+
+    // A repeat of the held key is swallowed and changes nothing.
+    expect(fireEvent.keyDown(input, { key: 'k', ctrlKey: true, repeat: true })).toBe(false);
+    expect(screen.getByRole('dialog', { name: 'Go to note' })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Control>}k{/Control}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await waitFor(() => expect(search).toHaveFocus());
+  });
 
-    await userEvent.click(screen.getByRole('button', { name: 'New notebook' }));
-    await userEvent.keyboard('{Control>}k{/Control}');
+  it('leaves the key to the browser while another dialog is open', async () => {
+    mockFetch(routes);
+    renderLayout('/notes');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'New notebook' }));
+    expect(fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true })).toBe(true);
     expect(screen.getByRole('dialog', { name: 'New notebook' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Note title' })).not.toBeInTheDocument();
+  });
+
+  it('takes Cmd+K on a Mac, where Ctrl+K belongs to the text field', async () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+    mockFetch(routes);
+    renderLayout('/notes');
+
+    const search = await screen.findByLabelText('Search notes');
+    await userEvent.click(search);
+    expect(fireEvent.keyDown(search, { key: 'k', ctrlKey: true })).toBe(true);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await userEvent.keyboard('{Meta>}k{/Meta}');
+    expect(screen.getByRole('dialog', { name: 'Go to note' })).toBeInTheDocument();
   });
 });

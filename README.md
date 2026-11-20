@@ -24,9 +24,10 @@ Markdown import/export.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted.
-- **Quick switcher**: `Ctrl+K` opens a small dialog with the notes edited
-  last. Type part of a title, press Enter, and you are in that note with the
-  cursor in its text.
+- **Quick switcher**: `Ctrl+K` (`Cmd+K` on a Mac) opens a small dialog with
+  the notes edited last. Type part of a title, press Enter, and you are in
+  that note with the cursor in its text, or on the preview when only the
+  preview is showing.
 - **Version history**: while you edit, the previous text is saved as a
   version at most every ten minutes (the last 50 are kept). Any version can be
   previewed and restored; restoring saves the current text first.

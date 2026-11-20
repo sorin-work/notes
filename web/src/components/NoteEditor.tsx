@@ -64,6 +64,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const navigate = useNavigate();
   const location = useLocation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
@@ -99,9 +100,10 @@ function LoadedEditor({ note }: { note: Note }) {
   };
 
   // The quick switcher is used from the keyboard, so it asks for the cursor to land in the text.
+  // In preview mode there is no text field, and the preview takes the focus so the keys scroll it.
   const focusText = (location.state as { focusEditor?: boolean } | null)?.focusEditor === true;
   useEffect(() => {
-    if (focusText) textareaRef.current?.focus();
+    if (focusText) (textareaRef.current ?? previewRef.current)?.focus();
   }, [focusText]);
 
   useEffect(() => {
@@ -370,7 +372,7 @@ function LoadedEditor({ note }: { note: Note }) {
           </div>
         )}
         {mode !== 'edit' && (
-          <div className="editor-preview" aria-label="Preview">
+          <div className="editor-preview" aria-label="Preview" ref={previewRef} tabIndex={-1}>
             <MarkdownPreview content={content} onWikiLink={openWikiLink} missingTitles={missingTitles} />
           </div>
         )}

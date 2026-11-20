@@ -16,13 +16,14 @@ export function QuickSwitcher({ onClose }: { onClose(): void }) {
   const openNoteId = useMatch('/notes/:noteId')?.params.noteId;
   const listId = useId();
   const [query, setQuery] = useState('');
-  // Enter was pressed before the list had caught up with the typing.
+  // Enter was pressed while the answer for the text in the box was still on its way.
   const enterPending = useRef(false);
 
   const term = query.trim();
   const searched = useDebouncedValue(term, 150);
-  // Without a term the API answers with the notes edited last. Always asking
-  // again keeps a note that was just renamed or deleted from showing up stale.
+  // Without a term the API answers with the notes edited last. The list is
+  // asked for again every time, also when an earlier answer is still cached,
+  // so that a note renamed or deleted since then is not offered.
   const titles = useQuery({
     queryKey: ['titles', searched, LIMIT],
     queryFn: () => noteTitles(searched, LIMIT),
@@ -30,10 +31,21 @@ export function QuickSwitcher({ onClose }: { onClose(): void }) {
     staleTime: 0,
   });
   const options = (titles.data ?? []).filter((note) => note.id !== openNoteId);
-  // True once the list on screen is the answer to what is in the box.
-  const settled = searched === term && titles.isSuccess && !titles.isPlaceholderData;
+  // Until the request for the text in the box is back, the list on screen is
+  // an older one: the answer to earlier text, or a cached copy being refreshed.
+  const waiting = searched !== term || titles.isFetching;
+  const settled = !waiting && titles.isSuccess;
   const { activeIndex, setActiveIndex, onArrowKey } = useActiveOption(options.length);
   const activeId = options[activeIndex]?.id;
+
+  // The highlight belongs to one list. When the answer to new text replaces
+  // the list, it starts at the top again, wherever the arrow keys had put it.
+  const answered = titles.isPlaceholderData ? undefined : searched;
+  const [listFor, setListFor] = useState(answered);
+  if (answered !== undefined && answered !== listFor) {
+    setListFor(answered);
+    setActiveIndex(0);
+  }
 
   const open = useCallback(
     (id: string) => {
@@ -45,18 +57,20 @@ export function QuickSwitcher({ onClose }: { onClose(): void }) {
     [location.pathname, location.search, navigate, onClose],
   );
 
+  // An early Enter is carried out when the answer arrives, on the row that is
+  // highlighted then, and forgotten when the request fails.
   useEffect(() => {
-    if (!settled || !enterPending.current) return;
+    if (waiting || !enterPending.current) return;
     enterPending.current = false;
-    if (activeId) open(activeId);
-  }, [settled, activeId, open]);
+    if (settled && activeId) open(activeId);
+  }, [waiting, settled, activeId, open]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (onArrowKey(event)) return;
     if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (!settled) enterPending.current = true;
-    else if (activeId) open(activeId);
+    if (waiting) enterPending.current = true;
+    else if (settled && activeId) open(activeId);
   };
 
   return (
