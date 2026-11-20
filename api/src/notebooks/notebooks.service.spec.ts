@@ -16,15 +16,26 @@ describe('NotebooksService', () => {
   beforeEach(() => {
     prisma = createPrismaMock();
     service = new NotebooksService(asPrismaService(prisma));
+    prisma.note.groupBy.mockResolvedValue([]);
   });
 
   describe('list', () => {
-    it('returns notebooks with the number of their notes, leaving out the trash and templates', async () => {
-      prisma.notebook.findMany.mockResolvedValue([{ ...notebook('work'), _count: { notes: 3 } }]);
+    it('returns notebooks with the number of their notes and, apart, of their templates', async () => {
+      prisma.notebook.findMany.mockResolvedValue([
+        { ...notebook('work'), _count: { notes: 3 } },
+        { ...notebook('home'), _count: { notes: 0 } },
+      ]);
+      prisma.note.groupBy.mockResolvedValue([{ notebookId: 'home', _count: { _all: 1 } }]);
       const result = await service.list(USER);
       expect(result).toEqual([
-        { id: 'work', name: 'work', parentId: null, createdAt: now, updatedAt: now, noteCount: 3 },
+        { id: 'work', name: 'work', parentId: null, createdAt: now, updatedAt: now, noteCount: 3, templateCount: 0 },
+        { id: 'home', name: 'home', parentId: null, createdAt: now, updatedAt: now, noteCount: 0, templateCount: 1 },
       ]);
+      expect(prisma.note.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: USER, deletedAt: null, isTemplate: true, notebookId: { not: null } },
+        }),
+      );
       expect(prisma.notebook.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: USER },

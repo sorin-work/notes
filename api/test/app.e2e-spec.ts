@@ -1257,7 +1257,8 @@ describe('templates and copies', () => {
     expect(ids(await get('/api/notes/titles?q=Weekly'))).toEqual([]);
     expect(ids(await get('/api/notes/titles'))).toEqual([target.id]);
     expect(await get(`/api/notes/${target.id}/backlinks`)).toEqual([]);
-    expect((await get('/api/notebooks'))[0].noteCount).toBe(0);
+    // The notebook counts it apart, so that deleting the notebook can say a template goes with it.
+    expect(await get('/api/notebooks')).toMatchObject([{ noteCount: 0, templateCount: 1 }]);
     expect(await get('/api/tags')).toEqual([]);
     // It has a list of its own, is still a note by its id, and a link to its title still leads to it.
     expect(ids((await get('/api/notes?templates=true')).items)).toEqual([template.id]);
@@ -1286,11 +1287,11 @@ describe('templates and copies', () => {
     expect(ids(await get(`/api/notes/${target.id}/backlinks`))).toEqual([made.id]);
 
     // Without values the placeholders stay as written: the server does not guess the day.
-    // The note is named after the template, less the closing "template".
+    // Nor the title: the note does not take the template's, it starts untitled.
     const unfilled = await post('/api/notes', { templateId: template.id });
-    expect(unfilled.title).toBe('Weekly review');
+    expect(unfilled.title).toBe('Untitled');
     expect(unfilled.content).toContain('Week ending {{date}}, written at {{ time }}.');
-    expect(unfilled.content).toContain('# Weekly review\n');
+    expect(unfilled.content).toContain('# {{title}}\n');
 
     // Only a template of one's own can be used, and only the known placeholders are taken.
     const body = { templateId: template.id };
@@ -1310,6 +1311,39 @@ describe('templates and copies', () => {
     await request(server).delete(`/api/notes/${template.id}`).set(auth).expect(204);
     await request(server).post('/api/notes').set(auth).send(body).expect(404);
     expect(ids((await get('/api/notes?templates=true')).items)).toEqual([]);
+  });
+
+  it('leads a link to a note before a template of the same title, and renames links in templates too', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body;
+    const resolve = async (title: string) =>
+      (await request(server).get('/api/notes/resolve').query({ title }).set(auth).expect(200)).body.id;
+
+    const meeting = await post({ title: 'Meeting notes', content: 'The real one.' });
+    const template = await post({ title: 'Meeting notes', content: 'Agenda for [[Atlas]].', isTemplate: true });
+    const linking = await post({ title: 'Monday', content: 'See [[Meeting notes]].' });
+    // The template was edited last, and still the link leads to the note.
+    await request(server).patch(`/api/notes/${template.id}`).set(auth).send({ content: 'Agenda for [[Atlas]]!' });
+    expect(await resolve('meeting notes')).toBe(meeting.id);
+    const links = await request(server).get(`/api/notes/${linking.id}/links`).set(auth).expect(200);
+    expect(links.body).toEqual([{ title: 'Meeting notes', noteId: meeting.id }]);
+    // With the note gone, the template is what the title leads to.
+    await request(server).delete(`/api/notes/${meeting.id}`).set(auth).expect(204);
+    expect(await resolve('Meeting notes')).toBe(template.id);
+
+    // The notes made from a template later should not start with a link to an old title.
+    const atlas = await post({ title: 'Atlas' });
+    await request(server).patch(`/api/notes/${atlas.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+    const renamed = await request(server)
+      .post(`/api/notes/${atlas.id}/rename-links`)
+      .set(auth)
+      .send({ from: 'Atlas' })
+      .expect(200);
+    expect(renamed.body).toMatchObject({ updated: 1, noteIds: [template.id] });
+    const after = await request(server).get(`/api/notes/${template.id}`).set(auth).expect(200);
+    expect(after.body).toMatchObject({ content: 'Agenda for [[Project Atlas]]!', isTemplate: true });
   });
 
   it('duplicates a note with its text, tags and notebook, and leaves the rest behind', async () => {

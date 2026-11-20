@@ -9,12 +9,13 @@ import { useAuth } from '../auth/AuthContext';
 import { todaysNote } from '../lib/days';
 import { dropStashes } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
-import { notebookTree, totalNotes } from '../lib/notebooks';
+import { notebookTree, totalNotes, trashedWith } from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
+import { ErrorMessage } from './States';
 
 type NotebookAction =
   | { kind: 'create'; parentId: string | null }
@@ -29,6 +30,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [params] = useSearchParams();
   const [action, setAction] = useState<NotebookAction | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [chosenTemplate, setChosenTemplate] = useState('');
 
   // Once the session has ended nothing can be saved, so what is unsaved goes
   // first. If that does not work, signing out would throw it away, and that
@@ -57,13 +59,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const newNote = useMutation({
     mutationFn: (start: NoteChanges | void) => createNote(start ?? newNoteFor(shown)),
-    onSuccess: (note) => {
+    onSuccess: (note, start) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
       void queryClient.invalidateQueries({ queryKey: ['tags'] });
+      setChosenTemplate('');
       // A note is not shown in the list of templates, so that view is left behind.
       const search = onNotes && !note.isTemplate ? leavingTemplates(location.search) : onNotes ? location.search : '';
-      navigate({ pathname: `/notes/${note.id}`, search });
+      // A note from a template starts untitled, so the cursor goes to its title.
+      navigate({ pathname: `/notes/${note.id}`, search }, { state: start?.templateId ? { focusTitle: true } : null });
       onNavigate?.();
     },
   });
@@ -130,24 +134,35 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           + New note
         </button>
         {templates.data && templates.data.items.length > 0 && (
-          <select
+          // Choosing is not creating: the arrow keys on a closed select change
+          // it at once, so the note is made only by the button.
+          <form
             className="new-from-template"
-            aria-label="New from template"
-            value=""
-            disabled={newNote.isPending}
-            onChange={(event) => {
+            onSubmit={(event) => {
+              event.preventDefault();
               // The new note goes into the notebook that is being looked at. Its tags come from the template.
-              if (event.target.value) newNote.mutate(fromTemplate(event.target.value, newNoteFor(shown).notebookId));
+              if (chosenTemplate) newNote.mutate(fromTemplate(chosenTemplate, newNoteFor(shown).notebookId));
             }}
           >
-            <option value="">New from template…</option>
-            {templates.data.items.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.title}
-              </option>
-            ))}
-          </select>
+            <select
+              aria-label="New from template"
+              value={chosenTemplate}
+              disabled={newNote.isPending}
+              onChange={(event) => setChosenTemplate(event.target.value)}
+            >
+              <option value="">New from template…</option>
+              {templates.data.items.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.title}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="button" disabled={!chosenTemplate || newNote.isPending}>
+              Create
+            </button>
+          </form>
         )}
+        {newNote.error && <ErrorMessage error={newNote.error} />}
         <form role="search" onSubmit={submitSearch}>
           <input
             type="search"
@@ -312,7 +327,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               The notebook
               {tree.some((n) => n.id === action.notebook.id && n.children.length > 0) &&
                 ' and the notebooks inside it'}{' '}
-              will be deleted. Its notes move to the trash, where you can restore them for 30 days.
+              will be deleted. {trashedWith(notebooks.data ?? [], action.notebook.id)}
             </p>
           }
           confirmLabel="Delete notebook"

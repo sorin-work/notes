@@ -61,9 +61,21 @@ describe('Sidebar', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Delete Work' }));
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveTextContent('and the notebooks inside it');
-    expect(dialog).toHaveTextContent('notes move to the trash');
+    expect(dialog).toHaveTextContent('3 notes move to the trash');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Delete notebook' }));
     expect(calls.some((call) => call.method === 'DELETE' && call.url === '/api/notebooks/w')).toBe(true);
+  });
+
+  it('says that the templates in a notebook go to the trash with it', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: [notebook({ id: 'f', name: 'Forms', templateCount: 2 })] },
+      'GET /api/tags': { body: [] },
+    });
+    renderSidebar();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete Forms' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('2 templates move to the trash');
   });
 
   it('creates a notebook inside another one', async () => {
@@ -96,7 +108,12 @@ describe('Sidebar', () => {
     const choice = await screen.findByRole('combobox', { name: 'New from template' });
     await expectNoAxeViolations({ part: true });
     expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('templates=true');
+    // Choosing alone makes nothing, as the arrow keys on a closed select choose too.
     await userEvent.selectOptions(choice, 'Weekly review template');
+    choice.focus();
+    await userEvent.keyboard('{ArrowUp}{ArrowDown}');
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
@@ -107,6 +124,21 @@ describe('Sidebar', () => {
         time: expect.stringMatching(/^\d{2}:\d{2}$/),
       },
     });
+  });
+
+  it('says why no note was made from a template', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: notebooks },
+      'GET /api/tags': { body: [] },
+      'GET /api/notes': { body: { items: [summary({ id: 't1', title: 'Weekly review template' })], total: 1 } },
+      'POST /api/notes': { status: 404, body: { statusCode: 404, message: 'Template not found' } },
+    });
+    renderSidebar();
+
+    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'New from template' }), 't1');
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Template not found');
   });
 
   it('offers no template to choose from when there is none', async () => {

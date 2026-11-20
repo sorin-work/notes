@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { Link, Route, Routes, useParams } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
@@ -95,7 +95,8 @@ describe('NoteEditor', () => {
     await userEvent.clear(textarea);
     await userEvent.type(textarea, 'See [[[[Wee');
     const option = await screen.findByRole('option', { name: 'Weekly sync' });
-    expect(screen.getByRole('option', { name: /New note Wee/ })).toBeInTheDocument();
+    // Offered once it is known that no note, and no template, has that title.
+    expect(await screen.findByRole('option', { name: /New note Wee/ })).toBeInTheDocument();
     // The text field tells a screen reader where the list is and which option is highlighted.
     expect(textarea).toHaveAttribute('aria-controls', screen.getByRole('listbox', { name: 'Link to note' }).id);
     expect(textarea).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'Weekly review' }).id);
@@ -107,6 +108,30 @@ describe('NoteEditor', () => {
     expect(textarea).toHaveValue('See [[Weekly sync]]');
     expect(textarea).not.toHaveAttribute('aria-controls');
     expect(textarea).not.toHaveAttribute('aria-activedescendant');
+  });
+
+  it('offers no new note for the title of a template, which a link already leads to', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/titles': { body: [] },
+        'GET /api/notes/resolve': { body: { id: 't1', title: 'Weekly review template' } },
+      }),
+    );
+    renderEditor();
+
+    const textarea = await screen.findByLabelText('Note content');
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, 'See [[[[weekly review template');
+    await waitFor(() => expect(calls.some((call) => call.url.startsWith('/api/notes/resolve?'))).toBe(true));
+    await waitFor(() => expect(calls.filter((call) => call.url.startsWith('/api/notes/titles?'))).not.toHaveLength(0));
+    expect(screen.queryByRole('option', { name: /New note/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('puts the cursor in the title of a note made from a template', async () => {
+    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ title: 'Untitled' }) } }));
+    renderEditor({ focusTitle: true });
+    await waitFor(() => expect(screen.getByLabelText('Title')).toHaveFocus());
   });
 
   it('ticks tasks from the preview and saves the change like typed text', async () => {
@@ -820,7 +845,8 @@ describe('NoteEditor', () => {
         'POST /api/notes': { body: note({ id: 'n2', title: 'Project Atlas' }) },
       }),
     );
-    renderEditor();
+    const { queryClient } = renderEditor();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const toggle = await screen.findByRole('button', { name: 'Template' });
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     expect(screen.queryByText(/This is a template/)).not.toBeInTheDocument();
@@ -829,6 +855,9 @@ describe('NoteEditor', () => {
     await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'));
     // No title, no content and no revision: like a pin, it cannot conflict with typing.
     expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({ isTemplate: true });
+    // A template is no backlink and no link suggestion, so neither waits for its cache time.
+    const refreshed = invalidate.mock.calls.map(([filters]) => filters?.queryKey?.[0]);
+    expect(refreshed).toEqual(expect.arrayContaining(['backlinks', 'titles']));
 
     expect(screen.getByText(/This is a template/)).toBeInTheDocument();
     await expectNoAxeViolations({ part: true });

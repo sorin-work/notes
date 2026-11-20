@@ -170,7 +170,7 @@ describe('NotesService', () => {
       });
 
       it('copies the text and the tags with the placeholders filled in, and nothing else', async () => {
-        await service.create(USER, { templateId: 't1', placeholders, notebookId: 'nb' });
+        await service.create(USER, { templateId: 't1', title: 'Friday', placeholders, notebookId: 'nb' });
 
         // Only a template of this user, outside the trash, can be used.
         expect(prisma.note.findFirst.mock.calls[0][0].where).toEqual({
@@ -179,12 +179,12 @@ describe('NotesService', () => {
           isTemplate: true,
           id: 't1',
         });
-        const content = '# Weekly review 2026-11-20\n\nWritten at 19:30, see [[Deep Work]]. {{mood}}';
+        const content = '# Friday\n\nWritten at 19:30, see [[Deep Work]]. {{mood}}';
         // The new note is a note: not a template, not pinned, no star.
         expect(prisma.note.create).toHaveBeenCalledWith({
           data: {
             userId: USER,
-            title: 'Weekly review 2026-11-20',
+            title: 'Friday',
             content,
             notebookId: 'nb',
             pinned: false,
@@ -206,17 +206,13 @@ describe('NotesService', () => {
         expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'new', ['mine']);
       });
 
-      it('names the note after the template, without a closing "template"', async () => {
-        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'Weekly review  Template' });
-        await service.create(USER, { templateId: 't1' });
+      it('never takes its title from the template: without one the note is untitled', async () => {
+        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'How to write a template' });
+        await service.create(USER, { templateId: 't1', title: '   ' });
         expect(prisma.note.create.mock.calls[0][0].data).toMatchObject({
-          title: 'Weekly review',
-          content: '# Weekly review\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
+          title: 'Untitled',
+          content: '# {{title}}\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
         });
-
-        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'Template' });
-        await service.create(USER, { templateId: 't1' });
-        expect(prisma.note.create.mock.calls[1][0].data.title).toBe('Template');
       });
 
       it('404s when the template is not there, is not a template or is someone else’s', async () => {

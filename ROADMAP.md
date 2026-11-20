@@ -437,10 +437,12 @@ A note titled with the day by hand, in any format, is taken for the note of
 that day. The notebook, the template and the date format are a small
 validated `preferences` JSON on `User`, read with `GET /auth/me` and written
 through `PATCH /auth/preferences`. Theme and editor mode stay in
-`localStorage`. Beyond the design: a note is named after its template without
-a closing "template", a link to a template's title still leads to it,
-renaming a note also updates the links in templates, and export and import
-keep the template flag. Still open: placeholders are also filled inside code,
+`localStorage`. A note from a template starts untitled with the cursor in its
+title, and `{{title}}` is only filled with a title that is given. Beyond the
+design: a link to a template's title still leads to it unless a note has that
+title, renaming a note also updates the links in templates, notebooks count
+their templates apart so that deleting one can say they go too, and export
+and import keep the template flag. Still open: placeholders are also filled inside code,
 a template can still be shared by a link like any note, there is no page that
 lists the daily notes or steps from one day to the next, and `{{date}}` does
 not follow the chosen date format.
