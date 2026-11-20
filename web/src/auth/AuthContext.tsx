@@ -1,11 +1,23 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as authApi from '../api/auth';
-import { getToken, onTokenRemovedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
+import { ApiError, getToken, onTokenRemovedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
 import { clearNotices } from '../lib/notices';
+import {
+  dropOfflineCache,
+  dropOtherOfflineCaches,
+  keepOffline,
+  type OfflineCache,
+  readRecord,
+  tokenUserId,
+} from '../lib/offlineCache';
 
-type Status = 'loading' | 'signed-in' | 'signed-out';
+/**
+ * `offline`: there is a token, but the server cannot be reached and this
+ * browser has nothing kept for the user, so there is nothing to show yet.
+ */
+type Status = 'loading' | 'signed-in' | 'signed-out' | 'offline';
 
 interface AuthContextValue {
   status: Status;
@@ -21,19 +33,53 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const unreachable = (error: unknown) => error instanceof ApiError && error.status === 0;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<Status>(() => (getToken() ? 'loading' : 'signed-out'));
+  // Whose notes are being kept on disk right now, and the handle that stops it.
+  const kept = useRef<{ userId: string; cache: Promise<OfflineCache> } | null>(null);
+
+  // A function, so that TypeScript does not take the value read before an await for the one after it.
+  const keptUser = () => kept.current?.userId ?? null;
+
+  const stopKeeping = useCallback(() => {
+    const current = kept.current;
+    kept.current = null;
+    void current?.cache.then((cache) => cache.stop());
+    return current?.userId ?? null;
+  }, []);
+
+  /** Starts keeping `who`'s notes and reads back what was kept. Anyone else's copy goes. */
+  const startKeeping = useCallback(
+    async (who: User) => {
+      if (kept.current?.userId === who.id) return;
+      stopKeeping();
+      const entry = { userId: who.id } as { userId: string; cache: Promise<OfflineCache> };
+      entry.cache = dropOtherOfflineCaches(who.id).then(() =>
+        keepOffline(queryClient, who, () => kept.current === entry),
+      );
+      kept.current = entry;
+      const cache = entry.cache;
+      await cache;
+    },
+    [queryClient, stopKeeping],
+  );
 
   const logout = useCallback(() => {
+    // The user whose notes are on disk: the one shown, or else the one the token names.
+    const userId = stopKeeping() ?? tokenUserId(getToken());
     setToken(null);
     setUser(null);
     setStatus('signed-out');
     queryClient.clear();
+    // The copy on disk goes as well, after any write that was already on its way.
+    if (userId) void dropOfflineCache(userId);
     // Notices name notes. Whoever signs in next at this screen should not read them.
     clearNotices();
-  }, [queryClient]);
+  }, [queryClient, stopKeeping]);
 
   useEffect(() => {
     setUnauthorizedHandler(logout);
@@ -43,29 +89,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Signing out in one tab signs out the others, cached notes included.
   useEffect(() => onTokenRemovedElsewhere(logout), [logout]);
 
+  // Who is signed in. Without a connection, the user kept with the notes on
+  // this browser stands in until the server can be asked again.
   useEffect(() => {
     if (!getToken()) return;
     let cancelled = false;
-    authApi
-      .me()
-      .then((me) => {
-        if (cancelled) return;
-        setUser(me);
-        setStatus('signed-in');
-      })
-      .catch(() => {
-        if (!cancelled) logout();
-      });
+    let waitingForNetwork = false;
+
+    const ask = () => {
+      authApi
+        .me()
+        .then(async (me) => {
+          if (cancelled) return;
+          await startKeeping(me);
+          if (cancelled || keptUser() !== me.id) return;
+          setUser(me);
+          setStatus('signed-in');
+        })
+        .catch(async (error: unknown) => {
+          if (cancelled) return;
+          if (!unreachable(error)) {
+            logout();
+            return;
+          }
+          if (!waitingForNetwork) {
+            waitingForNetwork = true;
+            window.addEventListener('online', retry);
+          }
+          const known = kept.current ? null : await readRecord(tokenUserId(getToken()) ?? '');
+          if (cancelled || kept.current) return;
+          if (known) {
+            await startKeeping(known.user);
+            if (cancelled || keptUser() !== known.user.id) return;
+            setUser(known.user);
+            setStatus('signed-in');
+          } else {
+            setStatus('offline');
+          }
+        });
+    };
+    const retry = () => {
+      if (getToken()) ask();
+    };
+    ask();
     return () => {
       cancelled = true;
+      window.removeEventListener('online', retry);
     };
-  }, [logout]);
+  }, [logout, startKeeping]);
 
-  const signedIn = useCallback((result: AuthResult) => {
-    setToken(result.token);
-    setUser(result.user);
-    setStatus('signed-in');
-  }, []);
+  const signedIn = useCallback(
+    async (result: AuthResult) => {
+      setToken(result.token);
+      await startKeeping(result.user);
+      setUser(result.user);
+      setStatus('signed-in');
+    },
+    [startKeeping],
+  );
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -75,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register: async (name, email, password) => signedIn(await authApi.register(name, email, password)),
       logout,
       updateUser: setUser,
-      renewSession: signedIn,
+      renewSession: (result) => void signedIn(result),
     }),
     [status, user, signedIn, logout],
   );
