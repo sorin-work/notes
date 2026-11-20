@@ -8,6 +8,7 @@ import { INestApplication, RequestMethod, Type } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { DiscoveryModule, DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import JSZip from 'jszip';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -1232,7 +1233,7 @@ describe('notes made offline', () => {
     const { auth } = await signUp();
     const other = await signUp();
     const server = app.getHttpServer();
-    const id = '0b7c6a52-6f43-4c1e-9d1f-2b3a4c5d6e7f';
+    const id = randomUUID();
 
     const made = await request(server).post('/api/notes').set(auth).send({ id, title: 'On the train', content: 'x' });
     expect(made.status).toBe(201);
