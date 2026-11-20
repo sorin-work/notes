@@ -89,10 +89,53 @@ const VOID = new Set([
  * written out as an opening and a closing tag first.
  */
 function closeSelfClosing(html: string): string {
-  return html.replace(/<([a-zA-Z][\w:-]*)(\s[^<>]*?)?\s*\/>/g, (tag, name: string, attributes = '') =>
-    VOID.has(name.toLowerCase()) ? tag : `<${name}${attributes}></${name}>`,
-  );
+  // A scanner and not a regular expression: every character is looked at a
+  // bounded number of times, whatever the input, so a hostile note cannot
+  // make this take longer than reading it.
+  let out = '';
+  let copied = 0;
+  let i = html.indexOf('<');
+  while (i !== -1 && i < html.length) {
+    let j = i + 1;
+    if (!/[a-zA-Z]/.test(html[j] ?? '')) {
+      i = html.indexOf('<', j);
+      continue;
+    }
+    while (j < html.length && /[\w:-]/.test(html[j])) j++;
+    const name = html.slice(i + 1, j);
+    // Up to the end of the tag, past quoted values. Another "<" outside quotes means this was no tag.
+    let quote: string | null = null;
+    let end = -1;
+    for (; j < html.length; j++) {
+      const char = html[j];
+      if (quote) {
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") {
+        quote = char;
+      } else if (char === '>') {
+        end = j;
+        break;
+      } else if (char === '<') {
+        break;
+      }
+    }
+    if (end === -1) {
+      // No end: nothing up to here can close a tag that started earlier, so go on from here.
+      i = j < html.length ? j : -1;
+      continue;
+    }
+    let k = end - 1;
+    while (k > i && /\s/.test(html[k])) k--;
+    if (html[k] === '/' && !VOID.has(name.toLowerCase())) {
+      out += `${html.slice(copied, k)}></${name}>`;
+      copied = end + 1;
+    }
+    i = html.indexOf('<', end + 1);
+  }
+  return out + html.slice(copied);
 }
+
+export { closeSelfClosing };
 
 export function htmlToMarkdown(html: string): string {
   return (
