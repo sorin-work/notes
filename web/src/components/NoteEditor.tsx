@@ -606,7 +606,6 @@ function LoadedEditor({ note }: { note: Note }) {
       )}
       {dialog === 'conflict' && theirs && (
         <ConflictDialog
-          theirs={theirs}
           onKeepBoth={() => resolveConflict('both')}
           onKeepMine={() => resolveConflict('mine')}
           onTakeTheirs={() => resolveConflict('theirs')}

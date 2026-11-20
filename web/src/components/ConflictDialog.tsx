@@ -1,10 +1,6 @@
-import type { Note } from '../api/types';
-import { formatRelative } from '../lib/dates';
 import { Modal } from './Modal';
 
 interface Props {
-  /** The note as it was saved from somewhere else. */
-  theirs: Note;
   onKeepBoth(): void;
   onKeepMine(): void;
   onTakeTheirs(): void;
@@ -13,13 +9,13 @@ interface Props {
 }
 
 /** Asked when a save was refused because the note changed in another tab or on another device. */
-export function ConflictDialog({ theirs, onKeepBoth, onKeepMine, onTakeTheirs, onClose }: Props) {
+export function ConflictDialog({ onKeepBoth, onKeepMine, onTakeTheirs, onClose }: Props) {
   return (
     <Modal title="This note was changed somewhere else" onClose={onClose}>
       <div className="confirm-message">
         <p>
-          Another tab or device saved it {formatRelative(theirs.updatedAt)}, while you were editing here. Your text is
-          still in the editor, but it is not saved.
+          It was saved from another tab or device while you were editing here. Your text is still in the editor, but it
+          is not saved.
         </p>
       </div>
       <ul className="conflict-choices">
