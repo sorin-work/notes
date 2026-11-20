@@ -29,7 +29,9 @@ Markdown import/export.
   highlighted.
 - **Version history**: while you edit, the previous text is saved as a
   version at most every ten minutes (the last 50 are kept). Any version can be
-  previewed and restored; restoring saves the current text first.
+  previewed and restored; restoring saves the current text first. The Changes
+  view shows line by line what differs between a version and the note as it
+  is now, with a changed title above it.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
 - **Share links**: a read-only public page for a single note at `/s/<token>`,
@@ -175,7 +177,7 @@ web/
     auth/               auth context and route guards
     components/         editor, preview, sidebar, dialogs
     hooks/              autosave, theme and small state helpers
-    lib/                wiki links, task lists, dates, text helpers
+    lib/                wiki links, task lists, line diff, dates, text helpers
     pages/              one component per route
 ```
 
@@ -192,6 +194,13 @@ ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
 notebooks do not create versions. Ticking a task box in the preview changes
 the text, so it counts as an edit.
+
+The Changes view in the history compares a version with what is in the
+editor at that moment, saved or not. Lines marked `-` are only in the
+version, lines marked `+` only in the note now, and long unchanged stretches
+are left out. Line endings are not compared. A long note is compared too when
+only part of it changed, but past about 3,000 changed lines on both sides the
+view says so and shows no diff.
 
 ## API overview
 
