@@ -624,15 +624,19 @@ The parser is slow on some notes, seconds or more for a small one built to
 trip it, so it never runs on the thread that answers requests. Two worker
 threads parse, and each parse gets half a second. A worker that takes longer
 is stopped and replaced, and the note offers no mentions until it is edited:
-the verdict is kept by note and revision, and so is the tree of a note that
-was parsed, so each revision is parsed once. Before that, a note longer than
-100,000 characters, with more than 2,000 closing brackets, or with quotes or
-lists nested more than 16 deep is not parsed at all, and a note that does not
-write the title is passed over. One request parses at most 1,000,000
-characters and spends at most a second on it. Past either limit the list stops
-and says it may be missing some notes. One account runs two mention requests
-at a time, and a third answers 429. The list is loaded when a note is opened
-and after its title changes, not after every save.
+the verdict is kept by account, note, revision and a hash of the text, and so
+is the tree of a note that was parsed, so each revision is parsed once. Both
+caches are bounded by an estimate of the memory they take, and each worker by
+256 MB. A note waits at most two seconds in all for a worker, and at most 32
+wait at a time. Past either, the list answers 503 (try again in a moment), and
+Link answers 400 or 429. Before that, a note longer than 100,000 characters,
+with more than 2,000 closing brackets, or with quotes or lists nested more
+than 16 deep is not parsed at all, and a note that does not write the title is
+passed over. One request parses at most 1,000,000 characters and spends at
+most a second on it. Past either limit the list stops and says it may be
+missing some notes. One account runs two mention requests at a time, and a
+third answers 429. The list is loaded when a note is opened and after its
+title changes, not after every save.
 
 The list shows the line of the mention that the Link button will wrap, and
 only mentions that Link will take: the first one in each note for which it
