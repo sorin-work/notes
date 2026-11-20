@@ -62,7 +62,11 @@ Markdown import/export.
   Stopping sharing kills the link; notes in the trash are never served.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
-  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault or a
+  Notion export (page ids are stripped and links between pages become
+  `[[wiki links]]`), and Evernote `.enex` files (each file becomes a notebook,
+  attachments are left out). Importing the same files again leaves out the
+  notes that are there already.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
@@ -394,7 +398,7 @@ api/
     trash/              trash, restore and the hourly purge
     search/             Postgres full-text search
     shares/             read-only share links
-    transfer/           zip export, Markdown import, front matter
+    transfer/           zip export, Markdown/Evernote/Notion import
     mail/               outgoing mail over SMTP
     seed/               demo account
     common/, config/    shared helpers and environment configuration
@@ -631,6 +635,21 @@ becomes `Private plan`, with `links: {}`.
 `GET /notes/:id` and `GET /notebooks` carry `sharedThrough`, the notebook
 whose live link makes the note or notebook public, or `null`.
 
+`POST /import` takes up to 50 files as `files`, 20 MB each, and the form
+field `skipExisting` (`true` unless `false` is sent), which leaves out notes
+whose title, notebook and text the account already has. The answer counts
+what was imported, the notebooks made, the notes left out as `duplicates`
+and the Evernote attachments that were not imported, and lists every file it
+skipped with the reason. Imported notes get the same limits as typed ones
+and their links are synced. Their text is stored as Markdown and never shown
+as HTML. Zips are read within limits: 10,000 entries, 12 folders deep, 4 MB
+unpacked per file and 100 MB per import, counted while unpacking. An entry
+whose path leads out of the zip is skipped, and a zip inside a zip is not
+opened. An `.enex` file is read without its DTD: one that declares a DTD of
+its own, or uses an entity beyond XML's five, is refused. Front matter is
+read as YAML with the core schema only (no custom tags, no aliases); a block
+that is not clean YAML stays at the top of the note as text.
+
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
 | Method & path                                | What it does                              |
@@ -640,4 +659,4 @@ The endpoints a script is most likely to want. The rest is in `/api/docs`.
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
 | `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
 | `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
-| `POST /import`                               | Markdown, text or zip files, as `files`   |
+| `POST /import`                               | Markdown, text, `.enex` or zip, `files`   |
