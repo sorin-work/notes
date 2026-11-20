@@ -814,6 +814,143 @@ describe('editing in two places', () => {
   });
 });
 
+describe('templates and copies', () => {
+  it('keeps a template out of the lists and makes notes from it with the placeholders filled in', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object = {}, headers = auth) =>
+      (await request(server).post(path).set(headers).send(body).expect(201)).body;
+    const get = async (path: string) => (await request(server).get(path).set(auth).expect(200)).body;
+    const ids = (items: { id: string }[]) => items.map((item) => item.id);
+
+    const notebook = await post('/api/notebooks', { name: 'Work' });
+    const target = await post('/api/notes', { title: 'Deep Work', content: 'A book.' });
+    const template = await post('/api/notes', {
+      title: 'Weekly review template',
+      content: '# {{title}}\n\nWeek ending {{date}}, written at {{ time }}. {{mood}}\n\nInspired by [[Deep Work]].',
+      notebookId: notebook.id,
+      tags: ['review'],
+      pinned: true,
+    });
+    await request(server).post(`/api/notes/${template.id}/share`).set(auth).expect(200);
+    expect(ids(await get(`/api/notes/${target.id}/backlinks`))).toEqual([template.id]);
+
+    // Making it a template is no edit: same revision, same "last edited".
+    const marked = await request(server).patch(`/api/notes/${template.id}`).set(auth).send({ isTemplate: true });
+    expect(marked.body).toMatchObject({ isTemplate: true, revision: 0, updatedAt: template.updatedAt });
+
+    // Gone from everything that lists notes, through the one shared condition.
+    expect(ids((await get('/api/notes')).items)).toEqual([target.id]);
+    expect(ids((await get('/api/notes?pinned=true')).items)).toEqual([]);
+    expect(ids((await get('/api/search?q=weekly')).items)).toEqual([]);
+    expect(ids(await get('/api/notes/titles?q=Weekly'))).toEqual([]);
+    expect(ids(await get('/api/notes/titles'))).toEqual([target.id]);
+    expect(await get(`/api/notes/${target.id}/backlinks`)).toEqual([]);
+    expect((await get('/api/notebooks'))[0].noteCount).toBe(0);
+    expect(await get('/api/tags')).toEqual([]);
+    // It has a list of its own, is still a note by its id, and a link to its title still leads to it.
+    expect(ids((await get('/api/notes?templates=true')).items)).toEqual([template.id]);
+    expect((await get(`/api/notes/${template.id}`)).isTemplate).toBe(true);
+    expect((await get('/api/notes/resolve?title=weekly%20review%20template')).id).toBe(template.id);
+
+    // A note from the template: text and tags with the placeholders filled in, and nothing else of it.
+    const made = await post('/api/notes', {
+      templateId: template.id,
+      title: 'Weekly review',
+      placeholders: { date: '2026-11-20', time: '19:30' },
+    });
+    expect(made).toMatchObject({
+      title: 'Weekly review',
+      content: '# Weekly review\n\nWeek ending 2026-11-20, written at 19:30. {{mood}}\n\nInspired by [[Deep Work]].',
+      tags: ['review'],
+      isTemplate: false,
+      pinned: false,
+      shared: false,
+      notebookId: null,
+      revision: 0,
+    });
+    expect(await get(`/api/notes/${made.id}/versions`)).toEqual([]);
+    // Its links are real links: the new note shows up as a backlink, the template still does not.
+    expect(await get(`/api/notes/${made.id}/links`)).toEqual([{ title: 'Deep Work', noteId: target.id }]);
+    expect(ids(await get(`/api/notes/${target.id}/backlinks`))).toEqual([made.id]);
+
+    // Without values the placeholders stay as written: the server does not guess the day.
+    const unfilled = await post('/api/notes', { templateId: template.id });
+    expect(unfilled.title).toBe('Weekly review template');
+    expect(unfilled.content).toContain('Week ending {{date}}, written at {{ time }}.');
+    expect(unfilled.content).toContain('# Weekly review template');
+
+    // Only a template of one's own can be used, and only the known placeholders are taken.
+    const body = { templateId: template.id };
+    await request(server).post('/api/notes').set(other.auth).send(body).expect(404);
+    await request(server).post('/api/notes').set(auth).send({ templateId: target.id }).expect(404);
+    await request(server).post('/api/notes').set(auth).send({ templateId: 'nope' }).expect(400);
+    await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ ...body, placeholders: { author: 'me' } })
+      .expect(400);
+    await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ ...body, placeholders: { date: 'x\0' } })
+      .expect(400);
+    await request(server).delete(`/api/notes/${template.id}`).set(auth).expect(204);
+    await request(server).post('/api/notes').set(auth).send(body).expect(404);
+    expect(ids((await get('/api/notes?templates=true')).items)).toEqual([]);
+  });
+
+  it('duplicates a note with its text, tags and notebook, and leaves the rest behind', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object = {}) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+
+    const notebook = await post('/api/notebooks', { name: 'Work' });
+    const original = await post('/api/notes', {
+      title: 'Plan',
+      content: 'Due {{date}}, see [[Atlas]].',
+      notebookId: notebook.id,
+      tags: ['q1', 'work'],
+      pinned: true,
+      favorite: true,
+    });
+    await request(server)
+      .patch(`/api/notes/${original.id}`)
+      .set(auth)
+      .send({ content: 'Due {{date}}, see [[Atlas]]!' });
+    await request(server).post(`/api/notes/${original.id}/share`).set(auth).expect(200);
+
+    const copy = await post(`/api/notes/${original.id}/duplicate`);
+    expect(copy).toMatchObject({
+      title: 'Plan (copy)',
+      content: 'Due {{date}}, see [[Atlas]]!',
+      notebookId: notebook.id,
+      tags: ['q1', 'work'],
+      pinned: false,
+      favorite: false,
+      shared: false,
+      isTemplate: false,
+      revision: 0,
+    });
+    expect(copy.id).not.toBe(original.id);
+    const versions = await request(server).get(`/api/notes/${copy.id}/versions`).set(auth).expect(200);
+    expect(versions.body).toEqual([]);
+    const links = await request(server).get(`/api/notes/${copy.id}/links`).set(auth).expect(200);
+    expect(links.body).toEqual([{ title: 'Atlas', noteId: null }]);
+
+    // A copy of a template is a template.
+    await request(server).patch(`/api/notes/${original.id}`).set(auth).send({ isTemplate: true }).expect(200);
+    expect((await post(`/api/notes/${original.id}/duplicate`)).isTemplate).toBe(true);
+
+    await request(server).post(`/api/notes/${original.id}/duplicate`).set(other.auth).expect(404);
+    await request(server).delete(`/api/notes/${original.id}`).set(auth).expect(204);
+    await request(server).post(`/api/notes/${original.id}/duplicate`).set(auth).expect(409);
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
