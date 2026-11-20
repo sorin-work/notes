@@ -29,7 +29,8 @@ Markdown import/export.
   clicking one creates the note. Each note lists its **backlinks**, with the
   paragraph the link is in. Under them are its **unlinked mentions**: notes
   that write its title without linking to it, each with a Link button that
-  puts `[[ ]]` around the mention.
+  puts `[[ ]]` around the mention. After a note is renamed, the editor offers
+  to update the links other notes have to its old title.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted. Words in `"double quotes"` are a phrase: they have to follow
@@ -378,6 +379,30 @@ Link button changes the other note: its old text is saved as a version first,
 so the change can be undone from its history, and its "last edited" time
 stays as it was.
 
+When a rename leaves links dangling, the editor shows how many notes still
+link to the old title and offers to update them, naming both titles. The
+offer waits until the new title is finished: the cursor has left the title
+field and the title is saved. Nothing is rewritten before you click. The
+update changes only the title inside `[[ ]]`: a `#heading`, an `|alias` and
+links in code stay as they are. The rewritten notes keep their place in "last
+edited" lists, and each one gets a version first, so the change can be undone
+from its history.
+
+There is no offer, and nothing is rewritten:
+
+- while another note has the old title, since the links still lead somewhere;
+- when another note has the new title as well, since the links could then
+  lead to that one;
+- for a note left without a title, which is stored as "Untitled";
+- when the new title contains `[`, `]`, `|`, `#` or a backtick, which cannot
+  be written as a link.
+
+Notes in the trash and the links a note has to itself are left alone. A note
+that is being saved at that very moment, or that would grow past the size
+limit, is left as it is. The editor then says how many were left and keeps
+the offer. The offer is made in the editor where the rename happened and is
+gone once you leave the note.
+
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
@@ -437,6 +462,7 @@ sign-in page knows to hide the link.
 | `GET /notes/:id/backlinks`, `GET /notes/:id/links`                   | Backlinks and outgoing links              |
 | `GET /notes/:id/mentions`, `POST .../mentions/:sourceId/link`        | Unlinked mentions, link one               |
 | `GET /notes/titles?q=`, `GET /notes/resolve?title=`                  | Titles for links and the switcher, lookup |
+| `GET /notes/:id/rename-links?from=`, `POST .../rename-links`         | Count, then update, links to an old title |
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`           | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token`       | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]`       | Trash                                     |

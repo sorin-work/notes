@@ -12,6 +12,8 @@ export interface Backlink {
   context: string;
 }
 
+type RawQueries = Pick<Prisma.TransactionClient, '$queryRaw'>;
+
 export interface OutgoingLink {
   title: string;
   /** The note the link resolves to, or null when no note has that title. */
@@ -95,6 +97,28 @@ export class LinksService {
       note.outgoingLinks.map((link) => link.targetKey),
     );
     return note.outgoingLinks.map((link) => ({ title: link.targetTitle, noteId: targets.get(link.targetKey) ?? null }));
+  }
+
+  /**
+   * Whether a note outside the trash has this title, leaving the note
+   * `except` out of it. Links to a title lead somewhere only then. Pass the
+   * transaction as `db` to ask from inside one.
+   */
+  async titleTaken(
+    userId: string,
+    title: string,
+    { except = null, db = this.prisma }: { except?: string | null; db?: RawQueries } = {},
+  ): Promise<boolean> {
+    // The same comparison as in resolveKeys below.
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT id
+      FROM notes
+      WHERE user_id = ${userId}::uuid
+        AND deleted_at IS NULL
+        AND lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) = ${normalizeTitle(title)}
+        AND (${except}::uuid IS NULL OR id <> ${except}::uuid)
+      LIMIT 1`;
+    return rows.length > 0;
   }
 
   /** The most recently edited note outside the trash with this title. */

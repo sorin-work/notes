@@ -682,6 +682,16 @@ mark {
   margin-bottom: 0.6rem;
 }
 
+.banner-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  background: var(--accent-soft);
+  color: var(--text);
+  margin-top: 0.6rem;
+}
+
 .title-input {
   font-size: 1.6rem;
   font-weight: 650;
