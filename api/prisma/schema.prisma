@@ -172,11 +172,15 @@ model NoteVersion {
 }
 
 model ShareLink {
-  id        String   @id @default(uuid()) @db.Uuid
-  noteId    String   @unique @map("note_id") @db.Uuid
-  token     String   @unique
-  viewCount Int      @default(0) @map("view_count")
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String    @id @default(uuid()) @db.Uuid
+  noteId       String    @unique @map("note_id") @db.Uuid
+  token        String    @unique
+  viewCount    Int       @default(0) @map("view_count")
+  /// From this moment on the link answers like one that does not exist.
+  expiresAt    DateTime? @map("expires_at")
+  /// Set when readers have to give a password. Hashed like account passwords.
+  passwordHash String?   @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
