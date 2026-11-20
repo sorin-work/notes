@@ -8,6 +8,13 @@ function isTyping(target: EventTarget | null): boolean {
   return !!element && (element.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName));
 }
 
+/** Cmd+K on Apple devices, where Ctrl+K deletes to the end of the line in a text field. Ctrl+K everywhere else. */
+function isSwitcherKey(event: KeyboardEvent): boolean {
+  const apple = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  const modifier = apple ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  return modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k';
+}
+
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -15,23 +22,24 @@ export function Layout() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const mod = event.ctrlKey || event.metaKey;
-      if (event.key === '/' && !isTyping(event.target) && !mod) {
+      if (event.key === '/' && !isTyping(event.target) && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         setMenuOpen(true);
         document.getElementById('global-search')?.focus();
-      } else if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+      } else if (isSwitcherKey(event)) {
         // Unlike "/", this one has to work while typing: the editor is where it is used most.
+        // While another dialog is open it does nothing, and the key is left to the browser.
+        if (!switcherOpen && document.querySelector('[aria-modal="true"]')) return;
         event.preventDefault();
-        // The same key closes the switcher again, and it stays shut while another dialog is open.
-        const dialogOpen = document.querySelector('[aria-modal="true"]') !== null;
-        setSwitcherOpen(!dialogOpen);
-        if (!dialogOpen) setMenuOpen(false);
+        // Holding the key down must not open and close the dialog over and over.
+        if (event.repeat) return;
+        setSwitcherOpen(!switcherOpen);
+        if (!switcherOpen) setMenuOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [switcherOpen]);
 
   return (
     <div className={menuOpen ? 'app menu-open' : 'app'}>
