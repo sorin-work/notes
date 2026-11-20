@@ -95,7 +95,7 @@ describe('renameLinks', () => {
     expect(renameLinks(markdown, '  ', 'New')).toBe(markdown);
   });
 
-  it('rewrites exactly the links to the old title in generated notes', () => {
+  it('rewrites exactly the links to the old title in notes put together at random', () => {
     // Each piece is paired with what it has to become. Pieces are joined with
     // spaces and line endings, so none can change what its neighbour means.
     const pieces: [string, string][] = [
