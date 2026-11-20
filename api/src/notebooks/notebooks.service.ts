@@ -199,15 +199,56 @@ export class NotebooksService {
   }
 
   /**
+   * The notebook at `path`, a list of names from the top down, made where it
+   * is missing: what an import needs for each folder. Names match the way
+   * they are kept unique, ignoring case. It runs inside the caller's
+   * transaction `tx` and takes the lock of lockTree first, so a move or
+   * another import cannot change the tree while it walks down, and it
+   * refuses a path deeper than notebooks nest. Returns null for an empty
+   * path, and how many notebooks it made.
+   */
+  async findOrCreatePath(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    path: string[],
+  ): Promise<{ id: string | null; created: number }> {
+    if (path.length > MAX_NOTEBOOK_DEPTH) {
+      throw new BadRequestException(TOO_DEEP);
+    }
+    if (path.length === 0) return { id: null, created: 0 };
+    await this.lock(tx, userId);
+    let parentId: string | null = null;
+    let created = 0;
+    // From the top down, so each notebook found sits exactly at the level of its name in the path.
+    for (const name of path) {
+      const existing: { id: string } | null = await tx.notebook.findFirst({
+        where: { userId, parentId, name: { equals: name, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (existing) {
+        parentId = existing.id;
+      } else {
+        parentId = (await tx.notebook.create({ data: { userId, parentId, name }, select: { id: true } })).id;
+        created++;
+      }
+    }
+    return { id: parentId, created };
+  }
+
+  /**
    * Takes the lock that every change to the shape of a user's notebooks
    * holds until its transaction ends, then reads that shape. Requests that
    * create, move or delete notebooks of one user so run one after the other,
    * and each sees what the one before it did. Notes are not held up by it.
    */
   private async lockTree(tx: Prisma.TransactionClient, userId: string): Promise<NotebookParents> {
-    await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId}::uuid FOR NO KEY UPDATE`;
+    await this.lock(tx, userId);
     const notebooks = await tx.notebook.findMany({ where: { userId }, select: { id: true, parentId: true } });
     return new Map(notebooks.map((notebook) => [notebook.id, notebook.parentId]));
+  }
+
+  private async lock(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId}::uuid FOR NO KEY UPDATE`;
   }
 
   private async view(userId: string, id: string): Promise<NotebookView> {

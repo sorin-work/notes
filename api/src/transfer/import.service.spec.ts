@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { LinksService } from '../links/links.service';
+import { NotebooksService } from '../notebooks/notebooks.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { TagsService } from '../tags/tags.service';
 import { ImportService, notebookPath, splitPath } from './import.service';
@@ -51,10 +52,25 @@ describe('ImportService', () => {
       asPrismaService(prisma),
       tags as unknown as TagsService,
       links as unknown as LinksService,
+      new NotebooksService(asPrismaService(prisma)),
     );
     notebookCount = 0;
-    prisma.notebook.findFirst.mockResolvedValue(null);
-    prisma.notebook.create.mockImplementation(() => Promise.resolve({ id: `nb-${++notebookCount}` }));
+    // The notebooks made so far, found again by parent and name the way the database would.
+    const made: { id: string; parentId: string | null; name: string }[] = [];
+    prisma.notebook.findFirst.mockImplementation(
+      ({ where }: { where: { parentId: string | null; name: { equals: string } } }) =>
+        Promise.resolve(
+          made.find(
+            (notebook) =>
+              notebook.parentId === where.parentId && notebook.name.toLowerCase() === where.name.equals.toLowerCase(),
+          ) ?? null,
+        ),
+    );
+    prisma.notebook.create.mockImplementation(({ data }: { data: { parentId: string | null; name: string } }) => {
+      const notebook = { id: `nb-${++notebookCount}`, parentId: data.parentId, name: data.name };
+      made.push(notebook);
+      return Promise.resolve(notebook);
+    });
     prisma.note.create.mockImplementation(({ data }) => Promise.resolve({ id: `note-${data.title}` }));
   });
 
@@ -109,8 +125,12 @@ describe('ImportService', () => {
     expect(result.imported).toBe(4);
     expect(result.notebooksCreated).toBe(2);
     expect(result.skipped).toEqual([{ file: 'Work/diagram.png', reason: 'Not a Markdown or text file' }]);
-    expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: null, name: 'Work' } });
-    expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: 'nb-1', name: 'Meetings' } });
+    expect(prisma.notebook.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { userId: USER, parentId: null, name: 'Work' } }),
+    );
+    expect(prisma.notebook.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { userId: USER, parentId: 'nb-1', name: 'Meetings' } }),
+    );
   });
 
   it('adds to existing notebooks with the same name', async () => {
@@ -120,6 +140,25 @@ describe('ImportService', () => {
     const result = await service.import(USER, [file('n.zip', await zip.generateAsync({ type: 'nodebuffer' }))]);
     expect(result.notebooksCreated).toBe(0);
     expect(prisma.note.create.mock.calls[0][0].data.notebookId).toBe('existing');
+  });
+
+  it('finds and makes the notebooks of each note in the transaction of the note, under the lock on the tree', async () => {
+    const zip = new JSZip();
+    zip.file('A/B/C/D/n.md', 'a');
+    zip.file('A/B/m.md', 'b');
+    await service.import(USER, [file('n.zip', await zip.generateAsync({ type: 'nodebuffer' }))]);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    const locks = prisma.$queryRaw.mock.calls.filter(([sql]) =>
+      (sql as string[]).join('?').includes('FOR NO KEY UPDATE'),
+    );
+    expect(locks).toHaveLength(2);
+    // Each note takes the lock before it looks for a notebook, and is made after its notebooks.
+    const order = (mock: jest.Mock, at: number) => mock.mock.invocationCallOrder[at];
+    expect(order(prisma.$queryRaw, 0)).toBeLessThan(order(prisma.notebook.findFirst, 0));
+    expect(order(prisma.notebook.create, 3)).toBeLessThan(order(prisma.note.create, 0));
+    expect(prisma.note.create.mock.calls[0][0].data.notebookId).toBe('nb-4');
+    expect(prisma.note.create.mock.calls[1][0].data.notebookId).toBe('nb-2');
   });
 
   it('skips files it cannot read', async () => {

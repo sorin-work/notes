@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import JSZip from 'jszip';
 import { LinksService } from '../links/links.service';
-import { MAX_NOTEBOOK_DEPTH } from '../notebooks/notebooks.service';
+import { MAX_NOTEBOOK_DEPTH, NotebooksService } from '../notebooks/notebooks.service';
 import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TagsService } from '../tags/tags.service';
@@ -67,6 +67,7 @@ export class ImportService {
     private readonly prisma: PrismaService,
     private readonly tags: TagsService,
     private readonly links: LinksService,
+    private readonly notebooks: NotebooksService,
   ) {}
 
   /** Imports .md / .markdown / .txt files and zips of them. */
@@ -106,7 +107,6 @@ export class ImportService {
       throw new BadRequestException(`An import can contain at most ${MAX_IMPORT_NOTES} notes`);
     }
 
-    const notebooks = new NotebookResolver(this.prisma, userId);
     for (const candidate of candidates) {
       const { data, body } = parseFrontMatter(candidate.text);
       if (body.length > MAX_CONTENT_LENGTH) {
@@ -118,11 +118,18 @@ export class ImportService {
         0,
         MAX_TITLE_LENGTH,
       );
-      const notebookId = await notebooks.resolve(notebookPath(folders));
       const created = toDate(data.created) ?? candidate.modified ?? new Date();
       const updated = toDate(data.updated) ?? candidate.modified ?? created;
 
+      // The notebooks and the note in one transaction, under the lock on the
+      // tree: a notebook moved or deleted at the same moment can neither end
+      // up too deep nor leave the note without its notebook.
       await this.prisma.$transaction(async (tx) => {
+        // Names are cut to the length a notebook name can have.
+        const path = notebookPath(folders).map((name) => name.slice(0, 80));
+        const notebook = await this.notebooks.findOrCreatePath(tx, userId, path);
+        const notebookId = notebook.id;
+        result.notebooksCreated += notebook.created;
         const note = await tx.note.create({
           data: {
             userId,
@@ -142,42 +149,6 @@ export class ImportService {
       result.imported++;
     }
 
-    result.notebooksCreated = notebooks.created;
     return result;
-  }
-}
-
-/** Finds or creates the notebooks for imported folders, matching names case-insensitively. */
-class NotebookResolver {
-  created = 0;
-  private readonly cache = new Map<string, string>();
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly userId: string,
-  ) {}
-
-  async resolve(path: string[]): Promise<string | null> {
-    let parentId: string | null = null;
-    for (const segment of path) {
-      const name = segment.slice(0, 80);
-      const key = `${parentId ?? ''}/${name.toLowerCase()}`;
-      let id = this.cache.get(key);
-      if (!id) {
-        const existing: { id: string } | null = await this.prisma.notebook.findFirst({
-          where: { userId: this.userId, parentId, name: { equals: name, mode: 'insensitive' } },
-          select: { id: true },
-        });
-        if (existing) {
-          id = existing.id;
-        } else {
-          id = (await this.prisma.notebook.create({ data: { userId: this.userId, parentId, name } })).id;
-          this.created++;
-        }
-        this.cache.set(key, id);
-      }
-      parentId = id;
-    }
-    return parentId;
   }
 }

@@ -173,6 +173,42 @@ describe('NotebooksService', () => {
     });
   });
 
+  describe('findOrCreatePath', () => {
+    it('takes the lock, then finds or makes each level from the top down', async () => {
+      prisma.notebook.findFirst.mockResolvedValueOnce({ id: 'work' }).mockResolvedValue(null);
+      prisma.notebook.create.mockResolvedValueOnce({ id: 'meetings' }).mockResolvedValueOnce({ id: 'monday' });
+
+      const result = await service.findOrCreatePath(asPrismaService(prisma), USER, ['Work', 'Meetings', 'Monday']);
+
+      expect(result).toEqual({ id: 'monday', created: 2 });
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.notebook.findFirst.mock.invocationCallOrder[0],
+      );
+      expect(prisma.notebook.findFirst.mock.calls[0][0].where).toEqual({
+        userId: USER,
+        parentId: null,
+        name: { equals: 'Work', mode: 'insensitive' },
+      });
+      expect(prisma.notebook.create.mock.calls[1][0].data).toEqual({
+        userId: USER,
+        parentId: 'meetings',
+        name: 'Monday',
+      });
+    });
+
+    it('refuses a path deeper than notebooks nest, and does nothing for an empty one', async () => {
+      await expect(
+        service.findOrCreatePath(asPrismaService(prisma), USER, ['a', 'b', 'c', 'd', 'e']),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.findOrCreatePath(asPrismaService(prisma), USER, [])).resolves.toEqual({
+        id: null,
+        created: 0,
+      });
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.notebook.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update', () => {
     const withCount = (nb: ReturnType<typeof notebook>) => ({ ...nb, _count: { notes: 0 } });
 

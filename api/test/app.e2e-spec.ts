@@ -1690,6 +1690,37 @@ describe('nested notebooks', () => {
       'Work/Clients/Acme/Offer.md',
     ]);
   });
+  it('never lets a move push the notebooks of an import that runs at the same moment below the fourth level', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const make = async (name: string, parentId?: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name, parentId }).expect(201)).body.id as string;
+    // A notebook at the third level to move "A" into, and an "A" four levels deep once the import is done.
+    const third = await make('Three', await make('Two', await make('One')));
+    const a = await make('A');
+    const zip = new JSZip();
+    for (let i = 0; i < 12; i++) zip.file(`A/B${i}/C/D/n${i}.md`, 'Deep.');
+    const upload = await zip.generateAsync({ type: 'nodebuffer' });
+
+    const [imported, moved] = await Promise.all([
+      request(server).post('/api/import').set(auth).attach('files', upload, 'export.zip'),
+      new Promise((resolve) => setTimeout(resolve, 20)).then(() =>
+        request(server).patch(`/api/notebooks/${a}`).set(auth).send({ parentId: third }),
+      ),
+    ]);
+    expect(imported.status).toBe(201);
+    // Whichever came first, the other one fits around it: the move is refused, or the import starts a new "A".
+    expect([200, 400]).toContain(moved.status);
+
+    const list = await request(server).get('/api/notebooks').set(auth).expect(200);
+    const parents = new Map<string, string | null>(
+      list.body.map((item: { id: string; parentId: string | null }) => [item.id, item.parentId]),
+    );
+    const depth = (id: string): number => (parents.get(id) ? 1 + depth(parents.get(id)!) : 1);
+    expect(Math.max(...[...parents.keys()].map(depth))).toBeLessThanOrEqual(4);
+    const notes = await request(server).get('/api/notes?pageSize=50').set(auth).expect(200);
+    expect(notes.body.items).toHaveLength(12);
+  });
 });
 
 describe('sharing', () => {
