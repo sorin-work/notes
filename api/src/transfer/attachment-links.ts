@@ -120,3 +120,12 @@ export function replaceAttachmentLinks(text: string, to: (id: string) => string 
 export function withoutAttachmentIds(text: string): string {
   return text.replace(ATTACHMENT_REFERENCE, 'attachment:');
 }
+
+/**
+ * A part of a path, encoded for a Markdown link. encodeURIComponent leaves
+ * ! ' ( ) * alone, and a ( or ) in a link's address ends it early in
+ * Markdown, so those are encoded too (as RFC 3986 allows).
+ */
+export function encodePathPart(part: string): string {
+  return encodeURIComponent(part).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}

@@ -36,6 +36,11 @@ export class AttachmentStorage {
     return readFile(this.path(id));
   }
 
+  async exists(id: string): Promise<boolean> {
+    const info = await stat(this.path(id)).catch(() => null);
+    return info?.isFile() === true;
+  }
+
   async remove(ids: string[]): Promise<void> {
     await Promise.all(ids.map((id) => rm(this.path(id), { force: true })));
   }

@@ -226,6 +226,11 @@ export class AttachmentsService {
     return this.storage.read(id);
   }
 
+  /** Whether the file of an attachment is in storage. */
+  exists(id: string): Promise<boolean> {
+    return this.storage.exists(id);
+  }
+
   private async check(fileName: string, bytes: Buffer): Promise<StoredFile> {
     if (bytes.length > this.config.attachmentMaxBytes) {
       throw new PayloadTooLargeException(

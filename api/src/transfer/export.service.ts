@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import JSZip from 'jszip';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { replaceAttachmentLinks } from './attachment-links';
+import { encodePathPart, replaceAttachmentLinks } from './attachment-links';
+import { PassThrough, Readable } from 'node:stream';
 import { safeFileName, UniquePaths } from './file-names';
 import { FrontMatter, serializeFrontMatter } from './front-matter';
 
@@ -38,6 +39,8 @@ export function toMarkdownFile(note: ExportableNote): string {
 
 @Injectable()
 export class ExportService {
+  private readonly logger = new Logger(ExportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly attachments: AttachmentsService,
@@ -55,7 +58,7 @@ export class ExportService {
    * Every note outside the trash as a zip of Markdown files. Notebooks become
    * folders; notes without a notebook sit at the top.
    */
-  async exportAll(userId: string): Promise<Buffer> {
+  async exportAll(userId: string): Promise<Readable> {
     const notes = await this.prisma.note.findMany({
       where: { userId, deletedAt: null },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -74,7 +77,24 @@ export class ExportService {
     const fileOf = new Map(
       files.map((file) => [file.id, `attachments/${file.id}/${safeFileName(file.fileName, 'file')}`]),
     );
-    for (const [id, path] of fileOf) zip.file(path, await this.attachments.read(id));
+    // A file is read when the zip gets to it, one at a time, so the export never holds more
+    // than one in memory. A file that is gone is left out and named in MISSING.txt.
+    const missing: string[] = [];
+    for (const [id, path] of fileOf) {
+      if (!(await this.attachments.exists(id))) {
+        missing.push(path);
+        fileOf.delete(id);
+        continue;
+      }
+      zip.file(path, this.lazyFile(id));
+    }
+    if (missing.length > 0) {
+      this.logger.warn(`Export left out ${missing.length} attachment file(s) that are missing from storage`);
+      zip.file(
+        'attachments/MISSING.txt',
+        `These ${missing.length} attachment files were missing from storage and are not in this export:\n${missing.join('\n')}\n`,
+      );
+    }
     for (const note of notes) {
       const folders: string[] = [];
       if (note.notebook?.parent) folders.push(safeFileName(note.notebook.parent.name, 'Notebook'));
@@ -84,10 +104,27 @@ export class ExportService {
       const up = '../'.repeat(folders.length);
       const content = replaceAttachmentLinks(note.content, (id) => {
         const file = fileOf.get(id);
-        return file && up + file.split('/').map(encodeURIComponent).join('/');
+        return file && up + file.split('/').map(encodePathPart).join('/');
       });
       zip.file(path, toMarkdownFile({ ...note, content }), { date: note.updatedAt });
     }
-    return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    // Written out as it is made: with streamFiles, each file goes into the zip as it is read.
+    // JSZip's stream is an old-style one; a PassThrough makes it a stream of this Node.
+    const out = new PassThrough();
+    zip
+      .generateNodeStream({ type: 'nodebuffer', compression: 'DEFLATE', streamFiles: true })
+      .on('error', (error: Error) => out.destroy(error))
+      .pipe(out);
+    return out;
+  }
+
+  /** A file of an attachment that is read only when the zip asks for it. */
+  private lazyFile(id: string): Readable {
+    const read = () => this.attachments.read(id);
+    return Readable.from(
+      (async function* () {
+        yield await read();
+      })(),
+    );
   }
 }
