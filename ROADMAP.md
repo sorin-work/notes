@@ -395,7 +395,9 @@ the routes marked `@SessionOnly()`, which are the token endpoints under
 `/auth/tokens` and the account changes. Decided on the open points: no scopes
 beyond read-only, and requests are throttled per token
 (`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
-minute. "Sign out everywhere" and a password change leave tokens alone. Still
-to come in a second step: the OpenAPI document at `/api/docs` and the
-`/capture` page. Still open after that: a token made from a stolen login
-outlives signing out, so creating one could ask for the password.
+minute. Making a token takes the password, so a stolen login cannot make
+itself a credential that outlives it. "Sign out everywhere", a password
+change and a password reset leave tokens alone, but after the last two the
+app lists the tokens that still work and offers to revoke them all at once.
+Still to come in a second step: the OpenAPI document at `/api/docs` and the
+`/capture` page.
