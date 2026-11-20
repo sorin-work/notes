@@ -691,6 +691,15 @@ describe('api tokens', () => {
       'AuthController.logoutEverywhere',
       'AuthController.updatePreferences',
       'AuthController.updateProfile',
+      'InvitesController.accept',
+      'InvitesController.acceptByToken',
+      'InvitesController.decline',
+      'InvitesController.received',
+      'MembersController.changeRole',
+      'MembersController.invite',
+      'MembersController.list',
+      'MembersController.remove',
+      'MembersController.revoke',
     ]);
     expect(names(routes.filter((route) => route.isPublic))).toEqual([
       'AuthController.login',
@@ -1742,6 +1751,255 @@ describe('sharing', () => {
     expect(await views()).toBe(3);
     await request(server).post(`/api/public/notes/${token}`).send({ password: 'open sesame' }).expect(200);
     expect(await views()).toBe(4);
+  });
+});
+
+describe('notebooks shared with other accounts', () => {
+  type Auth = { Authorization: string };
+  const server = () => app.getHttpServer();
+  async function account(): Promise<{ auth: Auth; email: string; id: string }> {
+    const email = `share-${Date.now()}-${++counter}@example.com`;
+    const response = await request(server())
+      .post('/api/auth/register')
+      .send({ email, name: `Name ${counter}`, password: 'password123' })
+      .expect(201);
+    return { auth: { Authorization: `Bearer ${response.body.token}` }, email, id: response.body.user.id };
+  }
+  const post = async (auth: Auth, path: string, body: object = {}) =>
+    (await request(server()).post(path).set(auth).send(body).expect(201)).body;
+
+  /** An owner with a notebook "Kitchen" (and "Bread" inside it), a private note, and a member who joined by the mailed link. */
+  async function kitchen(role: 'read' | 'edit') {
+    const owner = await account();
+    const member = await account();
+    const kitchenBook = await post(owner.auth, '/api/notebooks', { name: 'Kitchen' });
+    const bread = await post(owner.auth, '/api/notebooks', { name: 'Bread', parentId: kitchenBook.id });
+    const other = await post(owner.auth, '/api/notebooks', { name: 'Diary' });
+    const soup = await post(owner.auth, '/api/notes', {
+      title: 'Soup',
+      content: 'Goes with [[Rye]], see [[Private plan]].',
+      notebookId: kitchenBook.id,
+      tags: ['food'],
+    });
+    const rye = await post(owner.auth, '/api/notes', { title: 'Rye', content: 'With [[Soup]].', notebookId: bread.id });
+    const plan = await post(owner.auth, '/api/notes', { title: 'Private plan', content: 'Mentions [[Soup]].' });
+    const diary = await post(owner.auth, '/api/notes', {
+      title: 'Diary entry',
+      content: 'Dear diary',
+      notebookId: other.id,
+    });
+    await request(server())
+      .post(`/api/notebooks/${kitchenBook.id}/members/invites`)
+      .set(owner.auth)
+      .send({ email: member.email.toUpperCase(), role })
+      .expect(201);
+    const mail = await mailTo(member.email);
+    const token = /#token=([\w-]+)/.exec(mail.text)?.[1] ?? '';
+    // Nothing in the mail comes from the owner: not the name of the notebook, not the owner's name.
+    expect(mail.text).not.toContain('Kitchen');
+    await request(server()).post('/api/invites/accept').set(member.auth).send({ token }).expect(200);
+    return { owner, member, kitchen: kitchenBook.id, bread: bread.id, other: other.id, soup, rye, plan, diary, token };
+  }
+
+  it('answers every note route with 404 to an account that is not a member', async () => {
+    const { owner, soup, plan, member } = await kitchen('read');
+    const outsider = await account();
+    await request(server()).patch(`/api/notes/${soup.id}`).set(owner.auth).send({ content: 'Leeks.' }).expect(200);
+    const [version] = (await request(server()).get(`/api/notes/${soup.id}/versions`).set(owner.auth).expect(200)).body;
+    const bodies: Record<string, object> = {
+      'NotesController.update': { title: 'Taken' },
+      'NotesController.renameLinks': { from: 'Old' },
+    };
+    const routes = registeredRoutes(app).filter(
+      (route) =>
+        (route.name.startsWith('NotesController.') && route.documented.includes('{id}')) ||
+        route.documented.startsWith('/api/notes/{noteId}'),
+    );
+    expect(routes.length).toBeGreaterThan(15);
+    const walk = async (auth: Auth, noteId: string) => {
+      for (const route of routes) {
+        const path = route.documented
+          .replace('{id}', noteId)
+          .replace('{noteId}', noteId)
+          .replace('{versionId}', version.id);
+        const query = route.name === 'NotesController.orphanedLinks' ? '?from=Old' : '';
+        const response = await request(server())
+          [route.verb](path + query)
+          .set(auth)
+          .send(bodies[route.name] ?? {});
+        expect({ route: route.name, status: response.status }).toEqual({ route: route.name, status: 404 });
+      }
+    };
+    await walk(outsider.auth, soup.id);
+    // A member is an outsider to the owner's notes outside the shared notebook.
+    await walk(member.auth, plan.id);
+  });
+
+  it('lets a reader read the shared notebook, and nothing else of the owner', async () => {
+    const { owner, member, kitchen: book, bread, soup, rye, plan, diary } = await kitchen('read');
+    const get = async (path: string, auth = member.auth) =>
+      (await request(server()).get(path).set(auth).expect(200)).body;
+
+    const notebooks = await get('/api/notebooks');
+    expect(notebooks.map((n: { name: string; access: string; owner: unknown }) => [n.name, n.access, n.owner])).toEqual(
+      expect.arrayContaining([
+        ['Kitchen', 'read', { name: expect.any(String) }],
+        ['Bread', 'read', { name: expect.any(String) }],
+      ]),
+    );
+    expect(notebooks.map((n: { name: string }) => n.name)).not.toContain('Diary');
+
+    expect(await get(`/api/notes/${soup.id}`)).toMatchObject({ title: 'Soup', access: 'read' });
+    expect((await get(`/api/notes?notebookId=${book}`)).items.map((n: { title: string }) => n.title).sort()).toEqual([
+      'Rye',
+      'Soup',
+    ]);
+    // Their own lists stay their own.
+    expect((await get('/api/notes')).items).toEqual([]);
+    // Links lead only to what they may read: the private plan reads as missing.
+    expect(await get(`/api/notes/${soup.id}/links`)).toEqual([
+      { title: 'Rye', noteId: rye.id },
+      { title: 'Private plan', noteId: null },
+    ]);
+    expect((await get(`/api/notes/${soup.id}/backlinks`)).map((b: { id: string }) => b.id)).toEqual([rye.id]);
+    expect((await get(`/api/notes/titles?notebookId=${book}`)).map((n: { title: string }) => n.title).sort()).toEqual([
+      'Rye',
+      'Soup',
+    ]);
+    await request(server())
+      .get(`/api/notes/resolve?title=Private%20plan&notebookId=${book}`)
+      .set(member.auth)
+      .expect(404);
+    expect((await get(`/api/notes/resolve?title=rye&notebookId=${book}`)).id).toBe(rye.id);
+    expect((await get(`/api/search?q=diary`)).items).toEqual([]);
+    expect((await get(`/api/search?q=soup&notebookId=${book}`)).items.map((h: { id: string }) => h.id)).toContain(
+      soup.id,
+    );
+    expect((await get(`/api/search?q=diary&notebookId=${book}`)).items).toEqual([]);
+    await request(server()).get(`/api/notes?notebookId=${bread}`).set(member.auth).expect(200);
+    expect(await get('/api/tags')).toEqual([]);
+
+    // Reading is all: no change, no new note, nothing of the owner's own.
+    await request(server()).patch(`/api/notes/${soup.id}`).set(member.auth).send({ content: 'x' }).expect(403);
+    await request(server()).post('/api/notes').set(member.auth).send({ title: 'x', notebookId: book }).expect(403);
+    await request(server()).delete(`/api/notes/${soup.id}`).set(member.auth).expect(403);
+    await request(server()).get(`/api/notes/${diary.id}`).set(member.auth).expect(404);
+    await request(server()).get(`/api/notes/${plan.id}`).set(member.auth).expect(404);
+    await request(server()).patch(`/api/notebooks/${book}`).set(member.auth).send({ name: 'Mine now' }).expect(404);
+    await request(server()).get(`/api/notebooks/${book}/share`).set(member.auth).expect(404);
+    // The owner sees who is in.
+    const members = await get(`/api/notebooks/${book}/members`, owner.auth);
+    expect(members.members).toMatchObject([{ email: member.email, role: 'read' }]);
+  });
+
+  it('lets an editor change text and tags as the owner’s, with the usual conflicts, and add notes', async () => {
+    const { owner, member, kitchen: book, soup } = await kitchen('edit');
+    const patch = (auth: Auth, body: object) => request(server()).patch(`/api/notes/${soup.id}`).set(auth).send(body);
+
+    const saved = await patch(member.auth, {
+      content: 'Leeks and potatoes.',
+      revision: 0,
+      tags: ['food', 'winter'],
+    }).expect(200);
+    expect(saved.body).toMatchObject({ access: 'edit', revision: 1, tags: ['food', 'winter'] });
+    // Tags are the owner's: they show in the owner's list, not the member's.
+    expect(
+      (await request(server()).get('/api/tags').set(owner.auth)).body.map((t: { name: string }) => t.name),
+    ).toContain('winter');
+    expect((await request(server()).get('/api/tags').set(member.auth)).body).toEqual([]);
+    // Two editors, one revision: the second is refused with the note as it is.
+    await patch(owner.auth, { content: 'Owner text', revision: 1 }).expect(200);
+    const stale = await patch(member.auth, { content: 'Member text', revision: 1 }).expect(409);
+    expect(stale.body).toMatchObject({ code: 'stale_revision', note: { content: 'Owner text' } });
+    // Pins, stars, moves and the template flag stay the owner's.
+    await patch(member.auth, { pinned: true }).expect(403);
+    await patch(member.auth, { notebookId: null }).expect(403);
+    await patch(member.auth, { isTemplate: true }).expect(403);
+    // A new note in the shared notebook is the owner's.
+    const made = await post(member.auth, '/api/notes', { title: 'Stew', notebookId: book });
+    expect(made).toMatchObject({ access: 'edit', notebookId: book });
+    const ownList = await request(server()).get(`/api/notes?notebookId=${book}`).set(owner.auth).expect(200);
+    expect(ownList.body.items.map((n: { id: string }) => n.id)).toContain(made.id);
+    await request(server()).post(`/api/notes/${soup.id}/versions/x/restore`).set(member.auth).expect(400);
+  });
+
+  it('keeps templates and the trash out of reach, and ends access on removal and on leaving', async () => {
+    const { owner, member, kitchen: book, soup } = await kitchen('edit');
+    const template = await post(owner.auth, '/api/notes', { title: 'Recipe card', notebookId: book, isTemplate: true });
+    await request(server()).get(`/api/notes/${template.id}`).set(member.auth).expect(404);
+    const listed = await request(server())
+      .get(`/api/notes?notebookId=${book}&templates=true`)
+      .set(member.auth)
+      .expect(200);
+    expect(listed.body.items.map((n: { id: string }) => n.id)).not.toContain(template.id);
+
+    await request(server()).delete(`/api/notes/${soup.id}`).set(owner.auth).expect(204);
+    await request(server()).get(`/api/notes/${soup.id}`).set(member.auth).expect(404);
+    // A change waiting in a member's outbox for a note they lost is refused like any other.
+    await request(server())
+      .patch(`/api/notes/${soup.id}`)
+      .set(member.auth)
+      .send({ content: 'x', revision: 0 })
+      .expect(404);
+
+    const rye = (await request(server()).get(`/api/notes?notebookId=${book}`).set(member.auth).expect(200)).body
+      .items[0];
+    await request(server()).delete(`/api/notebooks/${book}/members/${member.id}`).set(owner.auth).expect(204);
+    await request(server()).get(`/api/notes/${rye.id}`).set(member.auth).expect(404);
+    expect((await request(server()).get('/api/notebooks').set(member.auth)).body).toEqual([]);
+
+    // Invited again, accepted in the app this time, then left.
+    await request(server())
+      .post(`/api/notebooks/${book}/members/invites`)
+      .set(owner.auth)
+      .send({ email: member.email, role: 'read' })
+      .expect(201);
+    const [invite] = (await request(server()).get('/api/invites').set(member.auth).expect(200)).body;
+    expect(invite).toMatchObject({ notebook: { id: book, name: 'Kitchen' }, role: 'read' });
+    await request(server()).post(`/api/invites/${invite.id}/accept`).set(member.auth).expect(200);
+    await request(server()).get(`/api/notes/${rye.id}`).set(member.auth).expect(200);
+    await request(server()).delete(`/api/notebooks/${book}/members/${member.id}`).set(member.auth).expect(204);
+    await request(server()).get(`/api/notes/${rye.id}`).set(member.auth).expect(404);
+  });
+
+  it('takes an invitation only from the invited address, once, and only while it is open', async () => {
+    const owner = await account();
+    const invited = await account();
+    const stranger = await account();
+    const book = await post(owner.auth, '/api/notebooks', { name: 'Secrets' });
+    const invites = `/api/notebooks/${book.id}/members/invites`;
+    await request(server()).post(invites).set(owner.auth).send({ email: owner.email, role: 'read' }).expect(400);
+    await request(server()).post(invites).set(stranger.auth).send({ email: invited.email, role: 'read' }).expect(404);
+    await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'own' }).expect(400);
+    await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'edit' }).expect(201);
+    const token = /#token=([\w-]+)/.exec((await mailTo(invited.email)).text)?.[1] ?? '';
+
+    // Forwarded to someone else, the link is no use to them.
+    await request(server()).post('/api/invites/accept').set(stranger.auth).send({ token }).expect(403);
+    const [received] = (await request(server()).get('/api/invites').set(invited.auth)).body;
+    await request(server()).post(`/api/invites/${received.id}/accept`).set(stranger.auth).expect(403);
+    expect((await request(server()).get('/api/invites').set(stranger.auth)).body).toEqual([]);
+
+    await request(server()).post('/api/invites/accept').set(invited.auth).send({ token }).expect(200);
+    await request(server()).post('/api/invites/accept').set(invited.auth).send({ token }).expect(404);
+    await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'read' }).expect(409);
+
+    // Run out: an invitation a week old works no more.
+    const late = await account();
+    await request(server()).post(invites).set(owner.auth).send({ email: late.email, role: 'read' }).expect(201);
+    const lateToken = /#token=([\w-]+)/.exec((await mailTo(late.email)).text)?.[1] ?? '';
+    await app
+      .get(PrismaService)
+      .notebookInvite.updateMany({ where: { email: late.email }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    await request(server()).post('/api/invites/accept').set(late.auth).send({ token: lateToken }).expect(404);
+    expect((await request(server()).get('/api/invites').set(late.auth)).body).toEqual([]);
+
+    // Declined, it is gone.
+    const other = await account();
+    await request(server()).post(invites).set(owner.auth).send({ email: other.email, role: 'read' }).expect(201);
+    const [offer] = (await request(server()).get('/api/invites').set(other.auth)).body;
+    await request(server()).delete(`/api/invites/${offer.id}`).set(other.auth).expect(204);
+    expect((await request(server()).get('/api/invites').set(other.auth)).body).toEqual([]);
   });
 });
 

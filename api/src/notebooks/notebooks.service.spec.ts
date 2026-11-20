@@ -33,8 +33,8 @@ describe('NotebooksService', () => {
   describe('list', () => {
     it('returns notebooks with the number of their notes and, apart, of their templates', async () => {
       prisma.notebook.findMany.mockResolvedValue([
-        { ...notebook('work'), _count: { notes: 3 } },
-        { ...notebook('home'), _count: { notes: 0 } },
+        { ...notebook('work'), _count: { notes: 3, members: 0 } },
+        { ...notebook('home'), _count: { notes: 0, members: 0 } },
       ]);
       prisma.note.groupBy.mockResolvedValue([{ notebookId: 'home', _count: { _all: 1 } }]);
       const result = await service.list(USER);
@@ -49,6 +49,9 @@ describe('NotebooksService', () => {
           templateCount: 0,
           shared: false,
           sharedThrough: null,
+          access: 'owner',
+          owner: null,
+          memberCount: 0,
         },
         {
           id: 'home',
@@ -60,6 +63,9 @@ describe('NotebooksService', () => {
           templateCount: 1,
           shared: false,
           sharedThrough: null,
+          access: 'owner',
+          owner: null,
+          memberCount: 0,
         },
       ]);
       expect(prisma.note.groupBy).toHaveBeenCalledWith(
@@ -71,7 +77,7 @@ describe('NotebooksService', () => {
         expect.objectContaining({
           where: { userId: USER },
           include: expect.objectContaining({
-            _count: { select: { notes: { where: { deletedAt: null, isTemplate: false } } } },
+            _count: { select: { notes: { where: { deletedAt: null, isTemplate: false } }, members: true } },
           }),
         }),
       );
