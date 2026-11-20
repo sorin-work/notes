@@ -10,6 +10,9 @@ Markdown import/export.
 - **Markdown editor** with edit, split and preview modes. GitHub flavoured
   Markdown: tables, task lists, strikethrough and autolinks. Notes save
   automatically a moment after you stop typing.
+- **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
+  the same as typing the `x`. Boxes are read-only on shared pages, in version
+  history and for notes in the trash.
 - **Notebooks**, nested one level deep (e.g. _Work -> Meetings_). Selecting a
   top-level notebook shows the notes in the notebooks inside it too. Deleting
   a notebook moves its notes to the trash.
@@ -172,7 +175,7 @@ web/
     auth/               auth context and route guards
     components/         editor, preview, sidebar, dialogs
     hooks/              autosave, theme and small state helpers
-    lib/                wiki links, dates, text helpers
+    lib/                wiki links, task lists, dates, text helpers
     pages/              one component per route
 ```
 
@@ -187,7 +190,8 @@ them up again. Links inside code blocks and inline code are ignored.
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
-notebooks do not create versions.
+notebooks do not create versions. Ticking a task box in the preview changes
+the text, so it counts as an edit.
 
 ## API overview
 
