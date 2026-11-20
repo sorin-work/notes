@@ -5,6 +5,13 @@
   "testRegex": ".e2e-spec.ts$",
   "setupFiles": ["reflect-metadata"],
   "transform": {
-    "^.+\\.ts$": "ts-jest"
+    "^.+\\.ts$": [
+      "ts-jest",
+      {
+        "astTransformers": {
+          "before": ["<rootDir>/swagger-transformer.js"]
+        }
+      }
+    ]
   }
 }

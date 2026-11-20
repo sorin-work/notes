@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { loadConfig } from './config/config';
+import { setupDocs } from './docs';
 import { setupApp } from './setup-app';
 
 async function bootstrap(): Promise<void> {
@@ -13,6 +14,9 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('json', { limit: '5mb' });
   app.disable('x-powered-by');
   setupApp(app, { corsOrigins: config.corsOrigins, trustProxy: config.trustProxy });
+  if (config.apiDocs) {
+    setupDocs(app);
+  }
   await app.listen(config.port);
   Logger.log(`API listening on :${config.port}`, 'Bootstrap');
 }

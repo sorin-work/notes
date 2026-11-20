@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useLocation, useNavigate } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { notebook } from '../test/fixtures';
+import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SearchPage } from './SearchPage';
 
@@ -150,5 +151,12 @@ describe('SearchPage', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/^\?q=lisbon$/);
     expect(screen.getByLabelText('Search all notes')).toHaveValue('lisbon');
     expect(calls.at(-1)?.url).toBe('/api/search?q=lisbon&page=1&pageSize=30');
+  });
+
+  it('passes the axe checks', async () => {
+    mockFetch({ ...lists, 'GET /api/search': { body: page([hit('n1', 'Atlas weekly sync')], 40) } });
+    renderPage('/search?q=week&notebook=w');
+    await screen.findByRole('button', { name: 'Load more' });
+    await expectNoAxeViolations({ part: true });
   });
 });

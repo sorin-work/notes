@@ -3,17 +3,20 @@
   --surface: #ffffff;
   --surface-2: #f0f0ed;
   --border: #e2e2dd;
+  --control-border: #898986;
   --text: #1f2328;
-  --muted: #6a6f76;
-  --accent: #4f6bed;
+  --muted: #60646b;
+  --accent: #4760d5;
   --accent-soft: #e8ecfd;
   --accent-text: #ffffff;
-  --danger: #c93c37;
+  --danger: #c13a35;
   --danger-soft: #fbe9e8;
+  --danger-text: #ffffff;
   --success: #1f7a4d;
   --success-soft: #e3f3ea;
   --mark: #fff1a8;
-  --missing: #b0561b;
+  --missing: #ac541a;
+  --favourite: #ae7e00;
   --shadow: 0 8px 30px rgb(0 0 0 / 12%);
   --radius: 8px;
   --sidebar-width: 250px;
@@ -28,17 +31,20 @@
   --surface: #1f2024;
   --surface-2: #2a2b30;
   --border: #34363c;
+  --control-border: #747579;
   --text: #e6e6e3;
-  --muted: #9a9ea6;
-  --accent: #7d93ff;
+  --muted: #9c9fa7;
+  --accent: #7f95ff;
   --accent-soft: #2b3155;
   --accent-text: #11131f;
   --danger: #f07a73;
   --danger-soft: #3d2423;
+  --danger-text: #1f1211;
   --success: #6fcf97;
   --success-soft: #1d3528;
   --mark: #5c5216;
   --missing: #e3a26b;
+  --favourite: #e2a400;
   --shadow: 0 8px 30px rgb(0 0 0 / 45%);
   color-scheme: dark;
 }
@@ -49,17 +55,20 @@
     --surface: #1f2024;
     --surface-2: #2a2b30;
     --border: #34363c;
+    --control-border: #747579;
     --text: #e6e6e3;
-    --muted: #9a9ea6;
-    --accent: #7d93ff;
+    --muted: #9c9fa7;
+    --accent: #7f95ff;
     --accent-soft: #2b3155;
     --accent-text: #11131f;
     --danger: #f07a73;
     --danger-soft: #3d2423;
+    --danger-text: #1f1211;
     --success: #6fcf97;
     --success-soft: #1d3528;
     --mark: #5c5216;
     --missing: #e3a26b;
+    --favourite: #e2a400;
     --shadow: 0 8px 30px rgb(0 0 0 / 45%);
     color-scheme: dark;
   }
@@ -118,7 +127,7 @@ input,
 select,
 textarea {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   padding: 0.45rem 0.6rem;
 }
@@ -207,7 +216,7 @@ mark {
 .button-danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--danger-text);
 }
 
 .button-danger:hover:not(:disabled) {
@@ -277,7 +286,35 @@ mark {
   height: 100%;
 }
 
+/* Out of sight until the keyboard reaches them, then on top of everything. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 60;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transform: translateY(-300%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+/* Where the skip links land. The focus is on the whole area, which needs no ring. */
+.main:focus,
+.editor-pane:focus {
+  outline: none;
+}
+
 .mobile-bar {
+  display: none;
+}
+
+/* The shade behind the menu on narrow screens. Without this it would be a third column here. */
+.scrim {
   display: none;
 }
 
@@ -543,7 +580,7 @@ mark {
 }
 
 .flag.favourite {
-  color: #e2a400;
+  color: var(--favourite);
 }
 
 .note-item-excerpt {
@@ -678,8 +715,10 @@ mark {
   width: 100%;
 }
 
+/* No box around the title, but the focus still has to show. */
 .title-input:focus-visible {
   outline: none;
+  box-shadow: 0 2px 0 var(--accent);
 }
 
 .tag-input {
@@ -818,8 +857,9 @@ mark {
   border-top: 1px solid var(--border);
 }
 
-.backlinks h3 {
-  margin-top: 0;
+.backlinks h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
 }
 
 .backlinks ul {
@@ -989,6 +1029,15 @@ mark {
   margin: 0.5rem 0 0;
 }
 
+.capture-form {
+  max-width: 40rem;
+}
+
+.capture-form textarea {
+  font-family: var(--mono);
+  resize: vertical;
+}
+
 /* The parts of the Account card: profile, password, sessions, delete. */
 .card > .form + .form {
   margin-top: 1.25rem;
@@ -1129,6 +1178,8 @@ mark {
 .spinner {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 0.6rem;
   padding: 1.5rem;
 }
 
@@ -1423,6 +1474,11 @@ ul.error-box {
   margin-bottom: 0.4rem;
 }
 
+/* The heading of a message that replaced the form takes the focus, to be read out. It needs no ring. */
+.auth-card h1:focus {
+  outline: none;
+}
+
 .auth-card p {
   margin: 0;
   text-align: center;
@@ -1491,15 +1547,22 @@ ul.error-box {
     width: min(85vw, var(--sidebar-width));
     z-index: 40;
     transform: translateX(-100%);
-    transition: transform 0.2s ease;
+    /* Hidden once it has slid out, so that Tab does not wander into a menu nobody can see. */
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0s 0.2s;
   }
 
   .menu-open .sidebar {
     transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease;
     box-shadow: var(--shadow);
   }
 
   .scrim {
+    display: block;
     position: fixed;
     inset: 0;
     background: rgb(0 0 0 / 30%);
@@ -1556,4 +1619,25 @@ ul.error-box {
 .flag svg {
   display: inline-block;
   vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* A ring that stands still says nothing, so its label is shown instead of only read out. */
+  .spinner-dot {
+    animation: none;
+  }
+
+  .spinner .sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    clip: auto;
+    color: var(--muted);
+  }
+
+  /* The menu on narrow screens appears and goes without sliding. */
+  .sidebar,
+  .menu-open .sidebar {
+    transition: none;
+  }
 }

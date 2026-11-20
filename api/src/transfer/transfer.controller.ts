@@ -1,11 +1,14 @@
 import { Controller, Get, Post, StreamableFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes } from '@nestjs/swagger';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { ExportService } from './export.service';
 import { ImportResult, ImportService } from './import.service';
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
+@AllowApiToken()
 @Controller()
 export class TransferController {
   constructor(
@@ -13,6 +16,7 @@ export class TransferController {
     private readonly importer: ImportService,
   ) {}
 
+  /** Downloads every note as a zip of Markdown files, with notebooks as folders. */
   @Get('export')
   async exportAll(@CurrentUser() user: AuthUser): Promise<StreamableFile> {
     const zip = await this.exporter.exportAll(user.id);
@@ -23,6 +27,22 @@ export class TransferController {
     });
   }
 
+  /** Imports Markdown or text files, or zips of them, sent as `files`. */
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['files'],
+      properties: {
+        files: {
+          type: 'array',
+          maxItems: 50,
+          items: { type: 'string', format: 'binary' },
+          description: 'Up to 50 files: .md, .markdown, .txt, or a .zip of them. Folders in a zip become notebooks.',
+        },
+      },
+    },
+  })
   @Post('import')
   @UseInterceptors(FilesInterceptor('files', 50, { limits: { fileSize: MAX_UPLOAD_BYTES } }))
   import(

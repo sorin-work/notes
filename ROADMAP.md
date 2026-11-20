@@ -24,14 +24,14 @@ couple of weekends, **L** several weeks of spare time.
 | 3   | Quick switcher                         | Shipped | frontend | S    | -          |
 | 4   | Search filters, phrases and paging     | Shipped | both     | M    | -          |
 | 5   | Rename a note without breaking links   | Shipped | both     | M    | -          |
-| 6   | Accessibility pass                     | Next    | frontend | M    | -          |
+| 6   | Accessibility pass                     | Shipped | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Shipped | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Later   | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
-| 13  | Personal API tokens                    | Later   | both     | M    | -          |
+| 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
@@ -40,25 +40,7 @@ couple of weekends, **L** several weeks of spare time.
 
 ## Next
 
-### 6. Accessibility pass
-
-The basics are there (labels, focus styles, `aria-current`, dialogs with
-`role="dialog"`), but I have never gone through the whole app with only a
-keyboard or with a screen reader. Gaps I already know about:
-
-- `Modal` moves focus in and puts it back on close, but does not trap Tab, so
-  focus can wander into the page behind the dialog.
-- The `[[` suggestion list has `role="listbox"`, but the textarea does not
-  point at it (`aria-controls`, `aria-activedescendant`), so the options are
-  not announced.
-- No "skip to content" link. Getting from the sidebar to the editor is a lot
-  of tabbing.
-- No `prefers-reduced-motion` rule for the spinner and the sliding sidebar in
-  `styles.css`.
-- Arrow keys do not move through `NoteList`.
-- Add an automated check (axe, through `vitest-axe` or similar) to the page
-  tests so regressions fail CI. Colour contrast in both themes needs checking
-  by hand, since jsdom cannot do it.
+Empty for now: everything that was in this group has shipped.
 
 ## Later
 
@@ -127,27 +109,6 @@ That covers Obsidian and this app, and not much else.
   `@media print` rules) gives PDF through the browser. A full JSON backup
   that includes the trash and version history would cover what the zip
   leaves out.
-
-### 13. Personal API tokens
-
-To script against the API today you log in with email and password and get a
-seven-day JWT. I want long-lived tokens that I create and revoke in Settings,
-for things like a shell alias that appends a line to a note or a cron job
-that downloads the export.
-
-- `ApiToken` model: name, hash of the token, a read-only flag, `lastUsedAt`.
-  The token itself is shown once, when it is created.
-- `JwtAuthGuard` gets a second path: a bearer value with a known prefix (say
-  `nt_`) is looked up by hash instead of being verified as a JWT.
-  `bearerToken()` stays as it is.
-- Endpoints under `/auth/tokens` and a card in `SettingsPage`.
-- Document the API while at it. `@nestjs/swagger` can build an OpenAPI
-  document mostly from the existing DTO classes, served at `/api/docs`, and
-  the endpoint table in the README can then shrink.
-- Undecided: scopes beyond read-only, and rate limiting for token requests
-  (only the auth routes are throttled). A "save this page" bookmarklet is
-  better done as a `/capture?title=&url=` page in the web app, which needs
-  neither a token nor CORS.
 
 ### 14. Offline mode and installable app
 
@@ -344,6 +305,34 @@ is gone after leaving the note, notes in the trash and a note's links to
 itself are not rewritten, and a link with inline code between its brackets
 stays as it is.
 
+### 6. Accessibility pass
+
+Every gap on the list is closed. `Modal` keeps Tab inside the dialog and gives
+the keys to the dialog on top when two are open. Opening a second dialog from
+a first leaves the focus in the second. On close the focus goes back to where
+it was, or to the main region when that control is gone. The note textarea
+points at the `[[` suggestions with `aria-controls` and
+`aria-activedescendant`. The quick switcher already did, and now also says how
+many notes it found. Two skip links lead to the content and, when a note is
+open, to the note. `prefers-reduced-motion` stops the spinner, which shows its
+label instead, and the sliding menu. Up, Down, Home and End move through
+`NoteList`. The page and dialog tests run axe through `vitest-axe` with one
+helper, on every page of the app including sign-in, sign-up and the password
+reset pages. Only `color-contrast` is off, and `region` for parts rendered
+without the layout. What axe found is fixed: task boxes without a name, a
+heading level skipped above the backlinks, pages without a `main` landmark and
+a second banner inside dialogs. Contrast is covered by
+`styles.contrast.test.ts`, which computes the ratios of the colour pairs in
+`styles.css` for both themes. Muted text, the accent, the danger red, the
+colour of links to missing notes, the favourite star and the outline of text
+fields were changed to reach AA. Beyond the list: the title field shows its
+focus, on narrow screens the closed menu is out of reach of Tab, and `/` no
+longer opens that menu on a wide screen, where its shade had squeezed the
+page. Still open: nobody has used the app with a real screen reader yet, the
+contrast test only knows the pairs listed in it, every note in `NoteList` is
+still its own Tab stop, and the focus does not move into the menu when it
+opens on a narrow screen.
+
 ### 7. Scheduled backups
 
 A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
@@ -408,3 +397,34 @@ the reset is off and the link is hidden. Along the way the throttles learned
 to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
 address is not verified, the mail is plain text in English only, and nothing
 but the API log tells me when a mail could not be sent.
+
+### 13. Personal API tokens
+
+Settings has an "API tokens" card: name a token, tick read-only if it should
+only read, copy it once. Only its SHA-256 hash is kept in the new `ApiToken`
+model, with the name, the read-only flag, `lastUsedAt` and the date. In
+`JwtAuthGuard` a bearer value that starts with `nt_` is looked up by that
+hash instead of being verified as a JWT, and the same place refuses what a
+token may not do: anything but `GET` for a read-only one, and for every token
+any route that is not marked `@AllowApiToken()`. Marked are the notes
+themselves and `GET /auth/me`, so the account, the tokens and whatever is
+added later take a login. Decided on the open points: no scopes
+beyond read-only, and requests are throttled per token
+(`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
+minute. Making a token takes the password, so a stolen login cannot make
+itself a credential that outlives it. "Sign out everywhere" and a password
+change leave tokens alone, and after a password change the app says how many
+still work and offers to revoke them all at once. A password reset by mail
+revokes them.
+
+The second step documented the API. `@nestjs/swagger` builds an OpenAPI
+document from the DTO classes at build time and serves it, with a page to try
+it on, at `/api/docs`. It names the two credentials and says for every route
+which of them it takes, read from the same marks the guard goes by. The
+endpoint table in the README shrank to the few a script wants. And
+`/capture?title=&url=` in the web app opens a new note with the title and
+the address of a page, which a bookmarklet from the README turns into one
+click. Any site can send a visitor there, so it saves nothing by itself, the
+title stays out of the note's text, and only a plain web address is taken.
+`API_DOCS=false` turns the document off. Still open: the document describes
+requests but not answers.

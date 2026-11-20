@@ -1,6 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { TrashPage } from './TrashPage';
 
@@ -49,5 +50,13 @@ describe('TrashPage', () => {
     renderWithProviders(<TrashPage />);
     expect(await screen.findByText('The trash is empty')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Empty trash' })).not.toBeInTheDocument();
+  });
+
+  it('passes the axe checks, also with the confirm dialog open', async () => {
+    mockFetch({ 'GET /api/trash': { body: [trashed] } });
+    renderWithProviders(<TrashPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete forever' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await expectNoAxeViolations({ part: true });
   });
 });

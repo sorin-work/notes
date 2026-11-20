@@ -62,8 +62,9 @@ function ListItem({ node, children, ...props }: ComponentProps<'li'> & ExtraProp
 function TaskBox({ node: _node, ...props }: ComponentProps<'input'> & ExtraProps) {
   const onToggleTask = useContext(ToggleTaskContext);
   const item = useContext(TaskItemContext);
-  // Read-only: the box as the parser made it, which is disabled.
-  if (!onToggleTask || !item) return <input {...props} />;
+  // Read-only: the box as the parser made it, which is disabled. It still gets
+  // a name, because a box without one tells a screen reader nothing.
+  if (!onToggleTask || !item) return <input aria-label={item?.label || 'Task'} {...props} />;
   const checked = props.checked === true;
   return (
     <input

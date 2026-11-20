@@ -27,10 +27,14 @@ export interface AppConfig {
   seedDemo: boolean;
   trashRetentionDays: number;
   authThrottleLimit: number;
+  /** Requests a minute that one API token may make. */
+  apiTokenThrottleLimit: number;
   /** Null without SMTP_HOST: no mail is sent and password reset is off. */
   mail: MailConfig | null;
   /** Where people reach the web app, for the links in mails. No trailing slash. */
   appUrl: string;
+  /** Whether /api/docs and /api/docs-json are served. On unless API_DOCS says no. */
+  apiDocs: boolean;
   /**
    * How many reverse proxies stand between the clients and the API. With 0
    * the address of the connection counts as the client, which behind a proxy
@@ -138,8 +142,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
     authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
+    apiTokenThrottleLimit: toInt('API_TOKEN_THROTTLE_LIMIT', env.API_TOKEN_THROTTLE_LIMIT, 120, 1),
     mail,
     appUrl: appUrlFrom(env.APP_URL, mail !== null),
+    apiDocs: !saysNo(env.API_DOCS),
     trustProxy: toInt('TRUST_PROXY', env.TRUST_PROXY, 0, 0),
   };
 }

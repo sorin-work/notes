@@ -1,3 +1,4 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -144,6 +145,7 @@ export class ListNotesQuery extends NoteFilterQuery {
   @IsBoolean()
   favorite?: boolean;
 
+  @ApiPropertyOptional({ enum: NOTE_SORTS })
   @IsOptional()
   @IsIn(NOTE_SORTS)
   sort: NoteSort = 'updated';
