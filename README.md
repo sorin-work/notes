@@ -47,10 +47,13 @@ Markdown import/export.
   is now, with a changed title above it.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
-- **Share links**: a read-only public page for a single note at `/s/<token>`,
-  with a view count that leaves out your own visits. A link can be given a
-  date on which it runs out and a password that readers have to type.
-  Stopping sharing kills the link; notes in the trash are never served.
+- **Share links**: a read-only public page at `/s/<token>` for a single note,
+  or for a notebook with everything in it, the notebooks inside it and the
+  notes you add later included. A link has a view count that leaves out your
+  own visits, and can be given a date on which it runs out and a password
+  that readers have to type. `[[Links]]` work for readers wherever the other
+  note is shared too. Stopping sharing kills the link; notes in the trash
+  are never served.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
@@ -528,13 +531,30 @@ things can come back besides the note:
   Attempts are counted per client and per link, so guessing from many
   addresses does not get more tries.
 
-Every answer of these two routes carries `Cache-Control: no-store`, so that a
-link that is revoked, runs out or gets a password stops working at once
+Every answer of the public routes carries `Cache-Control: no-store`, so that
+a link that is revoked, runs out or gets a password stops working at once
 everywhere. A request that carries the owner's login is not counted as a
 view. The owner sets the options with `PATCH /notes/:id/share`:
 `{ "expiresAt": "2026-03-01T12:00:00Z", "password": "..." }`, where `null`
 takes either away. The password is stored as a hash, made the same way as
 account passwords.
+
+A notebook is shared the same way under `/notebooks/:id/share`. Its link
+answers with `"kind": "notebook"`, the name and the list of its notes, and
+`GET /public/notes/:token/:noteId` gives one of them. Which notes belong to
+the notebook is looked up with every request: a note added later is there,
+and one that is moved out or put in the trash answers `404` from then on.
+The answer to the right password has an `access` value. Sent back in an
+`X-Share-Access` header it opens the notes of the notebook for an hour, so
+the password is typed once and only real attempts count against the limit.
+It is worth nothing for another link, or after the password changed.
+
+In a shared note a `[[link]]` stays a link only where the reader may follow
+it: to a note in the same shared notebook, or to a note that has a live link
+of its own. `links` in the answer says where each one leads. Every other
+link is replaced by the words a reader sees for it, so the answer names no
+note outside what is shared, not behind an alias either, and a link to a
+private note looks the same as a link to a note that does not exist.
 
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
