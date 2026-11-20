@@ -102,7 +102,11 @@ export class LinksService {
     return rows.length > 0;
   }
 
-  /** The most recently edited note outside the trash with this title. */
+  /**
+   * The note outside the trash with this title. A note goes before a
+   * template of the same title, and among those left the most recently
+   * edited one wins.
+   */
   async resolve(userId: string, title: string): Promise<{ id: string; title: string }> {
     const target = (await this.resolveKeys(userId, [normalizeTitle(title)])).get(normalizeTitle(title));
     if (!target) {
@@ -120,12 +124,12 @@ export class LinksService {
     const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
       SELECT DISTINCT ON (key) id, key
       FROM (
-        SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at
+        SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, is_template, updated_at
         FROM notes
         WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
       ) titled
       WHERE key = ANY(${keys})
-      ORDER BY key, updated_at DESC`;
+      ORDER BY key, is_template ASC, updated_at DESC`;
     for (const row of rows) result.set(row.key, row.id);
     return result;
   }
