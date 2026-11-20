@@ -1,8 +1,10 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { ApiError, getToken } from '../api/client';
-import { createNote, getNote, staleNote, updateNote } from '../api/notes';
+import { api, json } from '../api/client';
+import { staleNote } from '../api/notes';
 import type { Note } from '../api/types';
+import { notify } from './notices';
 import { tokenUserId } from './offlineCache';
 import { savedTitle } from './text';
 
@@ -106,8 +108,42 @@ async function entriesOf(userId: string): Promise<OutboxEntry[]> {
   return (all ?? []).sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 }
 
-const put = (entry: OutboxEntry) => run<IDBValidKey>('readwrite', (store) => store.put(entry));
+/**
+ * Adds a new entry, or writes over one that is still there. An entry that was
+ * removed meanwhile (discarded, or dropped with its user) is not brought back:
+ * the check and the write are one transaction.
+ */
+const put = (entry: OutboxEntry) =>
+  run<IDBValidKey>('readwrite', (store) => {
+    if (entry.seq === undefined) return store.put(entry);
+    const existing = store.get(entry.seq);
+    existing.onsuccess = () => {
+      if (existing.result) store.put(entry);
+    };
+  });
 const remove = (seq: number) => run('readwrite', (store) => void store.delete(seq));
+
+// Whether it can work at all ----------------------------------------------------
+
+/**
+ * Writing offline needs what only a secure context (HTTPS, or localhost)
+ * has: Web Locks, so that tabs never write over each other, and
+ * crypto.randomUUID for the ids of new notes. Without them the outbox is off:
+ * saving works as before while there is a connection, and nothing is queued.
+ */
+export function offlineWritingAvailable(): boolean {
+  return (
+    typeof indexedDB !== 'undefined' &&
+    globalThis.isSecureContext !== false &&
+    typeof navigator !== 'undefined' &&
+    navigator.locks !== undefined &&
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  );
+}
+
+/** Each request of a send gives up after this long, so one hung request cannot hold every tab. */
+export const sendTimeout = { ms: 15_000 };
 
 // Locks -----------------------------------------------------------------------
 
@@ -145,7 +181,11 @@ let current: { userId: string; queryClient: QueryClient } | null = null;
 let shown: OutboxEntry[] = [];
 const listeners = new Set<() => void>();
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('notes-outbox') : null;
-/** The last revision sent per note, here or in another tab: a new entry is never older. */
+/**
+ * The last revision this tab sent per note. A new entry of this tab is never
+ * older. Sends by other tabs do not count: this tab's editor never saw that
+ * text, so its next change must meet it as a conflict, not go on top of it.
+ */
 const lastSent = new Map<string, number>();
 
 async function refresh(tellOthers = true) {
@@ -156,9 +196,17 @@ async function refresh(tellOthers = true) {
 
 channel?.addEventListener('message', (event: MessageEvent) => {
   const data = event.data as { sent?: { noteId: string; revision: number } } | undefined;
-  if (data?.sent) noteSent(data.sent.noteId, data.sent.revision);
+  if (data?.sent) for (const listener of remoteListeners) listener(data.sent.noteId, data.sent.revision);
   void refresh(false);
 });
+
+// Another tab sent a change of a note: an editor open on it here is out of date, and can say so.
+type RemoteListener = (noteId: string, revision: number) => void;
+const remoteListeners = new Set<RemoteListener>();
+export function onSentElsewhere(listener: RemoteListener): () => void {
+  remoteListeners.add(listener);
+  return () => remoteListeners.delete(listener);
+}
 
 function noteSent(noteId: string, revision: number) {
   lastSent.set(noteId, Math.max(lastSent.get(noteId) ?? 0, revision));
@@ -182,6 +230,9 @@ const openEntry = (entries: OutboxEntry[], noteId: string) =>
 export const openEntryFor = (noteId: string) => openEntry(shown, noteId);
 
 /** What the note has waiting, preferring an entry that still takes text over a stuck one. */
+/** What the page knows is waiting, outside React. */
+export const outboxSnapshot = (): OutboxEntry[] => shown;
+
 export const outboxEntryFor = (noteId: string) =>
   openEntry(shown, noteId) ?? shown.find((entry) => entry.noteId === noteId) ?? null;
 
@@ -199,10 +250,23 @@ const unreachable = (error: unknown) => error instanceof ApiError && error.statu
 export const cannotReachServer = unreachable;
 
 /**
- * Keeps the text of a note to be sent later. `baseRevision` is the revision
- * the editor last knew; the base used is read here, under the lock, and is
- * never older than what was sent last, so text typed while a send was on its
- * way does not conflict with itself.
+ * Thrown by queueText when the note already has text waiting that the editor
+ * never saw, written in another tab. Nothing is overwritten: the editor asks
+ * which to keep, with `queued` as the other side.
+ */
+export class QueuedElsewhere extends Error {
+  constructor(readonly queued: OutboxEntry) {
+    super('This note has changes waiting from another tab.');
+  }
+}
+
+/**
+ * Keeps the text of a note to be sent later. A change only ever goes on top
+ * of text the editor has seen: `parent` is the text it started from. When the
+ * note has an entry whose text is something else, it was written in another
+ * tab, and this throws QueuedElsewhere instead of writing over it.
+ * `baseRevision` is the revision the editor last loaded or saved; it is
+ * raised only by what this tab itself sent since, never by another tab.
  */
 export function queueText(
   userId: string,
@@ -210,12 +274,19 @@ export function queueText(
   text: { title: string; content: string },
   baseRevision: number,
   maybeSent: { title: string; content: string }[] = [],
+  parent?: { title: string; content: string },
 ): Promise<void> {
   return locked(userId, async () => {
     const entry = openEntry(await entriesOf(userId), noteId);
     const sent = maybeSent.map(({ title, content }) => ({ title, content }));
     const at = new Date().toISOString();
     if (entry) {
+      // Seen means: the editor started from the text that is waiting. Without a
+      // parent nothing is known, and nothing is written over.
+      const same = (a: { title: string; content: string }) =>
+        savedTitle(a.title) === savedTitle(entry.title) && a.content === entry.content;
+      const seen = (parent !== undefined && same(parent)) || same(text);
+      if (!seen) throw new QueuedElsewhere(entry);
       await put({
         ...entry,
         ...text,
@@ -240,11 +311,25 @@ export function queueText(
   }).then(() => void replay());
 }
 
+/** Replaces the waiting text of a note, after the user chose theirs over what another tab queued. */
+export function replaceQueuedText(
+  userId: string,
+  noteId: string,
+  text: { title: string; content: string },
+): Promise<void> {
+  return locked(userId, async () => {
+    const entry = openEntry(await entriesOf(userId), noteId);
+    if (entry) await put({ ...entry, ...text, version: (entry.version ?? 0) + 1, at: new Date().toISOString() });
+    await refresh();
+  }).then(() => void replay());
+}
+
 /** Makes a note without a connection: an id from the browser, and the note as it will be once sent. */
 export async function createOffline(
   userId: string,
   start: { notebookId?: string | null; title?: string; content?: string },
 ): Promise<Note> {
+  if (!offlineWritingAvailable()) throw new Error('Writing without a connection needs a secure (HTTPS) address.');
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await locked(userId, async () => {
@@ -288,6 +373,11 @@ export async function createOffline(
 const sameText = (note: Note, text: { title: string; content: string }) =>
   note.title === savedTitle(text.title) && note.content === text.content;
 
+/** A request of a send, given up after `sendTimeout.ms`. Given up, it counts as not reaching the server. */
+function withTimeout<T>(path: string, init: RequestInit): Promise<T> {
+  return api<T>(path, { ...init, signal: AbortSignal.timeout(sendTimeout.ms) });
+}
+
 /** A server that has a problem is asked again later, waiting longer each time, up to ten minutes. */
 export function backoff(attempts: number): number {
   return Math.min(10 * 60_000, 5_000 * 2 ** Math.max(0, attempts - 1));
@@ -307,10 +397,9 @@ type Outcome =
 const sessionIs = (userId: string) => tokenUserId(getToken()) === userId;
 
 function failed(entry: OutboxEntry, error: unknown, now: number): Outcome {
-  const text = { title: entry.title, content: entry.content };
   if (unreachable(error)) {
-    // It may have arrived all the same. If it did, the next round finds this text on the server.
-    return { kind: 'stop', entry: { ...entry, maybeSent: [...entry.maybeSent, text].slice(-10) } };
+    // It may have arrived all the same. Its text was marked as maybe sent before it went (see replay).
+    return { kind: 'stop', entry };
   }
   if (!(error instanceof ApiError)) throw error;
   if (error.status === 401) return { kind: 'stop' };
@@ -338,7 +427,13 @@ async function send(entry: OutboxEntry, now: number): Promise<Outcome> {
     if (!sessionIs(entry.userId)) return { kind: 'stop' };
     if (entry.kind === 'create') {
       try {
-        return { kind: 'sent', note: await createNote({ id: entry.noteId, ...text, notebookId: entry.notebookId }) };
+        return {
+          kind: 'sent',
+          note: await withTimeout<Note>(
+            '/notes',
+            json('POST', { id: entry.noteId, ...text, notebookId: entry.notebookId }),
+          ),
+        };
       } catch (error) {
         if (!(error instanceof ApiError && error.status === 409)) throw error;
         // The id is taken. If the note is ours, an earlier create went through
@@ -346,7 +441,7 @@ async function send(entry: OutboxEntry, now: number): Promise<Outcome> {
         if (!sessionIs(entry.userId)) return { kind: 'stop' };
         let ours: Note | null;
         try {
-          ours = await getNote(entry.noteId);
+          ours = await withTimeout<Note>(`/notes/${entry.noteId}`, {});
         } catch (lookup) {
           if (lookup instanceof ApiError && lookup.status === 404) ours = null;
           else throw lookup;
@@ -376,7 +471,7 @@ async function send(entry: OutboxEntry, now: number): Promise<Outcome> {
       if (!sessionIs(entry.userId)) return { kind: 'stop' };
       try {
         const changes = { ...text, revision: entry.baseRevision, keepVersion: entry.keepVersion || undefined };
-        return { kind: 'sent', note: await updateNote(entry.noteId, changes) };
+        return { kind: 'sent', note: await withTimeout<Note>(`/notes/${entry.noteId}`, json('PATCH', changes)) };
       } catch (error) {
         const theirs = staleNote(error);
         if (!theirs) throw error;
@@ -402,7 +497,17 @@ async function send(entry: OutboxEntry, now: number): Promise<Outcome> {
  */
 async function settle(sent: OutboxEntry, outcome: Outcome): Promise<Note | null> {
   const stored = (await entriesOf(sent.userId)).find((entry) => entry.seq === sent.seq);
-  if (!stored) return outcome.kind === 'sent' ? outcome.note : null;
+  if (!stored) {
+    // Discarded while it was on its way. The server took it all the same;
+    // that cannot be called back, so the user is told where the old text is.
+    if (outcome.kind === 'sent') {
+      notify(
+        `A change to “${savedTitle(sent.title)}” that you discarded had already reached the server. The text before it is in the history of the note.`,
+      );
+      return outcome.note;
+    }
+    return null;
+  }
   const changed = (stored.version ?? 0) !== (sent.version ?? 0);
   if (outcome.kind === 'sent') {
     noteSent(outcome.note.id, outcome.note.revision);
@@ -456,8 +561,19 @@ export function replay(all = false): Promise<void> {
           (entry) => entry.state !== 'conflict' && (all || !entry.nextTryAt || entry.nextTryAt <= now),
         );
         if (!due) break;
-        const outcome = await send(due, now);
-        const note = await locked(userId, () => settle(due, outcome));
+        // Marked before it goes: if the tab dies with the request on its way,
+        // the next round still knows this text may be on the server.
+        const marked = await locked(userId, async () => {
+          const stored = (await entriesOf(userId)).find((entry) => entry.seq === due.seq);
+          if (!stored || stored.version !== due.version) return null;
+          const text = { title: due.title, content: due.content };
+          const next = { ...stored, maybeSent: [...stored.maybeSent, text].slice(-10) };
+          await put(next);
+          return next;
+        });
+        if (!marked) continue;
+        const outcome = await send(marked, now);
+        const note = await locked(userId, () => settle(marked, outcome));
         if (note) {
           queryClient.setQueryData(['note', note.id], note);
           void queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -522,14 +638,31 @@ export function discardEntry(seq: number): Promise<void> {
  * is gone or in the trash. The stuck entry goes; the new note is sent as usual.
  */
 export async function saveAsNewNote(seq: number): Promise<string | null> {
-  if (!current) return null;
+  if (!current || !offlineWritingAvailable()) return null;
   const { userId } = current;
-  const entry = (await locked(userId, () => entriesOf(userId))).find((item) => item.seq === seq);
-  if (!entry) return null;
-  const made = await createOffline(userId, { title: entry.title, content: entry.content });
-  await discardEntry(seq);
+  const id = await locked(userId, async () => {
+    const entry = (await entriesOf(userId)).find((item) => item.seq === seq);
+    if (!entry) return null;
+    const noteId = crypto.randomUUID();
+    await put({
+      userId,
+      noteId,
+      kind: 'create',
+      title: entry.title,
+      content: entry.content,
+      notebookId: null,
+      baseRevision: 0,
+      maybeSent: [],
+      version: 1,
+      state: 'waiting',
+      at: new Date().toISOString(),
+    });
+    await remove(seq);
+    await refresh();
+    return noteId;
+  });
   void replay();
-  return made.id;
+  return id;
 }
 
 // Whose outbox ----------------------------------------------------------------
@@ -584,8 +717,11 @@ export function dropOtherOutboxes(keep: string | null): Promise<void> {
 }
 
 /** Tries to send everything, and says how many changes are still not on the server. */
-export async function unsentAfterTrying(userId: string): Promise<number> {
-  if (current?.userId === userId) await replay(true);
+export async function unsentAfterTrying(userId: string, waitMs = 10_000): Promise<number> {
+  if (current?.userId === userId) {
+    // Bounded: a sign-out does not wait for a hung server.
+    await Promise.race([replay(true), new Promise((resolve) => setTimeout(resolve, waitMs))]);
+  }
   return (await locked(userId, () => entriesOf(userId))).length;
 }
 
