@@ -1,5 +1,4 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { User } from '@prisma/client';
 import { createHash, randomBytes } from 'node:crypto';
 import { APP_CONFIG, AppConfig } from '../config/config';
 import { MailService, OutgoingMail } from '../mail/mail.service';
@@ -136,15 +135,23 @@ export class PasswordResetService {
     return true;
   }
 
-  /** Sets the new password and signs the account out everywhere. Answers the account as it is afterwards. */
-  async reset(token: string, password: string, now = new Date()): Promise<User> {
+  /**
+   * Sets the new password, signs the account out everywhere and revokes its
+   * API tokens.
+   *
+   * The tokens go too because this is the way back into an account someone
+   * else may have been in: whoever knew the old password could have made a
+   * token, and the page this is called from has no login to show a list on.
+   * A password change in Settings keeps them and shows them instead.
+   */
+  async reset(token: string, password: string, now = new Date()): Promise<void> {
     this.assertEnabled();
     const link = await this.prisma.passwordReset.findUnique({ where: { tokenHash: hashResetToken(token) } });
     if (!link || link.expiresAt.getTime() <= now.getTime()) {
       throw new BadRequestException(LINK_NOT_VALID);
     }
     const passwordHash = await hashPassword(password);
-    return this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       // The same lock as in sendLink, so a link that is being added right now
       // is either removed below or belongs to a request made after this reset.
       await tx.$queryRaw`SELECT id FROM users WHERE id = ${link.userId}::uuid FOR UPDATE`;
@@ -155,7 +162,8 @@ export class PasswordResetService {
       }
       // The other links of the account stop working with this one.
       await tx.passwordReset.deleteMany({ where: { userId: link.userId } });
-      return tx.user.update({
+      await tx.apiToken.deleteMany({ where: { userId: link.userId } });
+      await tx.user.update({
         where: { id: link.userId },
         data: { passwordHash, tokenVersion: { increment: 1 } },
       });

@@ -151,8 +151,7 @@ export class AuthService {
     }
   }
 
-  /** A login token for the user as they are now, with the current token version. */
-  async issue(user: User): Promise<AuthResult> {
+  private async issue(user: User): Promise<AuthResult> {
     const payload: TokenPayload = { sub: user.id, ver: user.tokenVersion };
     return { token: await this.jwt.signAsync(payload), user: toPublicUser(user) };
   }
