@@ -2,10 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
-import { createNote, listNotes } from '../api/notes';
+import { createNote, listNotes, openDailyNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Notebook, NoteChanges } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { todaysNote } from '../lib/days';
 import { dropStashes } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { notebookTree, totalNotes } from '../lib/notebooks';
@@ -63,6 +64,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       // A note is not shown in the list of templates, so that view is left behind.
       const search = onNotes && !note.isTemplate ? leavingTemplates(location.search) : onNotes ? location.search : '';
       navigate({ pathname: `/notes/${note.id}`, search });
+      onNavigate?.();
+    },
+  });
+
+  // "Today" is a day here, in the browser. The server finds the note of that day or makes it.
+  const today = useMutation({
+    mutationFn: () => openDailyNote(todaysNote(user?.preferences.dailyNotes.dateFormat ?? 'iso')),
+    onSuccess: (note) => {
+      for (const key of ['notes', 'notebooks', 'tags']) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      // Shown among all notes: the list that was open may be one the note is not in.
+      navigate(`/notes/${note.id}`);
       onNavigate?.();
     },
   });
@@ -149,6 +163,20 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="sidebar-scroll">
         <div className="nav-section">
+          <button
+            type="button"
+            className="nav-item nav-button"
+            title="Open today’s note, or start it"
+            disabled={today.isPending}
+            onClick={() => today.mutate()}
+          >
+            <span className="nav-label">Today</span>
+          </button>
+          {today.error && (
+            <p className="nav-empty" role="alert">
+              Today’s note could not be opened.
+            </p>
+          )}
           {filterLink('', showsAll, 'All notes')}
           {filterLink('?view=pinned', view === 'pinned', 'Pinned')}
           {filterLink('?view=favorites', view === 'favorites', 'Favourites')}

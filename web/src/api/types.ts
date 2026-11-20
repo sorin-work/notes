@@ -1,8 +1,19 @@
+/** Choices kept with the account, so they are the same on every device. Theme and editor mode stay in the browser. */
+export interface Preferences {
+  /** What the note behind "Today" is made with. */
+  dailyNotes: {
+    notebookId: string | null;
+    templateId: string | null;
+    dateFormat: 'iso' | 'long' | 'us';
+  };
+}
+
 export interface User {
   id: string;
   email: string;
   name: string;
   createdAt: string;
+  preferences: Preferences;
 }
 
 export interface AuthResult {

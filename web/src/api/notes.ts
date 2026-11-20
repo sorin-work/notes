@@ -35,6 +35,13 @@ export function staleNote(error: unknown): Note | null {
 
 export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DELETE' });
 
+/**
+ * The daily note of a day: the one there is, or a new one made as the
+ * preferences say. The day and its title come from here, see lib/days.
+ */
+export const openDailyNote = (today: { date: string; title: string; placeholders: { date: string; time: string } }) =>
+  api<Note>('/notes/daily', json('POST', today));
+
 /** A copy of the note with its text, tags and notebook, and nothing else of it. */
 export const duplicateNote = (id: string) => api<Note>(`/notes/${id}/duplicate`, { method: 'POST' });
 

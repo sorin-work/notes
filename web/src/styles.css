@@ -401,6 +401,15 @@ mark {
   flex: 1;
 }
 
+.nav-button {
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .nav-item:hover {
   background: var(--border);
 }
