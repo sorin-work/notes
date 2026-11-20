@@ -103,6 +103,28 @@ describe('Layout', () => {
     expect(screen.getByRole('dialog', { name: 'Go to note' })).toBeInTheDocument();
   });
 
+  it('only opens the menu for "/" where the sidebar is a menu', async () => {
+    mockFetch(routes);
+    const narrow = vi.fn((query: string) => ({ matches: false, media: query }));
+    vi.stubGlobal('matchMedia', narrow);
+    renderLayout('/notes');
+    const search = await screen.findByLabelText('Search notes');
+
+    // On a wide screen the sidebar is always there. Opening a menu would only put its shade into the layout.
+    await userEvent.keyboard('/');
+    expect(search).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('.scrim')).toBeNull();
+
+    search.blur();
+    narrow.mockImplementation((query: string) => ({ matches: true, media: query }));
+    await userEvent.keyboard('/');
+    expect(search).toHaveFocus();
+    expect(narrow).toHaveBeenLastCalledWith('(max-width: 820px)');
+    expect(screen.getByRole('button', { name: 'Close menu' })).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.scrim')).not.toBeNull();
+  });
+
   it('offers skip links to the content and to the open note', async () => {
     mockFetch(routes);
     renderLayout('/notes/n1');

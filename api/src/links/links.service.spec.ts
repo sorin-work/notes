@@ -122,6 +122,22 @@ describe('LinksService', () => {
     });
   });
 
+  describe('titleTaken', () => {
+    it('is true when a note outside the trash has the title, whatever its case', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ id: 'a1' }]);
+      await expect(service.titleTaken(USER, ' Project  ATLAS')).resolves.toBe(true);
+      // The title goes into the query as a value, in the form links are matched by.
+      expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual([USER, 'project atlas', null, null]);
+    });
+
+    it('is false when no note has it, asks the transaction it is given and can leave a note out', async () => {
+      const tx = { $queryRaw: jest.fn().mockResolvedValue([]) };
+      await expect(service.titleTaken(USER, 'Atlas', { db: tx as never, except: 'n1' })).resolves.toBe(false);
+      expect(tx.$queryRaw.mock.calls[0].slice(1)).toEqual([USER, 'atlas', 'n1', 'n1']);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
   describe('resolve', () => {
     it('returns the matching note', async () => {
       prisma.$queryRaw.mockResolvedValue([{ id: 'a1', key: 'alpha' }]);

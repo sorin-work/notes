@@ -15,7 +15,7 @@
   --success: #1f7a4d;
   --success-soft: #e3f3ea;
   --mark: #fff1a8;
-  --missing: #b0561b;
+  --missing: #ac541a;
   --favourite: #ae7e00;
   --shadow: 0 8px 30px rgb(0 0 0 / 12%);
   --radius: 8px;
@@ -310,6 +310,11 @@ mark {
 }
 
 .mobile-bar {
+  display: none;
+}
+
+/* The shade behind the menu on narrow screens. Without this it would be a third column here. */
+.scrim {
   display: none;
 }
 
@@ -675,6 +680,16 @@ mark {
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
   margin-bottom: 0.6rem;
+}
+
+.banner-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  background: var(--accent-soft);
+  color: var(--text);
+  margin-top: 0.6rem;
 }
 
 .title-input {
@@ -1092,6 +1107,18 @@ mark {
 
 .form h3 {
   margin: 0.5rem 0 0;
+}
+
+/* The parts of the Account card: profile, password, sessions, delete. */
+.card > .form + .form {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+/* The gap of the form already spaces these out. */
+.settings-page .form > p {
+  margin: 0;
 }
 
 .field {
@@ -1518,6 +1545,11 @@ ul.error-box {
   margin-bottom: 0.4rem;
 }
 
+/* The heading of a message that replaced the form takes the focus, to be read out. It needs no ring. */
+.auth-card h1:focus {
+  outline: none;
+}
+
 .auth-card p {
   margin: 0;
   text-align: center;
@@ -1601,6 +1633,7 @@ ul.error-box {
   }
 
   .scrim {
+    display: block;
     position: fixed;
     inset: 0;
     background: rgb(0 0 0 / 30%);

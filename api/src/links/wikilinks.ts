@@ -5,6 +5,16 @@ export interface WikiLink {
   alias: string | null;
 }
 
+/** A [[link]] where it stands in a note. */
+interface LinkInText extends WikiLink {
+  /** Where the title starts in the text, after the opening brackets. */
+  start: number;
+  /** Where the title ends, before any #heading, |alias or the closing brackets. */
+  end: number;
+  /** False when inline code sits between the brackets, so the title is not the text that is written there. */
+  plain: boolean;
+}
+
 const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
@@ -18,16 +28,17 @@ function withoutInlineCode(line: string): string {
   return line.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (match) => ' '.repeat(match.length));
 }
 
-/**
- * Finds the [[wiki links]] in a note, skipping fenced code blocks and inline
- * code. Each target title appears once, in the order first linked.
- */
-export function extractWikiLinks(markdown: string): WikiLink[] {
-  const links: WikiLink[] = [];
-  const seen = new Set<string>();
+/** The lines of a note outside fenced code blocks, each with where it starts in the note. */
+function* proseLines(markdown: string): Generator<{ line: string; lineStart: number }> {
   let fence: string | null = null;
+  let offset = 0;
+  // Lines sit at the even indexes, the line endings between them at the odd ones.
+  const parts = markdown.split(/(\r?\n)/);
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index];
+    const lineStart = offset;
+    offset += line.length + (parts[index + 1]?.length ?? 0);
 
-  for (const line of markdown.split(/\r?\n/)) {
     const fenceMatch = FENCE.exec(line);
     if (fenceMatch) {
       const marker = fenceMatch[1];
@@ -40,17 +51,91 @@ export function extractWikiLinks(markdown: string): WikiLink[] {
         continue;
       }
     }
-    if (fence !== null) continue;
+    if (fence === null) yield { line, lineStart };
+  }
+}
 
+/** Every [[wiki link]] in a note, in order, skipping fenced code blocks and inline code. */
+function* findLinks(markdown: string): Generator<LinkInText> {
+  for (const { line, lineStart } of proseLines(markdown)) {
+    // Blanking keeps the length of the line, so positions in it are positions in the note.
     for (const match of withoutInlineCode(line).matchAll(LINK)) {
-      const title = match[1].trim().replace(/\s+/g, ' ');
-      const key = normalizeTitle(title);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      links.push({ title, alias: match[2]?.trim() || null });
+      const start = lineStart + match.index + 2;
+      const end = start + match[1].length;
+      yield {
+        title: match[1].trim().replace(/\s+/g, ' '),
+        alias: match[2]?.trim() || null,
+        start,
+        end,
+        plain: markdown.slice(start, end) === match[1],
+      };
     }
   }
+}
+
+/**
+ * Finds the [[wiki links]] in a note, skipping fenced code blocks and inline
+ * code. Each target title appears once, in the order first linked.
+ */
+export function extractWikiLinks(markdown: string): WikiLink[] {
+  const links: WikiLink[] = [];
+  const seen = new Set<string>();
+  for (const { title, alias } of findLinks(markdown)) {
+    const key = normalizeTitle(title);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    links.push({ title, alias });
+  }
   return links;
+}
+
+/**
+ * Whether [[title]] can be written into any note and read back as a link to
+ * that title. A title with [ ] | or # in it cannot, and one with a backtick
+ * could pair up with another backtick on the line and turn the link into code.
+ * A line break is refused as well: a lone \r would pass as a space, but it
+ * has no business being written into other notes.
+ */
+export function isLinkable(title: string): boolean {
+  const key = normalizeTitle(title);
+  if (!key || /[`\r\n]/.test(title)) return false;
+  const links = [...findLinks(`[[${title}]]`)];
+  return links.length === 1 && links[0].alias === null && normalizeTitle(links[0].title) === key;
+}
+
+/**
+ * Points the [[links]] to `from` at `to`. Titles are matched the way links
+ * are matched to notes, ignoring case and extra spaces, and code is skipped
+ * as in extractWikiLinks. Only the title between the brackets is replaced, so
+ * a #heading, an |alias and everything else in the note stay as written.
+ *
+ * Returns the text unchanged when `to` cannot be written as a link, and when
+ * the result would not read back as the same links with just that title
+ * swapped.
+ */
+export function renameLinks(markdown: string, from: string, to: string): string {
+  const fromKey = normalizeTitle(from);
+  const toKey = normalizeTitle(to);
+  if (!fromKey || !isLinkable(to)) return markdown;
+
+  let renamed = '';
+  let copied = 0;
+  const expected: string[] = [];
+  for (const link of findLinks(markdown)) {
+    const key = normalizeTitle(link.title);
+    // With code between the brackets there is no telling what to replace. That link stays.
+    const rename = key === fromKey && link.plain;
+    if (rename) {
+      renamed += markdown.slice(copied, link.start) + to;
+      copied = link.end;
+    }
+    expected.push(rename ? toKey : key);
+  }
+  if (copied === 0) return markdown;
+  renamed += markdown.slice(copied);
+
+  const found = [...findLinks(renamed)].map((link) => normalizeTitle(link.title));
+  return found.length === expected.length && found.every((key, index) => key === expected[index]) ? renamed : markdown;
 }
 
 /** Where a note mentions a title in plain text, as positions in the note. */
@@ -86,9 +171,7 @@ function withoutLinks(line: string): string {
  */
 function mentionPattern(title: string): RegExp | null {
   const key = normalizeTitle(title);
-  if (key.length < MIN_MENTION_LENGTH || /[`\r\n]/.test(title)) return null;
-  const asLink = extractWikiLinks(`[[${title}]]`);
-  if (asLink.length !== 1 || asLink[0].alias !== null || normalizeTitle(asLink[0].title) !== key) return null;
+  if (key.length < MIN_MENTION_LENGTH || !isLinkable(title)) return null;
   const words = key.split(' ').map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp(`(?<![\\p{L}\\p{N}_])${words.join('[ \\t]+')}(?![\\p{L}\\p{N}_])`, 'iu');
 }
@@ -107,29 +190,7 @@ export function findMention(markdown: string, title: string): Mention | null {
   const pattern = mentionPattern(title);
   if (!pattern) return null;
 
-  let fence: string | null = null;
-  let offset = 0;
-  // Lines sit at the even indexes, the line endings between them at the odd ones.
-  const parts = markdown.split(/(\r?\n)/);
-  for (let index = 0; index < parts.length; index += 2) {
-    const line = parts[index];
-    const lineStart = offset;
-    offset += line.length + (parts[index + 1]?.length ?? 0);
-
-    const fenceMatch = FENCE.exec(line);
-    if (fenceMatch) {
-      const marker = fenceMatch[1];
-      if (fence === null) {
-        fence = marker;
-        continue;
-      }
-      if (marker[0] === fence[0] && marker.length >= fence.length) {
-        fence = null;
-        continue;
-      }
-    }
-    if (fence !== null) continue;
-
+  for (const { line, lineStart } of proseLines(markdown)) {
     // Blanking keeps the length of the line, so a position in it is a position in the note.
     const match = pattern.exec(withoutLinks(withoutInlineCode(line)));
     if (match) return { start: lineStart + match.index, end: lineStart + match.index + match[0].length };

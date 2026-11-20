@@ -41,8 +41,14 @@ const TEXT: [text: string, background: string][] = [
   ['danger', 'danger-soft'],
   ['success', 'bg'],
   ['success', 'surface'],
-  // Links to notes that do not exist yet.
+  // Links to notes that do not exist yet, also in the header of a table.
   ['missing', 'surface'],
+  ['missing', 'surface-2'],
+  // Added and removed lines in the changes view of the history, with their signs and labels.
+  ['text', 'success-soft'],
+  ['muted', 'success-soft'],
+  ['text', 'danger-soft'],
+  ['muted', 'danger-soft'],
 ];
 
 /** Shapes that carry meaning without text: WCAG AA asks for 3:1. */

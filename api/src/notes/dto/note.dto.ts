@@ -4,6 +4,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
@@ -154,4 +155,14 @@ export class ResolveQuery {
   @MaxLength(MAX_TITLE_LENGTH)
   @NotContains(NUL, { message: 'title must not contain a null character' })
   title: string;
+}
+
+export class RenameLinksDto {
+  /** The title the note had before it was renamed, which the links still point at. */
+  @Trim()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(MAX_TITLE_LENGTH)
+  @NotContains(NUL, { message: 'from must not contain a null character' })
+  from: string;
 }
