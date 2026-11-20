@@ -63,6 +63,28 @@ describe('NoteEditor', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
   });
 
+  it('asks for the unlinked mentions again after a save only when the title changed', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1/mentions': { body: { items: [], total: 0, page: 1, pageSize: 10, capped: false } },
+      }),
+    );
+    renderEditor();
+    const count = (path: string) => calls.filter((call) => call.method === 'GET' && call.url.includes(path)).length;
+    const saves = () => calls.filter((call) => call.method === 'PATCH').length;
+    await waitFor(() => expect(count('/mentions')).toBe(1));
+
+    await userEvent.type(screen.getByLabelText('Note content'), ' More.');
+    await waitFor(() => expect(saves()).toBe(1), { timeout: 2000 });
+    // The backlinks are asked for again after the save, the mentions are not.
+    await waitFor(() => expect(count('/backlinks')).toBe(2));
+    expect(count('/mentions')).toBe(1);
+
+    await userEvent.type(screen.getByLabelText('Title'), ' v2');
+    await waitFor(() => expect(saves()).toBe(2), { timeout: 2000 });
+    await waitFor(() => expect(count('/mentions')).toBe(2));
+  });
+
   it('pins the note straight away', async () => {
     const calls = mockFetch(baseRoutes());
     renderEditor();

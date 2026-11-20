@@ -120,6 +120,10 @@ function LoadedEditor({ note }: { note: Note }) {
         dropStash(ownerId, note.id);
         stashInEditor.current = false;
       }
+      // Mentions are looked for by title, so only a new title changes them.
+      if (queryClient.getQueryData<Note>(['note', note.id])?.title !== saved.title) {
+        void queryClient.invalidateQueries({ queryKey: ['mentions', note.id] });
+      }
       queryClient.setQueryData(['note', note.id], saved);
       void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
@@ -329,6 +333,7 @@ function LoadedEditor({ note }: { note: Note }) {
       queryClient.removeQueries({ queryKey: ['note', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['trash'] });
       void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
+      void queryClient.invalidateQueries({ queryKey: ['mentions'] });
       refreshLists();
       navigate({ pathname: '/notes', search: location.search });
     },
@@ -376,7 +381,7 @@ function LoadedEditor({ note }: { note: Note }) {
       // With notes left behind, the links are not all on the new title yet and the offer stays.
       setSkipped(result.skipped);
       if (result.skipped === 0) setLinkedTitle(result.title);
-      for (const key of ['notes', 'links', 'backlinks', 'versions', 'search', 'rename-links']) {
+      for (const key of ['notes', 'links', 'backlinks', 'mentions', 'versions', 'search', 'rename-links']) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     },

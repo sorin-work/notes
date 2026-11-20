@@ -12,7 +12,7 @@ export function TrashPage() {
   const trash = useQuery({ queryKey: ['trash'], queryFn: listTrash });
 
   const refresh = () => {
-    for (const key of ['trash', 'notes', 'notebooks', 'tags', 'backlinks', 'links']) {
+    for (const key of ['trash', 'notes', 'notebooks', 'tags', 'backlinks', 'mentions', 'links']) {
       void queryClient.invalidateQueries({ queryKey: [key] });
     }
   };
