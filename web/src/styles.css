@@ -975,16 +975,6 @@ mark {
   margin: 0.5rem 0 0;
 }
 
-.tokens-still-working ul {
-  margin: 0.4rem 0;
-  padding-left: 1.2rem;
-}
-
-.auth-card .tokens-still-working,
-.auth-card .tokens-still-working p {
-  text-align: left;
-}
-
 /* The parts of the Account card: profile, password, sessions, delete. */
 .card > .form + .form {
   margin-top: 1.25rem;
