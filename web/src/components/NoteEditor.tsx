@@ -43,6 +43,7 @@ import {
   resolveEntry,
   useOutbox,
 } from '../lib/outbox';
+import { ownNotebooks } from '../lib/notebooks';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { fromTemplate } from '../lib/templates';
@@ -721,7 +722,7 @@ function LoadedEditor({ note }: { note: Note }) {
         navigate({ pathname: `/notes/${created.id}`, search: location.search });
       }
     },
-    [autosave, navigate, location.search, note.notebookId, queryClient, refreshLists],
+    [autosave, navigate, location.search, note.notebookId, queryClient, refreshLists, linkScope],
   );
 
   const updateLinkState = (text: string, cursor: number) => {
@@ -825,7 +826,7 @@ function LoadedEditor({ note }: { note: Note }) {
       )}
       <div className="editor-toolbar">
         <NotebookSelect
-          notebooks={notebooks.data ?? []}
+          notebooks={member ? (notebooks.data ?? []) : ownNotebooks(notebooks.data ?? [])}
           value={note.notebookId}
           disabled={ownerOnly}
           onChange={(notebookId) => {
