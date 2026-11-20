@@ -7,20 +7,25 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import type { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
+import { templateNotes } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { hashPassword, verifyPassword } from './password';
+import { Preferences, readPreferences } from './preferences';
 
 export interface PublicUser {
   id: string;
   email: string;
   name: string;
   createdAt: Date;
+  /** Choices kept with the account, so they are the same on every device. */
+  preferences: Preferences;
 }
 
 export interface AuthResult {
@@ -38,7 +43,13 @@ export interface TokenPayload {
 }
 
 export function toPublicUser(user: User): PublicUser {
-  return { id: user.id, email: user.email, name: user.name, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    createdAt: user.createdAt,
+    preferences: readPreferences(user.preferences),
+  };
 }
 
 @Injectable()
@@ -98,6 +109,39 @@ export class AuthService {
       await this.prisma.passwordReset.deleteMany({ where: { userId } });
     }
     return toPublicUser(updated);
+  }
+
+  /**
+   * Changes the preferences that were sent and leaves the others alone. A
+   * notebook or a template that is named has to be the user's own, and the
+   * template has to be one.
+   */
+  async updatePreferences(userId: string, dto: UpdatePreferencesDto): Promise<Preferences> {
+    const user = await this.find(userId);
+    const preferences = readPreferences(user.preferences);
+    const daily = { ...preferences.dailyNotes };
+    const sent = dto.dailyNotes ?? {};
+    if (sent.notebookId !== undefined) {
+      if (sent.notebookId && !(await this.prisma.notebook.findFirst({ where: { id: sent.notebookId, userId } }))) {
+        throw new BadRequestException('There is no such notebook');
+      }
+      daily.notebookId = sent.notebookId;
+    }
+    if (sent.templateId !== undefined) {
+      const where = { ...templateNotes(userId), id: sent.templateId ?? undefined };
+      if (sent.templateId && !(await this.prisma.note.findFirst({ where }))) {
+        throw new BadRequestException('There is no such template');
+      }
+      daily.templateId = sent.templateId;
+    }
+    if (sent.dateFormat !== undefined) daily.dateFormat = sent.dateFormat;
+
+    const next: Preferences = { ...preferences, dailyNotes: daily };
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { preferences: next as unknown as Prisma.InputJsonObject },
+    });
+    return next;
   }
 
   /**
