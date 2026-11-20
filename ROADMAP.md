@@ -25,7 +25,7 @@ couple of weekends, **L** several weeks of spare time.
 | 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
 | 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
 | 6   | Accessibility pass                     | Next    | frontend | M    | -          |
-| 7   | Scheduled backups                      | Next    | infra    | S    | -          |
+| 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Later   | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Later   | both     | M    | -          |
@@ -101,22 +101,6 @@ keyboard or with a screen reader. Gaps I already know about:
 - Add an automated check (axe, through `vitest-axe` or similar) to the page
   tests so regressions fail CI. Colour contrast in both themes needs checking
   by hand, since jsdom cannot do it.
-
-### 7. Scheduled backups
-
-Everything lives in the `db-data` volume. The only backup today is
-remembering to click "Export all notes", and that zip leaves out the trash,
-version history and share links.
-
-- A `backup` service in `docker-compose.yml` behind a compose profile that
-  runs `pg_dump` (already in the `postgres:17-alpine` image) once a day into
-  a mounted folder and keeps the last N dumps.
-- A "Backup and restore" section in the README with the restore command.
-- A restore that is never tested is not a backup: a CI step that dumps the
-  end-to-end test database, restores it into a scratch database and compares
-  row counts would cover it.
-- Undecided: cron inside a container is clumsy. A shell loop with `sleep` is
-  probably enough for one dump a day.
 
 ## Later
 
@@ -392,3 +376,20 @@ opening a stale row, the note that is already open is left out, and the key
 does nothing while another dialog is open. Still open: notebooks, tags and
 actions in the list. Notes that share a title look the same there, and the
 dialog has no button, so it needs a keyboard.
+
+### 7. Scheduled backups
+
+A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
+`scripts/backup.sh` in the `postgres:17-alpine` image: a `pg_dump` into
+`./backups` once a day, keeping the newest seven. It is a shell loop with
+`sleep` rather than cron. It reads the age of the newest dump from the file
+names when it starts, so a restart does not add one, and then looks at the
+clock every minute. Beyond the design, the same script restores
+(`backup restore <file>`), loading the dump into a new database that replaces
+the old one only when the load worked. The README has the commands, and CI
+runs `scripts/check-backup.sh` after the end-to-end tests: the loop and the
+pruning against clocks that are wrong, three dumps while keeping two, a
+restore into a scratch database and a row count of every table. Still open:
+the dumps are not encrypted, they stay on the same machine unless
+`BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
+the service log.
