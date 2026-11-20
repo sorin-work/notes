@@ -478,6 +478,25 @@ mark {
   overflow-wrap: anywhere;
 }
 
+.filter-selects {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.filter-selects select {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-pane .filter-selects {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-page .filter-selects {
+  margin-bottom: 0.75rem;
+}
+
 .list-scroll {
   flex: 1;
   overflow-y: auto;
