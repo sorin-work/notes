@@ -18,7 +18,15 @@ import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
 import { ExportService } from '../transfer/export.service';
-import { CreateNoteDto, ListNotesQuery, RenameLinksDto, ResolveQuery, TitleQuery, UpdateNoteDto } from './dto/note.dto';
+import {
+  CreateNoteDto,
+  DailyNoteDto,
+  ListNotesQuery,
+  RenameLinksDto,
+  ResolveQuery,
+  TitleQuery,
+  UpdateNoteDto,
+} from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService, RenamedLinks } from './notes.service';
 
@@ -53,6 +61,16 @@ export class NotesController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateNoteDto): Promise<NoteView> {
     return this.notes.create(user.id, dto);
+  }
+
+  /**
+   * The daily note of a day: opens the one there is and makes it when there
+   * is none. Asked twice for the same day, it answers with the same note.
+   */
+  @Post('daily')
+  @HttpCode(HttpStatus.OK)
+  daily(@CurrentUser() user: AuthUser, @Body() dto: DailyNoteDto): Promise<NoteView> {
+    return this.notes.daily(user.id, dto);
   }
 
   /** One note with its text. */

@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Note, Prisma } from '@prisma/client';
+import { Note, Prisma } from '@prisma/client';
+import { readPreferences } from '../auth/preferences';
+import { dayTitles, dayToDate, parseDay } from '../common/day';
 import { Page, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
 import { isLinkable, normalizeTitle, renameLinks } from '../links/wikilinks';
@@ -8,10 +10,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
 import { TagsService } from '../tags/tags.service';
 import { VersionsService } from '../versions/versions.service';
-import { CreateNoteDto, ListNotesQuery, MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH, UpdateNoteDto } from './dto/note.dto';
+import {
+  CreateNoteDto,
+  DailyNoteDto,
+  ListNotesQuery,
+  MAX_CONTENT_LENGTH,
+  MAX_TITLE_LENGTH,
+  UpdateNoteDto,
+} from './dto/note.dto';
 import { templateNotes, workingNotes } from './note-scope';
 import { IN_TRASH, refusedWrite, writeNoteText } from './note-text';
-import { noteInclude, NoteSummary, NoteView, toSummary, toView } from './note-view';
+import { noteInclude, NoteSummary, NoteView, NoteWithRelations, toSummary, toView } from './note-view';
 import { fillPlaceholders } from './placeholders';
 
 export const DEFAULT_TITLE = 'Untitled';
@@ -91,14 +100,95 @@ export class NotesService {
       await this.notebooks.findOwned(userId, dto.notebookId);
     }
     const template = dto.templateId ? await this.fromTemplate(userId, dto.templateId, dto) : null;
-    return this.insert(userId, {
-      title: dto.title || template?.title || DEFAULT_TITLE,
-      content: dto.content ?? template?.content ?? '',
-      tags: dto.tags ?? template?.tags ?? [],
-      notebookId: dto.notebookId ?? null,
-      pinned: dto.pinned ?? false,
-      favorite: dto.favorite ?? false,
-      isTemplate: dto.isTemplate ?? false,
+    if (dto.templateId && !template) {
+      throw new NotFoundException('Template not found');
+    }
+    const created = await this.prisma.$transaction((tx) =>
+      this.insert(tx, userId, {
+        title: dto.title || template?.title || DEFAULT_TITLE,
+        content: dto.content ?? template?.content ?? '',
+        tags: dto.tags ?? template?.tags ?? [],
+        notebookId: dto.notebookId ?? null,
+        pinned: dto.pinned ?? false,
+        favorite: dto.favorite ?? false,
+        isTemplate: dto.isTemplate ?? false,
+        dailyDate: null,
+      }),
+    );
+    return toView(created);
+  }
+
+  /**
+   * The daily note of a day: the one there is, or a new one. The day and its
+   * title are the browser's, because "today" depends on where the user is.
+   *
+   * A user has one daily note per day, and the database sees to that with a
+   * unique index on user and day. Two tabs that ask at the same moment both
+   * try to make the note, one of them fails on the index, asks again and
+   * gets the note the other one made.
+   */
+  async daily(userId: string, dto: DailyNoteDto): Promise<NoteView> {
+    const day = parseDay(dto.date);
+    if (!day) {
+      throw new BadRequestException('date must be a day that exists, written as YYYY-MM-DD');
+    }
+    if (!dayTitles(day).includes(dto.title)) {
+      throw new BadRequestException('title must be the date, written in one of the formats of a daily note');
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return toView(await this.prisma.$transaction((tx) => this.findOrMakeDaily(tx, userId, day, dto)));
+      } catch (error) {
+        const taken = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+        if (!taken || attempt === 2) throw error;
+      }
+    }
+  }
+
+  private async findOrMakeDaily(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    day: NonNullable<ReturnType<typeof parseDay>>,
+    dto: DailyNoteDto,
+  ): Promise<NoteWithRelations> {
+    const dailyDate = dayToDate(day);
+    const marked = await tx.note.findFirst({ where: { userId, dailyDate }, include: noteInclude });
+    if (marked && !marked.deletedAt) return marked;
+    // The note of that day is in the trash. It stays there as an ordinary note, and the day gets a new one.
+    if (marked) await tx.note.update({ where: { id: marked.id }, data: { dailyDate: null } });
+
+    // A note that is titled with the day, in whichever format, is the note of
+    // that day: one written by hand, or made before the format was changed.
+    const titled = await tx.note.findFirst({
+      where: {
+        ...workingNotes(userId),
+        dailyDate: null,
+        OR: dayTitles(day).map((title) => ({ title: { equals: title, mode: 'insensitive' as const } })),
+      },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+    });
+    if (titled) {
+      // Marking it is no edit: the text, "last edited" and the revision stay as they are.
+      return tx.note.update({ where: { id: titled.id }, data: { dailyDate }, include: noteInclude });
+    }
+
+    // A new one, made the way the user set it up. A notebook or a template
+    // that is gone by now is simply not used.
+    const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { preferences: true } });
+    const { notebookId, templateId } = readPreferences(user.preferences).dailyNotes;
+    const notebook = notebookId ? await tx.notebook.findFirst({ where: { id: notebookId, userId } }) : null;
+    const template = templateId
+      ? await this.fromTemplate(userId, templateId, { title: dto.title, placeholders: dto.placeholders }, tx)
+      : null;
+    return this.insert(tx, userId, {
+      title: dto.title,
+      content: template?.content ?? '',
+      tags: template?.tags ?? [],
+      notebookId: notebook?.id ?? null,
+      pinned: false,
+      favorite: false,
+      isTemplate: false,
+      dailyDate,
     });
   }
 
@@ -114,15 +204,20 @@ export class NotesService {
       include: { tags: { include: { tag: true } } },
     });
     const suffix = ' (copy)';
-    return this.insert(userId, {
-      title: source.title.slice(0, MAX_TITLE_LENGTH - suffix.length) + suffix,
-      content: source.content,
-      tags: source.tags.map((noteTag) => noteTag.tag.name),
-      notebookId: source.notebookId,
-      pinned: false,
-      favorite: false,
-      isTemplate: source.isTemplate,
-    });
+    const copy = await this.prisma.$transaction((tx) =>
+      this.insert(tx, userId, {
+        title: source.title.slice(0, MAX_TITLE_LENGTH - suffix.length) + suffix,
+        content: source.content,
+        tags: source.tags.map((noteTag) => noteTag.tag.name),
+        notebookId: source.notebookId,
+        pinned: false,
+        favorite: false,
+        isTemplate: source.isTemplate,
+        // A day has one note. The copy of a daily note is an ordinary note.
+        dailyDate: null,
+      }),
+    );
+    return toView(copy);
   }
 
   /**
@@ -133,20 +228,19 @@ export class NotesService {
    * the new note gets. Without a title in the request that is the title of
    * the template, less a closing "template": a note made from "Weekly review
    * template" is a "Weekly review", and does not share its title with the
-   * template it came from.
+   * template it came from. Null when there is no such template.
    */
   private async fromTemplate(
     userId: string,
     templateId: string,
-    dto: CreateNoteDto,
-  ): Promise<{ title: string; content: string; tags: string[] }> {
-    const template = await this.prisma.note.findFirst({
+    dto: Pick<CreateNoteDto, 'title' | 'placeholders'>,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<{ title: string; content: string; tags: string[] } | null> {
+    const template = await db.note.findFirst({
       where: { ...templateNotes(userId), id: templateId },
       include: { tags: { include: { tag: true } } },
     });
-    if (!template) {
-      throw new NotFoundException('Template not found');
-    }
+    if (!template) return null;
     const values = { date: dto.placeholders?.date, time: dto.placeholders?.time };
     const ownTitle = template.title.replace(/\s+template$/i, '');
     const filledTitle = fillPlaceholders(ownTitle, values).trim().slice(0, MAX_TITLE_LENGTH);
@@ -158,22 +252,23 @@ export class NotesService {
     return { title, content, tags: template.tags.map((noteTag) => noteTag.tag.name) };
   }
 
+  /** Writes a new note with its tags and links. Part of the caller's transaction. */
   private async insert(
+    tx: Prisma.TransactionClient,
     userId: string,
-    note: Pick<Note, 'title' | 'content' | 'notebookId' | 'pinned' | 'favorite' | 'isTemplate'> & { tags: string[] },
-  ): Promise<NoteView> {
+    note: Pick<Note, 'title' | 'content' | 'notebookId' | 'pinned' | 'favorite' | 'isTemplate' | 'dailyDate'> & {
+      tags: string[];
+    },
+  ): Promise<NoteWithRelations> {
     const { tags, ...data } = note;
-    const created = await this.prisma.$transaction(async (tx) => {
-      const { id } = await tx.note.create({ data: { userId, ...data } });
-      if (tags.length) {
-        await this.tags.setNoteTags(tx, userId, id, tags);
-      }
-      if (data.content) {
-        await this.links.sync(tx, id, data.content);
-      }
-      return tx.note.findUniqueOrThrow({ where: { id }, include: noteInclude });
-    });
-    return toView(created);
+    const { id } = await tx.note.create({ data: { userId, ...data } });
+    if (tags.length) {
+      await this.tags.setNoteTags(tx, userId, id, tags);
+    }
+    if (data.content) {
+      await this.links.sync(tx, id, data.content);
+    }
+    return tx.note.findUniqueOrThrow({ where: { id }, include: noteInclude });
   }
 
   async update(userId: string, id: string, dto: UpdateNoteDto): Promise<NoteView> {
