@@ -28,7 +28,7 @@ couple of weekends, **L** several weeks of spare time.
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Later   | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
-| 10  | Share link options                     | Later   | both     | M    | -          |
+| 10  | Share link options                     | Shipped | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
@@ -86,26 +86,6 @@ and to attach the odd PDF.
   text, which drops the images of an Obsidian vault.
 - Needs size limits per file and per account, and a list of allowed types.
   SVG is a script risk if it is served inline.
-
-### 10. Share link options
-
-A share link is all or nothing: one note, public until I stop sharing.
-
-- Expiry and password: `expiresAt` and `passwordHash` on `ShareLink`, checked
-  in `SharesService.view`, with the options in `ShareDialog`. A password
-  means `GET /public/notes/:token` needs a way to receive it and
-  `SharedNotePage` needs a prompt.
-- Share a notebook: one link with an index page and the notes inside.
-  `ShareLink.noteId` is required and unique today, so this is either a
-  nullable `notebookId` beside it or a second model.
-- Links between shared notes: `SharedNotePage` shows `[[links]]` as plain
-  text because `MarkdownPreview` gets no `onWikiLink` there. When the target
-  is shared as well (always true inside a shared notebook) it could link to
-  that share.
-- The public endpoint is not rate limited (`ThrottlerGuard` is only on the
-  routes that take a password) and every fetch bumps `viewCount`, my own
-  included. Throttle it, and skip the count when the request carries the
-  owner's token.
 
 ### 12. More import sources and export formats
 
@@ -369,6 +349,20 @@ restore into a scratch database and a row count of every table. Still open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
+
+### 10. Share link options
+
+A share link can run out and can ask for a password: `expiresAt` and
+`passwordHash` on `ShareLink`, set in the share dialog and checked in
+`SharesService.view`. A link that has run out answers exactly like one that
+never existed, and the dialog tells the owner. A link with a password answers
+`403` so that the shared page can ask, and takes the password in the body of
+a `POST`, never in the address. The public endpoint is throttled, with a
+roomy limit for reading and a strict one for password attempts, counted per
+client and per link. A request with the owner's login is no longer counted
+as a view, and nothing these routes answer may be cached. Still to come in a
+second step: sharing a whole notebook with one link, and `[[links]]` between
+shared notes.
 
 ### 11. Account settings and sessions
 
