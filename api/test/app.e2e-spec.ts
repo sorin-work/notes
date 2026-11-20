@@ -1315,7 +1315,8 @@ describe('templates and copies', () => {
   it('leads a link to a note before a template of the same title, and renames links in templates too', async () => {
     const { auth } = await signUp();
     const server = app.getHttpServer();
-    const post = async (body: object) => (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body;
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body;
     const resolve = async (title: string) =>
       (await request(server).get('/api/notes/resolve').query({ title }).set(auth).expect(200)).body.id;
 
