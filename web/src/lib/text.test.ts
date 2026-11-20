@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countWords, readingMinutes, splitHighlights } from './text';
+import { countWords, readingMinutes, savedTitle, splitHighlights } from './text';
 
 describe('countWords', () => {
   it('counts words, ignoring Markdown punctuation', () => {
@@ -33,5 +33,14 @@ describe('splitHighlights', () => {
       { text: 'broken ', highlight: false },
       { text: 'marker', highlight: false },
     ]);
+  });
+});
+
+describe('savedTitle', () => {
+  it('trims the title and falls back to Untitled, as the API does', () => {
+    expect(savedTitle('  Project Atlas ')).toBe('Project Atlas');
+    expect(savedTitle('Project  Atlas')).toBe('Project  Atlas');
+    expect(savedTitle('   ')).toBe('Untitled');
+    expect(savedTitle('')).toBe('Untitled');
   });
 });
