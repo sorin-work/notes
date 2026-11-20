@@ -9,6 +9,7 @@ import {
   IsUUID,
   Matches,
   MaxLength,
+  NotContains,
   ValidateIf,
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
@@ -16,6 +17,8 @@ import { ToBoolean, Trim } from '../../common/transforms';
 import { MAX_TAG_LENGTH } from '../../tags/tag-name';
 
 export const MAX_TITLE_LENGTH = 200;
+/** PostgreSQL cannot store this character in text, so a value with it in can never match anything. */
+const NUL = '\0';
 /** About 500 pages of text. */
 export const MAX_CONTENT_LENGTH = 1_000_000;
 
@@ -89,9 +92,13 @@ export type NoteSort = (typeof NOTE_SORTS)[number];
 
 /** The notebook and tag filters that the note list and the search share. */
 export class NoteFilterQuery extends PaginationQuery {
-  /** A notebook id, or "none" for notes that are not in a notebook. */
+  /**
+   * A notebook id, or "none" for notes that are not in a notebook. The word
+   * is matched exactly: the services compare it the same way, and "NONE"
+   * would otherwise be handed to the database as an id.
+   */
   @IsOptional()
-  @Matches(/^(none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i, {
+  @Matches(/^(none|[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/, {
     message: 'notebookId must be a notebook id or "none"',
   })
   notebookId?: string;
@@ -99,6 +106,7 @@ export class NoteFilterQuery extends PaginationQuery {
   @IsOptional()
   @IsString()
   @MaxLength(MAX_TAG_LENGTH)
+  @NotContains(NUL, { message: 'tag must not contain a null character' })
   tag?: string;
 }
 
@@ -126,6 +134,7 @@ export class TitleQuery {
   @IsOptional()
   @IsString()
   @MaxLength(MAX_TITLE_LENGTH)
+  @NotContains(NUL, { message: 'q must not contain a null character' })
   q?: string;
 
   @IsOptional()
@@ -137,5 +146,6 @@ export class ResolveQuery {
   @Trim()
   @IsString()
   @MaxLength(MAX_TITLE_LENGTH)
+  @NotContains(NUL, { message: 'title must not contain a null character' })
   title: string;
 }

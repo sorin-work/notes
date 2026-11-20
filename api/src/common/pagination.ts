@@ -1,11 +1,15 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
+/** Far beyond any real list, and small enough that the offset still fits in an integer. */
+export const MAX_PAGE = 100_000;
+
 export class PaginationQuery {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(MAX_PAGE)
   page = 1;
 
   @IsOptional()
