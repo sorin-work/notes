@@ -30,7 +30,19 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { notify } from '../lib/notices';
-import { cannotReachServer, onSent, openEntryFor, queueText, resolveEntry, useOutbox } from '../lib/outbox';
+import {
+  cannotReachServer,
+  createOffline,
+  offlineWritingAvailable,
+  onSent,
+  onSentElsewhere,
+  openEntryFor,
+  QueuedElsewhere,
+  queueText,
+  replaceQueuedText,
+  resolveEntry,
+  useOutbox,
+} from '../lib/outbox';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { fromTemplate } from '../lib/templates';
@@ -143,10 +155,14 @@ function LoadedEditor({ note }: { note: Note }) {
   const offeredStash = useRef(stashed !== null);
   // What this tab sent in saves that were never answered. One of them may have been written all the same.
   const unanswered = useRef<Draft[]>([]);
+  // The text this editor's changes are made on: what it opened with, or last
+  // saved, queued or took over. A change is only queued on top of that.
+  const parent = useRef<Draft>({ title: title, content: content });
 
   const adopt = useCallback(
     (saved: Note) => {
       revision.current = saved.revision;
+      parent.current = { title: saved.title, content: saved.content };
       if (ownerId && stashInEditor.current) {
         dropStash(ownerId, note.id);
         stashInEditor.current = false;
@@ -167,7 +183,9 @@ function LoadedEditor({ note }: { note: Note }) {
       // While this note has text waiting on the device, newer text joins it
       // there, so that the changes to the note reach the server in order.
       if (ownerId && openEntryFor(note.id)) {
-        await queueText(ownerId, note.id, draft, revision.current);
+        // Thrown as a conflict when another tab queued text this editor never saw.
+        await queueText(ownerId, note.id, draft, revision.current, [], parent.current);
+        parent.current = draft;
         return;
       }
       for (;;) {
@@ -176,10 +194,11 @@ function LoadedEditor({ note }: { note: Note }) {
           adopt(await updateNote(note.id, changes));
           break;
         } catch (error) {
-          if (ownerId && cannotReachServer(error)) {
+          if (ownerId && cannotReachServer(error) && offlineWritingAvailable()) {
             // Kept on the device and sent when the server can be reached. The
             // text may have arrived all the same; the outbox will recognise it.
-            await queueText(ownerId, note.id, draft, revision.current, [...unanswered.current, draft]);
+            await queueText(ownerId, note.id, draft, revision.current, [...unanswered.current, draft], parent.current);
+            parent.current = draft;
             unanswered.current = [];
             keepTheirs.current = false;
             return;
@@ -216,6 +235,20 @@ function LoadedEditor({ note }: { note: Note }) {
   // Nobody watched it happen, so a notice says what was done.
   const saveOverConflict = useCallback(
     async (draft: Draft, conflict: unknown) => {
+      if (conflict instanceof QueuedElsewhere && ownerId) {
+        // Nobody left to ask which to keep: both are kept, this text in the
+        // note and the other tab's as a note of its own.
+        const other = conflict.queued;
+        await createOffline(ownerId, {
+          title: `${savedTitle(other.title)} (from another tab)`,
+          content: other.content,
+        });
+        await replaceQueuedText(ownerId, note.id, draft);
+        notify(
+          `“${savedTitle(draft.title)}” had changes waiting from another tab when you left it. Your text was kept in the note, and the other text as a new note.`,
+        );
+        return;
+      }
       let theirs = staleNote(conflict);
       for (let attempt = 0; ; attempt++) {
         try {
@@ -230,7 +263,7 @@ function LoadedEditor({ note }: { note: Note }) {
         `“${savedTitle(draft.title)}” had been changed somewhere else when you left it. Your text was saved, and the other version was moved to the history of the note.`,
       );
     },
-    [note.id, adopt],
+    [note.id, adopt, ownerId],
   );
 
   // A draft that is still unsaved when the editor closes is put aside in this
@@ -266,13 +299,21 @@ function LoadedEditor({ note }: { note: Note }) {
     saveDraft,
     undefined,
     {
-      isConflict: (error) => staleNote(error) !== null,
+      isConflict: (error) => staleNote(error) !== null || error instanceof QueuedElsewhere,
       onConflict: () => setDialog('conflict'),
       saveOver: saveOverConflict,
     },
     farewell,
   );
-  const theirs = staleNote(autosave.conflict);
+  // Another tab of this browser queued text of this note that this editor never saw.
+  const elsewhere = autosave.conflict instanceof QueuedElsewhere ? autosave.conflict.queued : null;
+  const theirs =
+    staleNote(autosave.conflict) ??
+    (elsewhere ? ({ ...note, title: savedTitle(elsewhere.title), content: elsewhere.content } as Note) : null);
+
+  // Another tab sent a change of this note: what is on screen here is older.
+  const [savedElsewhere, setSavedElsewhere] = useState(false);
+  useEffect(() => onSentElsewhere((noteId) => noteId === note.id && setSavedElsewhere(true)), [note.id]);
 
   // What this note has waiting on the device. When the outbox sends it, the
   // text here is on the server, at the revision the answer names.
@@ -325,6 +366,18 @@ function LoadedEditor({ note }: { note: Note }) {
   const keepMine = (withTheirsInHistory: boolean) => {
     if (!theirs) return;
     setDialog(null);
+    if (elsewhere && ownerId) {
+      // Mine replaces the other tab's queued text; "keep both" keeps that as a note of its own.
+      if (withTheirsInHistory) {
+        void createOffline(ownerId, {
+          title: `${savedTitle(elsewhere.title)} (from another tab)`,
+          content: elsewhere.content,
+        });
+      }
+      parent.current = { title: elsewhere.title, content: elsewhere.content };
+      void autosave.retry();
+      return;
+    }
     revision.current = theirs.revision;
     keepTheirs.current = withTheirsInHistory;
     void autosave.retry();
@@ -333,14 +386,17 @@ function LoadedEditor({ note }: { note: Note }) {
   // "Take theirs" fetches the note as it is now. The copy that came with the
   // refused save may be old by the time the choice is made.
   const takeTheirs = useMutation({
-    mutationFn: () => getNote(note.id),
+    // The other tab's queued text is the newest there is; otherwise the note as the server has it now.
+    mutationFn: async (): Promise<Note> =>
+      elsewhere ? { ...note, title: savedTitle(elsewhere.title), content: elsewhere.content } : getNote(note.id),
     onSuccess: (current) => {
       keepTheirs.current = false;
       unanswered.current = [];
       autosave.discard();
       setTitle(current.title);
       setContent(current.content);
-      adopt(current);
+      if (elsewhere) parent.current = { title: elsewhere.title, content: elsewhere.content };
+      else adopt(current);
       setDialog(null);
     },
   });
@@ -956,6 +1012,14 @@ function LoadedEditor({ note }: { note: Note }) {
             refreshLists();
           }}
         />
+      )}
+      {savedElsewhere && !readOnly && (
+        <div className="banner banner-info" role="status">
+          <span>
+            Another tab sent changes to this note that are not shown here. Your next change asks before it replaces
+            anything.
+          </span>
+        </div>
       )}
       {queued?.state === 'conflict' && !queuedQuestionClosed && (
         <ConflictDialog
