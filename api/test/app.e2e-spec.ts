@@ -1136,6 +1136,8 @@ describe('orphans and unlinked mentions', () => {
     const dangling = await post({ title: 'Dangling', content: 'Only to [[A note that is missing]].' });
     const selfish = await post({ title: 'Selfish', content: 'Only to [[Selfish]] itself.' });
     const lost = await post({ title: 'Lost', content: 'Only to [[Gone]], which is in the trash.' });
+    // A template is in no list, and its links connect nothing.
+    await post({ title: 'Meeting template', content: 'Notes for [[Alone]].', isTemplate: true });
 
     const orphans = async (query = '') => {
       const response = await request(server).get(`/api/notes?orphans=true&sort=title${query}`).set(auth).expect(200);

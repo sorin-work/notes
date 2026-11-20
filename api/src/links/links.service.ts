@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { excerpt } from '../common/text';
-import { workingNotes } from '../notes/note-scope';
+import { workingNoteSql, workingNotes } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { extractWikiLinks, normalizeTitle } from './wikilinks';
 
@@ -65,18 +65,18 @@ export class LinksService {
   }
 
   /**
-   * The notes outside the trash with no links in or out. A link counts, in
-   * either direction, when it leads from one note outside the trash to
-   * another one: the note its title resolves to, as in resolveKeys. A link
-   * to a title no note has, to a note in the trash or from a note to itself
-   * connects nothing.
+   * The working notes (outside the trash, not templates) with no links in
+   * or out. A link counts, in either direction, when it leads from one
+   * working note to another: the note its title resolves to, as in
+   * resolveKeys. A link to a title no note has, to a note in the trash or a
+   * template, or from a note to itself connects nothing.
    */
   async orphanIds(userId: string): Promise<string[]> {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       WITH named AS (
         SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at
         FROM notes
-        WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+        WHERE user_id = ${userId}::uuid AND ${workingNoteSql('notes')}
       ),
       resolved AS (
         SELECT DISTINCT ON (key) id, key FROM named ORDER BY key, updated_at DESC

@@ -84,11 +84,20 @@ describe('MentionsService', () => {
         },
       ]);
       // The title and its key are parameters of the candidate query, and the notes are read as this user.
-      expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual([USER, 'target', 'Project Atlas', 'project atlas', 201]);
+      // Templates are not looked at: the working-note condition is part of the query.
+      expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual([
+        USER,
+        expect.objectContaining({ strings: ['n.deleted_at IS NULL AND n.is_template = false'] }),
+        'target',
+        'Project Atlas',
+        'project atlas',
+        201,
+      ]);
       expect(prisma.note.findMany.mock.calls[0][0].where).toEqual({
         id: { in: ['c', 'b', 'a'] },
         userId: USER,
         deletedAt: null,
+        isTemplate: false,
       });
     });
 
@@ -222,7 +231,9 @@ describe('MentionsService', () => {
       await service.link(USER, 'target', 'a', first);
 
       const linked = 'Intro.\n\nWe talked about [[project atlas]], and Project Atlas again.';
-      expect(prisma.note.findFirst).toHaveBeenLastCalledWith({ where: { id: 'a', userId: USER, deletedAt: null } });
+      expect(prisma.note.findFirst).toHaveBeenLastCalledWith({
+        where: { id: 'a', userId: USER, deletedAt: null, isTemplate: false },
+      });
       // Only the text is written, so the edit time stays, and only while the note is still at that revision.
       expect(prisma.note.updateMany).toHaveBeenCalledWith({
         where: { id: 'a', userId: USER, revision: 7, deletedAt: null },

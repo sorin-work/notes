@@ -5,6 +5,7 @@ import { LinksService } from '../links/links.service';
 import { parseable } from '../links/prose';
 import { isMentionable, linkableMention, mayMention, normalizeTitle } from '../links/wikilinks';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
+import { workingNoteSql, workingNotes } from '../notes/note-scope';
 import { writeNoteText } from '../notes/note-text';
 import { DEFAULT_TITLE } from '../notes/notes.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -82,7 +83,7 @@ export class MentionsService {
     for (let from = 0; from < Math.min(candidates.length, MAX_CANDIDATES) && !spent; from += BATCH) {
       const ids = candidates.slice(from, Math.min(from + BATCH, MAX_CANDIDATES));
       const notes = await this.prisma.note.findMany({
-        where: { id: { in: ids }, userId, deletedAt: null },
+        where: { id: { in: ids }, ...workingNotes(userId) },
         select: { id: true, title: true, content: true, updatedAt: true, revision: true },
       });
       // findMany does not promise the order of the ids it was given.
@@ -144,7 +145,7 @@ export class MentionsService {
 
     const changed = () => new ConflictException('That note has changed since its mention was listed');
     await this.prisma.$transaction(async (tx) => {
-      const source = await tx.note.findFirst({ where: { id: sourceId, userId, deletedAt: null } });
+      const source = await tx.note.findFirst({ where: { id: sourceId, ...workingNotes(userId) } });
       if (!source || source.id === target.id) {
         throw new NotFoundException('Note not found');
       }
@@ -205,7 +206,7 @@ export class MentionsService {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT n.id
       FROM notes n
-      WHERE n.user_id = ${userId}::uuid AND n.deleted_at IS NULL AND n.id <> ${target.id}::uuid
+      WHERE n.user_id = ${userId}::uuid AND ${workingNoteSql('n')} AND n.id <> ${target.id}::uuid
         AND n.search_vector @@ phraseto_tsquery('english', ${target.title})
         AND NOT EXISTS (
           SELECT 1 FROM note_links l
