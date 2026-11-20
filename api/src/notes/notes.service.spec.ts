@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { LinksService } from '../links/links.service';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
@@ -20,6 +20,7 @@ function note(overrides: Record<string, unknown> = {}) {
     revision: 7,
     pinned: false,
     favorite: false,
+    isTemplate: false,
     deletedAt: null,
     createdAt: earlier,
     updatedAt: earlier,
@@ -69,7 +70,7 @@ describe('NotesService', () => {
       const page = await service.list(USER, query());
       expect(prisma.note.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: USER, deletedAt: null },
+          where: { userId: USER, deletedAt: null, isTemplate: false },
           orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }],
           skip: 0,
           take: 50,
@@ -83,6 +84,16 @@ describe('NotesService', () => {
       notebooks.idsWithChildren.mockResolvedValue(['work', 'meetings']);
       await service.list(USER, query({ notebookId: 'work' }));
       expect(prisma.note.findMany.mock.calls[0][0].where).toMatchObject({ notebookId: { in: ['work', 'meetings'] } });
+    });
+
+    it('lists the templates when asked, and only them', async () => {
+      await service.list(USER, query({ templates: true, tag: 'Weekly' }));
+      expect(prisma.note.findMany.mock.calls[0][0].where).toEqual({
+        userId: USER,
+        deletedAt: null,
+        isTemplate: true,
+        tags: { some: { tag: { name: 'weekly' } } },
+      });
     });
 
     it('filters notes without a notebook', async () => {
@@ -127,10 +138,81 @@ describe('NotesService', () => {
     it('creates an untitled empty note by default', async () => {
       await service.create(USER, {});
       expect(prisma.note.create).toHaveBeenCalledWith({
-        data: { userId: USER, title: 'Untitled', content: '', notebookId: null, pinned: false, favorite: false },
+        data: {
+          userId: USER,
+          title: 'Untitled',
+          content: '',
+          notebookId: null,
+          pinned: false,
+          favorite: false,
+          isTemplate: false,
+        },
       });
       expect(tags.setNoteTags).not.toHaveBeenCalled();
       expect(links.sync).not.toHaveBeenCalled();
+    });
+
+    describe('from a template', () => {
+      const template = {
+        ...note({ id: 't1', title: 'Weekly review {{date}}', isTemplate: true, pinned: true, favorite: true }),
+        content: '# {{title}}\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
+        tags: [{ tag: { name: 'checklist' } }, { tag: { name: 'weekly' } }],
+      };
+      const placeholders = { date: '2026-11-20', time: '19:30' };
+
+      beforeEach(() => {
+        prisma.note.findFirst.mockResolvedValue(template);
+      });
+
+      it('copies the text and the tags with the placeholders filled in, and nothing else', async () => {
+        await service.create(USER, { templateId: 't1', placeholders, notebookId: 'nb' });
+
+        // Only a template of this user, outside the trash, can be used.
+        expect(prisma.note.findFirst.mock.calls[0][0].where).toEqual({
+          userId: USER,
+          deletedAt: null,
+          isTemplate: true,
+          id: 't1',
+        });
+        const content = '# Weekly review 2026-11-20\n\nWritten at 19:30, see [[Deep Work]]. {{mood}}';
+        // The new note is a note: not a template, not pinned, no star.
+        expect(prisma.note.create).toHaveBeenCalledWith({
+          data: {
+            userId: USER,
+            title: 'Weekly review 2026-11-20',
+            content,
+            notebookId: 'nb',
+            pinned: false,
+            favorite: false,
+            isTemplate: false,
+          },
+        });
+        expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'new', ['checklist', 'weekly']);
+        expect(links.sync).toHaveBeenCalledWith(prisma, 'new', content);
+      });
+
+      it('takes a title and tags that are sent along, and never works out the date itself', async () => {
+        await service.create(USER, { templateId: 't1', title: 'Friday', tags: ['mine'] });
+        expect(prisma.note.create.mock.calls[0][0].data).toMatchObject({
+          title: 'Friday',
+          content: '# Friday\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
+        });
+        expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'new', ['mine']);
+      });
+
+      it('404s when the template is not there, is not a template or is someone else’s', async () => {
+        prisma.note.findFirst.mockResolvedValue(null);
+        await expect(service.create(USER, { templateId: 't9' })).rejects.toThrow('Template not found');
+        expect(prisma.note.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses a note that the filled in placeholders would make too long', async () => {
+        prisma.note.findFirst.mockResolvedValue({ ...template, content: '{{date}}'.repeat(125_000) });
+        await expect(service.create(USER, { templateId: 't1', placeholders })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(prisma.note.create).not.toHaveBeenCalled();
+      });
     });
 
     it('checks the notebook and stores tags and links', async () => {
@@ -144,6 +226,60 @@ describe('NotesService', () => {
       notebooks.findOwned.mockRejectedValue(new NotFoundException('Notebook not found'));
       await expect(service.create(USER, { notebookId: 'nb' })).rejects.toThrow('Notebook not found');
       expect(prisma.note.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('duplicate', () => {
+    beforeEach(() => {
+      prisma.note.create.mockImplementation(({ data }) => Promise.resolve(note({ ...data, id: 'copy' })));
+      prisma.note.findUniqueOrThrow.mockResolvedValue(withRelations({ id: 'copy' }));
+    });
+
+    it('copies the text, tags, notebook and template flag, and leaves pin and star behind', async () => {
+      const source = note({
+        content: 'See [[Other]]',
+        notebookId: 'nb',
+        pinned: true,
+        favorite: true,
+        isTemplate: true,
+      });
+      prisma.note.findFirst.mockResolvedValue(source);
+      prisma.note.findFirstOrThrow.mockResolvedValue({ ...source, tags: [{ tag: { name: 'a' } }] });
+
+      await service.duplicate(USER, 'n1');
+      expect(prisma.note.create).toHaveBeenCalledWith({
+        data: {
+          userId: USER,
+          title: 'Plan (copy)',
+          content: 'See [[Other]]',
+          notebookId: 'nb',
+          pinned: false,
+          favorite: false,
+          isTemplate: true,
+        },
+      });
+      expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'copy', ['a']);
+      expect(links.sync).toHaveBeenCalledWith(prisma, 'copy', 'See [[Other]]');
+      // A new note: no version is written and no share link is made.
+      expect(versions.snapshot).not.toHaveBeenCalled();
+      expect(versions.snapshotIfDue).not.toHaveBeenCalled();
+    });
+
+    it('keeps the title of the copy within the length a title can have', async () => {
+      const source = note({ title: 'x'.repeat(200) });
+      prisma.note.findFirst.mockResolvedValue(source);
+      prisma.note.findFirstOrThrow.mockResolvedValue({ ...source, tags: [] });
+      await service.duplicate(USER, 'n1');
+      const title = prisma.note.create.mock.calls[0][0].data.title as string;
+      expect(title).toHaveLength(200);
+      expect(title.endsWith(' (copy)')).toBe(true);
+    });
+
+    it('refuses for a note in the trash and 404s for other users', async () => {
+      prisma.note.findFirst.mockResolvedValue(note({ deletedAt: new Date() }));
+      await expect(service.duplicate(USER, 'n1')).rejects.toBeInstanceOf(ConflictException);
+      prisma.note.findFirst.mockResolvedValue(null);
+      await expect(service.duplicate(USER, 'n1')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
@@ -214,6 +350,13 @@ describe('NotesService', () => {
       expect(prisma.note.updateMany).not.toHaveBeenCalled();
       expect(versions.snapshotIfDue).not.toHaveBeenCalled();
       expect(links.sync).not.toHaveBeenCalled();
+    });
+
+    it('makes a note a template without counting it as an edit or checking the revision', async () => {
+      await service.update(USER, 'n1', { isTemplate: true, revision: 1 });
+      expect(prisma.note.update.mock.calls[0][0].data).toEqual({ isTemplate: true });
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
+      expect(versions.snapshotIfDue).not.toHaveBeenCalled();
     });
 
     it('falls back to "Untitled" when the title is cleared', async () => {

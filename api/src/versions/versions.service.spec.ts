@@ -15,6 +15,7 @@ const note = {
   revision: 4,
   pinned: false,
   favorite: false,
+  isTemplate: false,
   deletedAt: null as Date | null,
   createdAt: now,
   updatedAt: now,

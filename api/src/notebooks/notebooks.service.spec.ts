@@ -19,7 +19,7 @@ describe('NotebooksService', () => {
   });
 
   describe('list', () => {
-    it('returns notebooks with the number of notes outside the trash', async () => {
+    it('returns notebooks with the number of their notes, leaving out the trash and templates', async () => {
       prisma.notebook.findMany.mockResolvedValue([{ ...notebook('work'), _count: { notes: 3 } }]);
       const result = await service.list(USER);
       expect(result).toEqual([
@@ -28,7 +28,7 @@ describe('NotebooksService', () => {
       expect(prisma.notebook.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: USER },
-          include: { _count: { select: { notes: { where: { deletedAt: null } } } } },
+          include: { _count: { select: { notes: { where: { deletedAt: null, isTemplate: false } } } } },
         }),
       );
     });

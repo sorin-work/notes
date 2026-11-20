@@ -17,6 +17,7 @@ describe('NotesController', () => {
     titles: jest.fn(),
     orphanedLinkCount: jest.fn(),
     renameLinks: jest.fn(),
+    duplicate: jest.fn(),
   };
   const links = { backlinks: jest.fn(), outgoing: jest.fn(), resolve: jest.fn() };
   const exporter = { exportNote: jest.fn() };
@@ -35,6 +36,8 @@ describe('NotesController', () => {
     await controller.create(user, { title: 'x' });
     await controller.update(user, 'n1', { pinned: true });
     await controller.trash(user, 'n1');
+    await controller.duplicate(user, 'n1');
+    expect(notes.duplicate).toHaveBeenCalledWith('user-1', 'n1');
     expect(notes.list).toHaveBeenCalledWith('user-1', query);
     expect(notes.get).toHaveBeenCalledWith('user-1', 'n1');
     expect(notes.create).toHaveBeenCalledWith('user-1', { title: 'x' });
