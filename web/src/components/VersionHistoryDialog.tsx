@@ -12,6 +12,8 @@ interface Props {
   noteId: string;
   /** Title and text as they are in the editor, saved or not. Versions are compared with these. */
   current: { title: string; content: string };
+  /** Runs before a restore. When it fails, nothing is restored and its error is shown. */
+  beforeRestore?(): Promise<void>;
   onClose(): void;
   onRestored(note: Note): void;
 }
@@ -19,7 +21,7 @@ interface Props {
 const VIEWS = ['preview', 'changes'] as const;
 const VIEW_LABELS: Record<(typeof VIEWS)[number], string> = { preview: 'Preview', changes: 'Changes' };
 
-export function VersionHistoryDialog({ noteId, current, onClose, onRestored }: Props) {
+export function VersionHistoryDialog({ noteId, current, beforeRestore, onClose, onRestored }: Props) {
   const versions = useQuery({ queryKey: ['versions', noteId], queryFn: () => listVersions(noteId) });
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<(typeof VIEWS)[number]>('preview');
@@ -32,7 +34,10 @@ export function VersionHistoryDialog({ noteId, current, onClose, onRestored }: P
   });
 
   const restore = useMutation({
-    mutationFn: () => restoreVersion(noteId, selectedId as string),
+    mutationFn: async () => {
+      await beforeRestore?.();
+      return restoreVersion(noteId, selectedId as string);
+    },
     onSuccess: (note) => {
       onRestored(note);
       onClose();

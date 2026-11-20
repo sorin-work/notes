@@ -51,4 +51,78 @@ describe('useAutosave', () => {
     expect(save).toHaveBeenCalledTimes(2);
     expect(result.current.status).toBe('saved');
   });
+
+  describe('with a conflict', () => {
+    const stale = new Error('changed elsewhere');
+    const conflicts = () => ({
+      isConflict: (error: unknown) => error === stale,
+      onConflict: vi.fn(),
+      saveOver: vi.fn().mockResolvedValue(undefined),
+    });
+
+    it('keeps the value and does not send it again until told to', async () => {
+      const save = vi.fn().mockRejectedValueOnce(stale).mockResolvedValue(undefined);
+      const handling = conflicts();
+      const { result } = renderHook(() => useAutosave(save, 500, handling));
+      act(() => result.current.schedule('mine'));
+      await act(() => vi.advanceTimersByTimeAsync(500));
+
+      expect(result.current.status).toBe('conflict');
+      expect(result.current.conflict).toBe(stale);
+      expect(handling.onConflict).toHaveBeenCalledWith(stale);
+
+      // Neither a flush nor more typing sends anything, but the newest text is the one that is kept.
+      await act(() => result.current.flush());
+      act(() => result.current.schedule('mine, and more'));
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(result.current.status).toBe('conflict');
+      expect(result.current.hasPending()).toBe(true);
+
+      await act(() => result.current.retry());
+      expect(save).toHaveBeenLastCalledWith('mine, and more');
+      expect(result.current.status).toBe('saved');
+      expect(result.current.conflict).toBeNull();
+      expect(result.current.hasPending()).toBe(false);
+    });
+
+    it('drops the value on discard', async () => {
+      const save = vi.fn().mockRejectedValue(stale);
+      const { result } = renderHook(() => useAutosave(save, 500, conflicts()));
+      act(() => result.current.schedule('mine'));
+      await act(() => result.current.flush());
+      act(() => result.current.discard());
+
+      expect(result.current.status).toBe('saved');
+      expect(result.current.hasPending()).toBe(false);
+      await act(() => result.current.flush());
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves over a conflict that is still open when it unmounts', async () => {
+      const save = vi.fn().mockRejectedValue(stale);
+      const handling = conflicts();
+      const { result, unmount } = renderHook(() => useAutosave(save, 500, handling));
+      act(() => result.current.schedule('mine'));
+      await act(() => result.current.flush());
+      act(() => result.current.schedule('mine, typed after closing the question'));
+
+      unmount();
+      await vi.runAllTimersAsync();
+      expect(handling.saveOver).toHaveBeenCalledWith('mine, typed after closing the question', stale);
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it('does the same when the conflict only shows up in the save made on unmounting', async () => {
+      const save = vi.fn().mockRejectedValue(stale);
+      const handling = conflicts();
+      const { result, unmount } = renderHook(() => useAutosave(save, 500, handling));
+      act(() => result.current.schedule('last words'));
+      unmount();
+      await vi.runAllTimersAsync();
+      expect(save).toHaveBeenCalledWith('last words');
+      expect(handling.saveOver).toHaveBeenCalledWith('last words', stale);
+      expect(handling.onConflict).not.toHaveBeenCalled();
+    });
+  });
 });

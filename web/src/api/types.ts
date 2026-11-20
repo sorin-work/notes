@@ -48,6 +48,8 @@ export interface Note {
   id: string;
   title: string;
   content: string;
+  /** Goes up with every change to the title or the content. A save names the revision it was based on. */
+  revision: number;
   notebookId: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   tags: string[];
@@ -62,6 +64,13 @@ export interface Note {
 export interface NoteChanges {
   title?: string;
   content?: string;
+  /**
+   * The revision the title or content was based on. If the note has changed
+   * since, the save is refused (see `staleNote`). Without it the last write wins.
+   */
+  revision?: number;
+  /** Keep the text this save replaces as a version, whatever the usual interval. */
+  keepVersion?: boolean;
   notebookId?: string | null;
   tags?: string[];
   pinned?: boolean;

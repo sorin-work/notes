@@ -13,6 +13,7 @@ import {
   outgoingLinks,
   renameLinks,
   resolveTitle,
+  staleNote,
   trashNote,
   updateNote,
 } from '../api/notes';
@@ -27,6 +28,7 @@ import { toggleTask } from '../lib/tasks';
 import { countWords, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
+import { ConflictDialog } from './ConflictDialog';
 import { PinIcon } from './Icons';
 import { LinkSuggestions, suggestionAt, suggestionCount } from './LinkSuggestions';
 import { MarkdownPreview } from './MarkdownPreview';
@@ -73,7 +75,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
-  const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
   const readOnly = note.deletedAt !== null;
 
@@ -83,9 +85,16 @@ function LoadedEditor({ note }: { note: Note }) {
     void queryClient.invalidateQueries({ queryKey: ['tags'] });
   }, [queryClient]);
 
-  const saveDraft = useCallback(
-    async (draft: Draft) => {
-      const saved = await updateNote(note.id, draft);
+  // The revision the text in this editor is based on. `note.revision` will
+  // not do: the cached note is refreshed and changed by other things, while
+  // the text here only moves on with a save, a restore or a settled conflict.
+  const revision = useRef(note.revision);
+  // Set by "keep mine, put theirs in the history" for the save that follows.
+  const keepTheirs = useRef(false);
+
+  const adopt = useCallback(
+    (saved: Note) => {
+      revision.current = saved.revision;
       queryClient.setQueryData(['note', note.id], saved);
       void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
       void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
@@ -94,7 +103,63 @@ function LoadedEditor({ note }: { note: Note }) {
     },
     [note.id, queryClient],
   );
-  const autosave = useAutosave(saveDraft);
+
+  const saveDraft = useCallback(
+    async (draft: Draft) => {
+      const changes = { ...draft, revision: revision.current, keepVersion: keepTheirs.current || undefined };
+      try {
+        adopt(await updateNote(note.id, changes));
+      } catch (error) {
+        // The server can already hold exactly this text, for one when the
+        // answer to an earlier save got lost. Then there is nothing to decide.
+        const theirs = staleNote(error);
+        if (!theirs || theirs.title !== savedTitle(draft.title) || theirs.content !== draft.content) throw error;
+        adopt(theirs);
+      }
+      keepTheirs.current = false;
+    },
+    [note.id, adopt],
+  );
+
+  // Leaving the note with a conflict still open must not drop anything, and
+  // there is nobody left to ask. The draft is saved and the other text goes
+  // into the history. Should the note change yet again meanwhile, try anew.
+  const saveOverConflict = useCallback(
+    async (draft: Draft, conflict: unknown) => {
+      let theirs = staleNote(conflict);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return adopt(await updateNote(note.id, { ...draft, revision: theirs?.revision, keepVersion: true }));
+        } catch (error) {
+          theirs = staleNote(error);
+          if (!theirs || attempt === 2) throw error;
+        }
+      }
+    },
+    [note.id, adopt],
+  );
+
+  const autosave = useAutosave(saveDraft, undefined, {
+    isConflict: (error) => staleNote(error) !== null,
+    onConflict: () => setDialog('conflict'),
+    saveOver: saveOverConflict,
+  });
+  const theirs = staleNote(autosave.conflict);
+
+  const resolveConflict = (choice: 'both' | 'mine' | 'theirs') => {
+    if (!theirs) return;
+    setDialog(null);
+    revision.current = theirs.revision;
+    if (choice === 'theirs') {
+      autosave.discard();
+      setTitle(theirs.title);
+      setContent(theirs.content);
+      adopt(theirs);
+    } else {
+      keepTheirs.current = choice === 'both';
+      void autosave.retry();
+    }
+  };
 
   const change = (next: Partial<Draft>) => {
     const draft = { title, content, ...next };
@@ -125,8 +190,9 @@ function LoadedEditor({ note }: { note: Note }) {
       queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, ...changes } : old));
     },
     onSuccess: (saved) => {
+      // The cached text goes with the cached revision: neither is taken from this answer.
       queryClient.setQueryData<Note>(['note', note.id], (old) =>
-        old ? { ...saved, title: old.title, content: old.content } : saved,
+        old ? { ...saved, title: old.title, content: old.content, revision: old.revision } : saved,
       );
       refreshLists();
     },
@@ -135,7 +201,7 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const trash = useMutation({
     mutationFn: async () => {
-      await autosave.flush();
+      await autosave.leave();
       await trashNote(note.id);
     },
     onSuccess: () => {
@@ -282,7 +348,9 @@ function LoadedEditor({ note }: { note: Note }) {
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        void autosave.flush();
+        // With a conflict open there is nothing to send before it is settled.
+        if (autosave.status === 'conflict') setDialog('conflict');
+        else void autosave.flush();
       } else if (mod && event.key.toLowerCase() === 'e') {
         event.preventDefault();
         cycleMode();
@@ -298,6 +366,7 @@ function LoadedEditor({ note }: { note: Note }) {
     pending: 'Unsaved changes',
     saving: 'Saving…',
     error: 'Could not save. Retrying on the next change.',
+    conflict: 'Not saved. This note was changed somewhere else.',
   }[autosave.status];
 
   return (
@@ -393,6 +462,14 @@ function LoadedEditor({ note }: { note: Note }) {
         disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
+      {autosave.status === 'conflict' && dialog !== 'conflict' && (
+        <div className="banner banner-info" role="alert">
+          <span>This note was changed somewhere else, and what you typed here is not saved.</span>
+          <button type="button" className="button button-primary" onClick={() => setDialog('conflict')}>
+            Decide what to keep
+          </button>
+        </div>
+      )}
       {orphanedCount > 0 && (
         <div className="banner banner-info" role="status">
           <span>
@@ -452,7 +529,12 @@ function LoadedEditor({ note }: { note: Note }) {
       </div>
 
       <footer className="editor-footer">
-        <span className={autosave.status === 'error' ? 'save-status error' : 'save-status'} role="status">
+        <span
+          className={
+            autosave.status === 'error' || autosave.status === 'conflict' ? 'save-status error' : 'save-status'
+          }
+          role="status"
+        >
           {statusText}
         </span>
         <span className="muted">
@@ -468,13 +550,29 @@ function LoadedEditor({ note }: { note: Note }) {
           noteId={note.id}
           current={{ title, content }}
           onClose={() => setDialog(null)}
+          beforeRestore={async () => {
+            // A restore replaces what is in the editor. Saved first, that text
+            // is on the server, where the restore keeps it as a version.
+            await autosave.flush();
+            if (autosave.hasPending()) {
+              throw new Error('Your latest changes are not saved yet, so nothing was restored. Save them first.');
+            }
+          }}
           onRestored={(restored) => {
             setTitle(restored.title);
             setContent(restored.content);
-            queryClient.setQueryData(['note', note.id], restored);
-            void queryClient.invalidateQueries({ queryKey: ['links', note.id] });
+            adopt(restored);
             refreshLists();
           }}
+        />
+      )}
+      {dialog === 'conflict' && theirs && (
+        <ConflictDialog
+          theirs={theirs}
+          onKeepBoth={() => resolveConflict('both')}
+          onKeepMine={() => resolveConflict('mine')}
+          onTakeTheirs={() => resolveConflict('theirs')}
+          onClose={() => setDialog(null)}
         />
       )}
       {dialog === 'share' && <ShareDialog noteId={note.id} onClose={() => setDialog(null)} />}

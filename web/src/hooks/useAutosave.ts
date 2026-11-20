@@ -1,50 +1,85 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error';
+export type SaveStatus = 'saved' | 'pending' | 'saving' | 'error' | 'conflict';
+
+export interface ConflictHandling<T> {
+  /**
+   * Whether a save failed because the value was based on something that has
+   * changed since, and not because the server could not be reached. Sending
+   * the same value again would fail the same way, so it is not retried.
+   */
+  isConflict: (error: unknown) => boolean;
+  /** Called when a save runs into a conflict. */
+  onConflict?: (error: unknown) => void;
+  /**
+   * Saves the value over a conflict that was never resolved. It is used when
+   * the component goes away, so that leaving does not drop the value.
+   */
+  saveOver: (value: T, conflict: unknown) => Promise<unknown>;
+}
 
 /**
  * Saves the latest value a moment after the last change. Saves run one at a
  * time, and whatever is still pending is saved when the component unmounts,
  * so switching notes quickly does not lose the last keystrokes.
+ *
+ * A save that fails is tried again with the next change or flush. A save
+ * that runs into a conflict is not: the value is kept, later changes replace
+ * it without being sent, and it stays that way until `retry` or `discard`.
  */
-export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800) {
+export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800, conflicts?: ConflictHandling<T>) {
   const [status, setStatus] = useState<SaveStatus>('saved');
+  /** The error of the save that ran into a conflict, until it is resolved. */
+  const [conflict, setConflict] = useState<unknown>(null);
   const saveRef = useRef(save);
+  const conflictsRef = useRef(conflicts);
   const pending = useRef<{ value: T } | null>(null);
+  const unresolved = useRef<{ error: unknown } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const chain = useRef<Promise<void>>(Promise.resolve());
   const mounted = useRef(true);
 
   useEffect(() => {
     saveRef.current = save;
-  }, [save]);
+    conflictsRef.current = conflicts;
+  }, [save, conflicts]);
 
-  const setStatusIfMounted = useCallback((next: SaveStatus) => {
-    if (mounted.current) setStatus(next);
+  const show = useCallback((next: SaveStatus, error: unknown = null) => {
+    if (!mounted.current) return;
+    setStatus(next);
+    setConflict(error);
   }, []);
 
   const flush = useCallback((): Promise<void> => {
     clearTimeout(timer.current);
     chain.current = chain.current.then(async () => {
       const next = pending.current;
-      if (!next) return;
+      if (!next || unresolved.current) return;
       pending.current = null;
-      setStatusIfMounted('saving');
+      show('saving');
       try {
         await saveRef.current(next.value);
-        setStatusIfMounted(pending.current ? 'pending' : 'saved');
-      } catch {
-        // Keep the value so the next change or flush tries again.
+        show(pending.current ? 'pending' : 'saved');
+      } catch (error) {
+        // Keep the value, unless a newer one came in while this one was on its way.
         pending.current ??= next;
-        setStatusIfMounted('error');
+        if (conflictsRef.current?.isConflict(error)) {
+          unresolved.current = { error };
+          show('conflict', error);
+          if (mounted.current) conflictsRef.current.onConflict?.(error);
+        } else {
+          show('error');
+        }
       }
     });
     return chain.current;
-  }, [setStatusIfMounted]);
+  }, [show]);
 
   const schedule = useCallback(
     (value: T) => {
       pending.current = { value };
+      // During a conflict the value is only kept. Nothing is sent before it is resolved.
+      if (unresolved.current) return;
       setStatus('pending');
       clearTimeout(timer.current);
       timer.current = setTimeout(() => void flush(), delay);
@@ -52,13 +87,51 @@ export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800
     [delay, flush],
   );
 
+  /** Ends a conflict and saves the kept value again, after the caller dealt with what made it conflict. */
+  const retry = useCallback((): Promise<void> => {
+    unresolved.current = null;
+    show(pending.current ? 'pending' : 'saved');
+    return flush();
+  }, [flush, show]);
+
+  /** Ends a conflict or a failed save by dropping the value that was kept. */
+  const discard = useCallback(() => {
+    clearTimeout(timer.current);
+    unresolved.current = null;
+    pending.current = null;
+    show('saved');
+  }, [show]);
+
+  /**
+   * For when the value is about to go out of reach: saves what is pending,
+   * and saves over a conflict that is still open.
+   */
+  const leave = useCallback((): Promise<void> => {
+    void flush();
+    chain.current = chain.current.then(async () => {
+      const kept = pending.current;
+      const open = unresolved.current;
+      if (!kept || !open || !conflictsRef.current) return;
+      pending.current = null;
+      unresolved.current = null;
+      try {
+        await conflictsRef.current.saveOver(kept.value, open.error);
+        show('saved');
+      } catch {
+        pending.current ??= kept;
+        unresolved.current = open;
+      }
+    });
+    return chain.current;
+  }, [flush, show]);
+
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      void flush();
+      void leave();
     };
-  }, [flush]);
+  }, [leave]);
 
-  return { status, schedule, flush, hasPending: () => pending.current !== null };
+  return { status, conflict, schedule, flush, retry, discard, leave, hasPending: () => pending.current !== null };
 }
