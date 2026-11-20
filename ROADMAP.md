@@ -30,7 +30,7 @@ couple of weekends, **L** several weeks of spare time.
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Shipped | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
-| 12  | More import sources and export formats | Shipped | both     | M    | -          |
+| 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
@@ -66,6 +66,46 @@ and to attach the odd PDF.
   text, which drops the images of an Obsidian vault.
 - Needs size limits per file and per account, and a list of allowed types.
   SVG is a script risk if it is served inline.
+
+### 12. More import sources and export formats
+
+Import reads Markdown, text and zips of them, and export writes the same.
+That covers Obsidian and this app, and not much else.
+
+- Evernote `.enex`: one XML file with the note bodies as HTML. Needs an XML
+  reader and an HTML-to-Markdown step. Tags and dates are in the file,
+  notebooks are not.
+- Notion export: a zip of Markdown in which file and folder names end in a
+  32-character id and pages link to each other by relative path. Strip the
+  ids and turn those links into `[[wiki links]]`.
+- Both fit as extra readers in front of `ImportService.import`, which already
+  works from a list of `{ path, text, modified }` candidates.
+  `front-matter.ts` is a hand-written subset of YAML and will meet files it
+  cannot read. Decide whether to keep extending it or take a YAML dependency.
+- Importing the same zip twice creates every note twice. An option to skip
+  notes whose title, notebook and text already exist would make a re-import
+  safe.
+- Export: a print stylesheet for the preview (`styles.css` has no
+  `@media print` rules) gives PDF through the browser. A full JSON backup
+  that includes the trash and version history would cover what the zip
+  leaves out.
+
+Built so far, the import half: the import now reads Evernote `.enex` files
+and Notion exports as well, as readers in front of `ImportService.import`.
+An `.enex` goes through a streaming XML parser that reads no DTD and knows
+no entity beyond XML's own, so nothing in the file can expand or reach out;
+its notes become Markdown through turndown, with tags and dates, in a
+notebook named after the file. Attachments are counted and left out. A
+Notion zip loses the 32-character ids from its names, and links between its
+pages become `[[wiki links]]`. Every zip is read within limits: entries,
+depth, 4 MB per file and 100 MB per import, counted while unpacking; no
+entry may lead out of the zip, and a zip inside a zip is not opened. Front
+matter is read by the `yaml` package with the core schema, and a block that
+is not clean YAML stays in the note. A re-import leaves out notes whose
+title, notebook and text are there already, unless told not to. Still open:
+Evernote attachments, Notion databases (they arrive as CSV and are skipped),
+and a Notion export that Notion packed twice has to be unzipped once by
+hand.
 
 ### 14. Offline mode and installable app
 
@@ -371,25 +411,6 @@ the reset is off and the link is hidden. Along the way the throttles learned
 to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
 address is not verified, the mail is plain text in English only, and nothing
 but the API log tells me when a mail could not be sent.
-
-### 12. More import sources and export formats
-
-The import now reads Evernote `.enex` files and Notion exports as well, as
-readers in front of `ImportService.import`. An `.enex` goes through a
-streaming XML parser that reads no DTD and knows no entity beyond XML's own,
-so nothing in the file can expand or reach out; its notes become Markdown
-through turndown, with tags and dates, in a notebook named after the file.
-Attachments are counted and left out. A Notion zip loses the 32-character
-ids from its names, and links between its pages become `[[wiki links]]`.
-Every zip is read within limits: entries, depth, 4 MB per file and 100 MB per
-import, counted while unpacking; no entry may lead out of the zip, and a zip
-inside a zip is not opened. Front matter is read by the `yaml` package with
-the core schema, and a block that is not clean YAML stays in the note. A
-re-import leaves out notes whose title, notebook and text are there already,
-unless told not to. Still to come in a second step: the export formats, a
-print stylesheet and a full JSON backup. Still open: Evernote attachments,
-Notion databases (they arrive as CSV and are skipped), and a Notion export
-that Notion packed twice has to be unzipped once by hand.
 
 ### 13. Personal API tokens
 
