@@ -6,6 +6,7 @@ import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
 import {
   createNote,
+  duplicateNote,
   exportNote,
   getNote,
   noteTitles,
@@ -24,7 +25,9 @@ import { useAutosave } from '../hooks/useAutosave';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
+import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { toggleTask } from '../lib/tasks';
+import { fromTemplate } from '../lib/templates';
 import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
@@ -211,6 +214,35 @@ function LoadedEditor({ note }: { note: Note }) {
       refreshLists();
       navigate({ pathname: '/notes', search: location.search });
     },
+  });
+
+  // A copy, or a note made from this template, is opened as soon as it is there.
+  const openNew = (created: Note) => {
+    refreshLists();
+    navigate({
+      pathname: `/notes/${created.id}`,
+      search: created.isTemplate ? location.search : leavingTemplates(location.search),
+    });
+  };
+
+  const duplicate = useMutation({
+    mutationFn: async () => {
+      // The copy is made on the server, so what is typed here has to be there first.
+      await autosave.flush();
+      if (autosave.hasPending()) throw new Error('Your latest changes are not saved yet, so the note was not copied.');
+      return duplicateNote(note.id);
+    },
+    onSuccess: openNew,
+  });
+
+  const useTemplate = useMutation({
+    mutationFn: async () => {
+      await autosave.flush();
+      if (autosave.hasPending()) throw new Error('Your latest changes are not saved yet, so no note was made.');
+      const { notebookId } = newNoteFor(readFilters(new URLSearchParams(location.search)));
+      return createNote(fromTemplate(note.id, notebookId));
+    },
+    onSuccess: openNew,
   });
 
   // Links point at titles, so a rename leaves the links to the old title
@@ -451,6 +483,25 @@ function LoadedEditor({ note }: { note: Note }) {
         >
           Export
         </button>
+        <button
+          type="button"
+          className="button"
+          title="Make a copy of this note"
+          disabled={readOnly || duplicate.isPending}
+          onClick={() => duplicate.mutate()}
+        >
+          Duplicate
+        </button>
+        <button
+          type="button"
+          className={note.isTemplate ? 'button button-shared' : 'button'}
+          aria-pressed={note.isTemplate}
+          title={note.isTemplate ? 'Make this an ordinary note again' : 'Use this note as a template for new notes'}
+          disabled={readOnly}
+          onClick={() => updateMeta.mutate({ isTemplate: !note.isTemplate })}
+        >
+          Template
+        </button>
         {!readOnly && (
           <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
             Delete
@@ -481,6 +532,23 @@ function LoadedEditor({ note }: { note: Note }) {
         disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
+      {note.isTemplate && !readOnly && (
+        <div className="banner banner-info">
+          <span>
+            This is a template. It stays out of the lists and the search, and new notes start from it with{' '}
+            <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code> and <code>{'{{title}}'}</code> filled in.
+          </span>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={useTemplate.isPending}
+            onClick={() => useTemplate.mutate()}
+          >
+            New note from this template
+          </button>
+        </div>
+      )}
+      {(duplicate.error || useTemplate.error) && <ErrorMessage error={duplicate.error ?? useTemplate.error} />}
       {autosave.status === 'conflict' && dialog !== 'conflict' && (
         <div className="banner banner-info" role="alert">
           <span>This note was changed somewhere else, and what you typed here is not saved.</span>
