@@ -1,17 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { NotebooksService } from '../notebooks/notebooks.service';
-import { NoteFilterQuery } from '../notes/dto/note.dto';
 import { normalizeTagName } from '../tags/tag-name';
+import { GraphQuery } from './dto/graph.dto';
 import { Graph, LinksService } from './links.service';
 
-/**
- * The notebook and tag filters of the note list. The graph is not paged, it
- * has a limit of its own: `page` and `pageSize` come along with the filters
- * and are ignored.
- */
-export class GraphQuery extends NoteFilterQuery {}
-
+@AllowApiToken()
 @Controller('links')
 export class LinksController {
   constructor(
@@ -19,7 +14,7 @@ export class LinksController {
     private readonly notebooks: NotebooksService,
   ) {}
 
-  /** The notes and the links between them, for the graph page. */
+  /** The notes and the links between them, for the graph page. At most 300 notes, the ones edited last. */
   @Get('graph')
   async graph(@CurrentUser() user: AuthUser, @Query() query: GraphQuery): Promise<Graph> {
     // A top-level notebook covers the notebooks inside it, as in the note list.

@@ -162,6 +162,8 @@ describe('PasswordResetService', () => {
       expect(prisma.passwordReset.deleteMany).toHaveBeenNthCalledWith(1, { where: { id: link.id } });
       // A second link that is still out must not set a password after this one did.
       expect(prisma.passwordReset.deleteMany).toHaveBeenNthCalledWith(2, { where: { userId: user.id } });
+      // Whoever knew the old password could have made an API token.
+      expect(prisma.apiToken.deleteMany).toHaveBeenCalledWith({ where: { userId: user.id } });
       const update = prisma.user.update.mock.calls[0][0];
       expect(update.where).toEqual({ id: user.id });
       expect(update.data.tokenVersion).toEqual({ increment: 1 });
@@ -181,6 +183,7 @@ describe('PasswordResetService', () => {
       await expect(service.reset('twice', 'battery-staple', now)).rejects.toBeInstanceOf(BadRequestException);
 
       expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.apiToken.deleteMany).not.toHaveBeenCalled();
     });
 
     it('answers 404 when mail is not set up', async () => {

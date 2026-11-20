@@ -9,6 +9,7 @@ import {
   setUnauthorizedHandler,
   withQuery,
 } from './client';
+import { staleNote } from './notes';
 
 function respond(status: number, body?: unknown) {
   return vi.fn().mockResolvedValue(
@@ -82,6 +83,22 @@ describe('api', () => {
   it('reports network failures', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
     await expect(api('/notes')).rejects.toMatchObject({ status: 0, message: expect.stringContaining('server') });
+  });
+
+  it('keeps the body of an error, which says more than the message for a refused save', async () => {
+    const current = { id: 'n1', title: 'Plan', content: 'Theirs', revision: 4 };
+    const body = { statusCode: 409, error: 'Conflict', message: 'Changed', code: 'stale_revision', note: current };
+    vi.stubGlobal('fetch', respond(409, body));
+    const error = await api('/notes/n1', json('PATCH', { content: 'Mine', revision: 3 })).catch((caught) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 409, message: 'Changed', body });
+    expect(staleNote(error)).toEqual(current);
+
+    // Other 409s, other errors and things that are no errors at all are not a stale save.
+    vi.stubGlobal('fetch', respond(409, { statusCode: 409, message: 'This note is in the trash.' }));
+    expect(staleNote(await api('/notes/n1', json('PATCH', {})).catch((caught) => caught))).toBeNull();
+    expect(staleNote(new ApiError(0, 'Could not reach the server.'))).toBeNull();
+    expect(staleNote(new Error('boom'))).toBeNull();
   });
 });
 

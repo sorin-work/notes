@@ -4,6 +4,9 @@
   "private": true,
   "description": "REST API for the notes app",
   "license": "MIT",
+  "scarfSettings": {
+    "enabled": false
+  },
   "scripts": {
     "build": "nest build",
     "start": "node dist/main",
@@ -21,10 +24,12 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@lezer/markdown": "^1.8.1",
     "@nestjs/common": "^11.2.8",
     "@nestjs/core": "^11.2.8",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "^11.2.8",
+    "@nestjs/swagger": "^11.4.8",
     "@nestjs/throttler": "^6.7.1",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",

@@ -7,8 +7,10 @@ import { listTags } from '../api/tags';
 import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { useStoredSet } from '../hooks/useStoredSet';
+import { dropStashes } from '../lib/draftStash';
 import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { isInside, MAX_NOTEBOOK_DEPTH, type NotebookNode, notebookTree, totalNotes } from '../lib/notebooks';
+import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
@@ -25,6 +27,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const [action, setAction] = useState<NotebookAction | null>(null);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+
+  // Once the session has ended nothing can be saved, so what is unsaved goes
+  // first. If that does not work, signing out would throw it away, and that
+  // is for the user to decide.
+  const signOut = async () => {
+    if (await saveUnsavedWork()) logout();
+    else setConfirmingSignOut(true);
+  };
   const [query, setQuery] = useState('');
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
@@ -206,12 +217,31 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <span className="account-name" title={user?.email}>
             {user?.name}
           </span>
-          <button type="button" className="link-button" onClick={logout}>
+          <button type="button" className="link-button" onClick={() => void signOut()}>
             Sign out
           </button>
         </div>
       </div>
 
+      {confirmingSignOut && (
+        <ConfirmDialog
+          title="Sign out without saving?"
+          message={
+            <p>
+              Your latest changes to the open note could not be saved. If you sign out now, they are thrown away. Stay
+              signed in to try again.
+            </p>
+          }
+          confirmLabel="Sign out and discard"
+          danger
+          onConfirm={() => {
+            discardUnsavedWork();
+            if (user) dropStashes(user.id);
+            logout();
+          }}
+          onCancel={() => setConfirmingSignOut(false)}
+        />
+      )}
       {(action?.kind === 'create' || action?.kind === 'edit') && (
         <NotebookDialog
           notebooks={notebooks.data ?? []}

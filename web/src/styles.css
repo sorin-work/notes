@@ -701,6 +701,41 @@ mark {
   margin-top: 0.6rem;
 }
 
+.notices {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 40;
+  display: grid;
+  gap: 0.5rem;
+  max-width: min(26rem, calc(100vw - 2rem));
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.conflict-choices {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.conflict-choices li {
+  display: grid;
+  justify-items: start;
+  gap: 0.25rem;
+}
+
 .title-input {
   font-size: 1.6rem;
   font-weight: 650;
@@ -890,7 +925,6 @@ mark {
 /* Graph */
 
 .graph-canvas {
-  position: relative;
   margin: 0.5rem 0 1.5rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -898,10 +932,49 @@ mark {
   overflow: hidden;
 }
 
+.graph-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.graph-zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.graph-zoom output {
+  min-width: 3.5rem;
+  padding-left: 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-hint {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.graph-frame {
+  height: min(70vh, 34rem);
+}
+
+.graph-wait {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  margin: 0;
+}
+
+/* The picture has no viewBox: one unit in it is one pixel, at every zoom. */
 .graph {
   display: block;
   width: 100%;
-  height: min(70vh, 34rem);
+  height: 100%;
   /* Dragging moves the picture, not the page. */
   touch-action: none;
   cursor: grab;
@@ -911,17 +984,14 @@ mark {
   cursor: grabbing;
 }
 
-.graph-tools {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  display: flex;
-  gap: 0.25rem;
-}
-
 .graph-edge {
   stroke: var(--muted);
   stroke-width: 1;
+}
+
+.graph-hit {
+  fill: transparent;
+  cursor: pointer;
 }
 
 .graph-node {
@@ -936,7 +1006,7 @@ mark {
 
 .graph-node text {
   display: none;
-  font-size: 9px;
+  font-size: 12px;
   fill: var(--text);
   /* A rim in the background colour keeps a title readable where it crosses a line. */
   paint-order: stroke;
@@ -966,7 +1036,13 @@ mark {
   padding: 0;
   margin: 0;
   display: grid;
+  /* A column may get narrower than its longest word, so that a title without spaces wraps and does not widen the page. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.6rem;
+}
+
+.graph-list li {
+  overflow-wrap: anywhere;
 }
 
 /* Rendered Markdown */
@@ -1116,6 +1192,15 @@ mark {
 
 .form h3 {
   margin: 0.5rem 0 0;
+}
+
+.capture-form {
+  max-width: 40rem;
+}
+
+.capture-form textarea {
+  font-family: var(--mono);
+  resize: vertical;
 }
 
 /* The parts of the Account card: profile, password, sessions, delete. */

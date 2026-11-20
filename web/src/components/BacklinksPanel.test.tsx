@@ -21,7 +21,18 @@ describe('BacklinksPanel', () => {
       'GET /api/notes/n1/backlinks': { body: [] },
       'GET /api/notes/n1/mentions': {
         body: {
-          items: [{ id: 'n3', title: 'Minutes', updatedAt: '2026-01-02T10:00:00Z', context: 'About the atlas.' }],
+          items: [
+            {
+              id: 'n3',
+              title: 'Minutes',
+              updatedAt: '2026-01-02T10:00:00Z',
+              before: 'About the ',
+              match: 'atlas',
+              after: '.',
+              offset: 10,
+              version: 3,
+            },
+          ],
           total: 1,
           page: 1,
           pageSize: 10,
