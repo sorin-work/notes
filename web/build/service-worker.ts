@@ -2,7 +2,7 @@ import { build } from 'esbuild';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Plugin } from 'vite';
-import { buildVersion, precacheList, WORKER_FILE } from './precache';
+import { buildVersion, precacheList, VERSION_FILE, WORKER_FILE } from './precache';
 
 function filesIn(dir: string, root = dir): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -11,8 +11,12 @@ function filesIn(dir: string, root = dir): string[] {
   });
 }
 
-/** Builds src/sw/worker.ts into /sw.js with the list of this build's files. Only for `vite build`. */
-export function serviceWorker(): Plugin {
+/**
+ * Builds src/sw/worker.ts into /sw.js with the list of this build's files,
+ * and writes /version.json with `buildId`, the id the app is built with
+ * (`__BUILD_ID__`). Only for `vite build`.
+ */
+export function serviceWorker(buildId: string): Plugin {
   let publicDir = '';
   return {
     name: 'notes-service-worker',
@@ -42,6 +46,7 @@ export function serviceWorker(): Plugin {
         define: { __PRECACHE__: JSON.stringify(precache), __VERSION__: JSON.stringify(version) },
       });
       this.emitFile({ type: 'asset', fileName: WORKER_FILE, source: result.outputFiles[0]?.text ?? '' });
+      this.emitFile({ type: 'asset', fileName: VERSION_FILE, source: `${JSON.stringify({ build: buildId })}\n` });
     },
   };
 }

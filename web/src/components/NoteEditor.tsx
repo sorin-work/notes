@@ -253,8 +253,13 @@ function LoadedEditor({ note }: { note: Note }) {
           return !autosave.hasPending();
         },
         discard: autosave.discard,
+        // The tab is about to be reloaded under the draft: it goes where an unsaved draft goes on leaving.
+        putAside: () => {
+          const draft = autosave.pendingValue();
+          if (draft) farewell?.keep(draft);
+        },
       }),
-    [autosave],
+    [autosave, farewell],
   );
 
   // "Keep mine" and "keep mine, put theirs in the history": save again, on the revision of the conflict.
