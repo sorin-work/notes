@@ -8,13 +8,15 @@ import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { notebookTree, totalNotes } from '../lib/notebooks';
-import { PencilIcon, TrashIcon } from './Icons';
+import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
+import { ShareDialog } from './ShareDialog';
 
 type NotebookAction =
   | { kind: 'create'; parentId: string | null }
   | { kind: 'edit'; notebook: Notebook }
+  | { kind: 'share'; notebook: Notebook }
   | { kind: 'delete'; notebook: Notebook };
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -216,6 +218,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           }}
         />
       )}
+      {action?.kind === 'share' && <ShareDialog notebookId={action.notebook.id} onClose={() => setAction(null)} />}
       {action?.kind === 'delete' && (
         <ConfirmDialog
           title={`Delete “${action.notebook.name}”?`}
@@ -245,7 +248,7 @@ function NotebookMenu({
 }: {
   notebook: Notebook;
   canNest?: boolean;
-  onAction(kind: 'create' | 'edit' | 'delete'): void;
+  onAction(kind: 'create' | 'edit' | 'share' | 'delete'): void;
 }) {
   return (
     <span className="nav-actions">
@@ -268,6 +271,15 @@ function NotebookMenu({
         onClick={() => onAction('edit')}
       >
         <PencilIcon />
+      </button>
+      <button
+        type="button"
+        className="icon-button small"
+        aria-label={`Share ${notebook.name}`}
+        title="Share with a link"
+        onClick={() => onAction('share')}
+      >
+        <LinkIcon />
       </button>
       <button
         type="button"

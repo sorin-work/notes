@@ -144,11 +144,25 @@ export interface ShareOptions {
 }
 
 export interface SharedNote {
+  kind: 'note';
   title: string;
+  /** With [[links]] left only where the reader may follow them. */
   content: string;
   tags: string[];
   updatedAt: string;
+  /** Where each of those links leads, by normalised title: a path under /s/. */
+  links: Record<string, string>;
 }
+
+/** The index of a shared notebook. */
+export interface SharedNotebook {
+  kind: 'notebook';
+  name: string;
+  notes: { id: string; title: string; updatedAt: string; notebook: string | null }[];
+}
+
+/** What a link shares: a note, or a notebook with everything in it. */
+export type ShareSubject = { noteId: string } | { notebookId: string };
 
 export interface ImportResult {
   imported: number;

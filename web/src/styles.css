@@ -1032,6 +1032,17 @@ mark {
   max-width: 24rem;
 }
 
+.shared-index {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.shared-index li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
 .capture-form {
   max-width: 40rem;
 }
