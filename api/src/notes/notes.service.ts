@@ -19,6 +19,7 @@ import {
   UpdateNoteDto,
 } from './dto/note.dto';
 import { templateNotes, workingNotes } from './note-scope';
+import type { WriteGuard } from '../access/access.service';
 import { IN_TRASH, NoteExistsException, refusedWrite, writeNoteText } from './note-text';
 import { noteInclude, NoteSummary, NoteView, NoteWithRelations, toSummary, toView } from './note-view';
 import { fillPlaceholders } from './placeholders';
@@ -103,7 +104,7 @@ export class NotesService {
     return toView(note);
   }
 
-  async create(userId: string, dto: CreateNoteDto): Promise<NoteView> {
+  async create(userId: string, dto: CreateNoteDto, guard?: WriteGuard): Promise<NoteView> {
     if (dto.notebookId) {
       await this.notebooks.findOwned(userId, dto.notebookId);
     }
@@ -112,8 +113,9 @@ export class NotesService {
       throw new NotFoundException('Template not found');
     }
     const created = await this.prisma
-      .$transaction((tx) =>
-        this.insert(tx, userId, {
+      .$transaction(async (tx) => {
+        await guard?.(tx);
+        return this.insert(tx, userId, {
           id: dto.id,
           title: template?.title ?? (dto.title || DEFAULT_TITLE),
           content: dto.content ?? template?.content ?? '',
@@ -123,8 +125,8 @@ export class NotesService {
           favorite: dto.favorite ?? false,
           isTemplate: dto.isTemplate ?? false,
           dailyDate: null,
-        }),
-      )
+        });
+      })
       .catch((error: unknown) => {
         // The id is the primary key: a taken one fails the insert, also in a race.
         // Only that constraint means "taken"; any other unique violation is something else.
@@ -306,7 +308,8 @@ export class NotesService {
     return tx.note.findUniqueOrThrow({ where: { id }, include: noteInclude });
   }
 
-  async update(userId: string, id: string, dto: UpdateNoteDto): Promise<NoteView> {
+  /** `guard` runs first inside the transaction that writes: the access check of a shared note, see AccessService. */
+  async update(userId: string, id: string, dto: UpdateNoteDto, guard?: WriteGuard): Promise<NoteView> {
     const note = await this.findActive(userId, id);
     if (dto.notebookId) {
       await this.notebooks.findOwned(userId, dto.notebookId);
@@ -325,6 +328,7 @@ export class NotesService {
     const notebookChanged = dto.notebookId !== undefined && dto.notebookId !== note.notebookId;
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await guard?.(tx);
       if (savesText) {
         // The first statement, and the one that decides: it only writes while
         // the note is still at the revision the save names. A save that

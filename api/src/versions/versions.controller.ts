@@ -40,6 +40,14 @@ export class VersionsController {
     @Param('versionId', ParseUUIDPipe) versionId: string,
   ): Promise<NoteView> {
     const granted = await this.access.note(user.id, noteId, 'edit');
-    return { ...(await this.versions.restore(granted.ownerId, noteId, versionId)), access: granted.access };
+    return {
+      ...(await this.versions.restore(
+        granted.ownerId,
+        noteId,
+        versionId,
+        this.access.noteWriteGuard(user.id, noteId, 'edit'),
+      )),
+      access: granted.access,
+    };
   }
 }

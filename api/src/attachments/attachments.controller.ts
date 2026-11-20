@@ -79,7 +79,7 @@ export class NoteAttachmentsController {
     // An editor of a shared notebook attaches to the owner's note, on the owner's room.
     const { ownerId } = await this.access.note(user.id, noteId, 'edit');
     if (!file) throw new BadRequestException('Choose a file to attach');
-    return this.attachments.upload(ownerId, noteId, file);
+    return this.attachments.upload(ownerId, noteId, file, this.access.noteWriteGuard(user.id, noteId, 'edit'));
   }
 }
 

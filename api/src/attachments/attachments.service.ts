@@ -1,3 +1,4 @@
+import type { WriteGuard } from '../access/access.service';
 import {
   BadRequestException,
   ConflictException,
@@ -118,7 +119,8 @@ export class AttachmentsService {
    * limits. The account's total is counted under a lock on the user row, so
    * uploads at the same moment cannot together pass the limit.
    */
-  async upload(userId: string, noteId: string, upload: { originalname: string; buffer: Buffer }) {
+  /** `guard` runs first inside the transaction that records the file: the access check of a shared note. */
+  async upload(userId: string, noteId: string, upload: { originalname: string; buffer: Buffer }, guard?: WriteGuard) {
     const note = await this.findNote(userId, noteId);
     if (note.deletedAt) throw new ConflictException('This note is in the trash');
     const stored = await this.check(upload.originalname, upload.buffer);
@@ -126,6 +128,7 @@ export class AttachmentsService {
     await this.storage.write(stored.id, upload.buffer);
     try {
       const attachment = await this.prisma.$transaction(async (tx) => {
+        await guard?.(tx);
         await this.assertRoom(tx, userId, stored.size);
         return tx.attachment.create({ data: { ...stored, userId, noteId } });
       });

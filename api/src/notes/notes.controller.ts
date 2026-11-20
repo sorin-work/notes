@@ -88,7 +88,10 @@ export class NotesController {
         'In a notebook shared with you, a new note can only be given a title, text and tags.',
       );
     }
-    return this.withAccess(await this.notes.create(granted.ownerId, dto), granted);
+    return this.withAccess(
+      await this.notes.create(granted.ownerId, dto, this.access.notebookWriteGuard(user.id, dto.notebookId, 'edit')),
+      granted,
+    );
   }
 
   /**
@@ -143,7 +146,10 @@ export class NotesController {
         throw new ForbiddenException(`Only the owner of the notebook can change ${ownerOnly.join(', ')}.`);
       }
     }
-    return this.withAccess(await this.notes.update(granted.ownerId, id, dto), granted);
+    return this.withAccess(
+      await this.notes.update(granted.ownerId, id, dto, this.access.noteWriteGuard(user.id, id, 'edit')),
+      granted,
+    );
   }
 
   /** Moves a note to the trash. */

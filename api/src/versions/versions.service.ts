@@ -1,3 +1,4 @@
+import type { WriteGuard } from '../access/access.service';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { LinksService } from '../links/links.service';
@@ -83,7 +84,8 @@ export class VersionsService {
    * Puts an old version back. The current state is saved as a version first,
    * so a restore can itself be undone.
    */
-  async restore(userId: string, noteId: string, versionId: string): Promise<NoteView> {
+  /** `guard` runs first inside the transaction that writes: the access check of a shared note. */
+  async restore(userId: string, noteId: string, versionId: string, guard?: WriteGuard): Promise<NoteView> {
     const note = await this.findNote(userId, noteId);
     if (note.deletedAt) {
       throw new ConflictException('Restore the note from the trash before restoring a version');
@@ -91,6 +93,7 @@ export class VersionsService {
     const version = await this.findVersion(noteId, versionId);
 
     const restored = await this.prisma.$transaction(async (tx) => {
+      await guard?.(tx);
       const now = new Date();
       // Tied to the revision that was just read, so that the text saved as a
       // version below is the text this restore replaces. A save that got in
