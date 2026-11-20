@@ -360,9 +360,20 @@ never existed, and the dialog tells the owner. A link with a password answers
 a `POST`, never in the address. The public endpoint is throttled, with a
 roomy limit for reading and a strict one for password attempts, counted per
 client and per link. A request with the owner's login is no longer counted
-as a view, and nothing these routes answer may be cached. Still to come in a
-second step: sharing a whole notebook with one link, and `[[links]]` between
-shared notes.
+as a view, and nothing these routes answer may be cached.
+
+The second step shares a notebook with one link. `ShareLink` got a
+`notebookId` beside `noteId`, with a check in the database that exactly one
+is set. The link shows a list of the notes in the notebook and in the
+notebooks inside it, and each note on a page of its own. Which notes belong
+is asked with every request, so a note added later is there and one moved
+out or deleted is gone at once. The options are the same, and the right
+password comes back with a proof that opens the other notes for an hour, so
+it is typed once. `[[links]]` lead on wherever the target is in the same
+shared notebook or has a link of its own. Every other link is sent as plain
+words, so that no title from outside the shared notes gets out. Still open:
+a link shows that it has a password, a notebook link has no search, and the
+shared pages are not styled for printing.
 
 ### 11. Account settings and sessions
 
