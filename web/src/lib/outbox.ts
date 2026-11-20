@@ -112,7 +112,7 @@ function serial<T>(work: () => Promise<T>): Promise<T> {
 
 function acrossTabs<T>(userId: string, work: () => Promise<T>): Promise<T> {
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-  return locks ? locks.request(`notes-outbox-${userId}`, work) : work();
+  return locks ? (locks.request(`notes-outbox-${userId}`, work) as Promise<T>) : work();
 }
 
 // What the page sees -----------------------------------------------------------
@@ -365,7 +365,8 @@ export function startOutbox(userId: string, queryClient: QueryClient): Promise<v
   timer = setInterval(() => {
     if (shown.some((entry) => entry.state === 'waiting')) void replay();
   }, 30_000);
-  return serial(() => refresh(false)).then(() => replay());
+  // What is waiting is known before anything is shown, so that an editor opens on it. Sending can follow.
+  return serial(() => refresh(false)).then(() => void replay());
 }
 
 /** Stops sending. What is waiting stays on disk for this user's next sign-in. */
@@ -406,8 +407,10 @@ export function discardEntry(noteId: string): Promise<void> {
   return resolveEntry(noteId, 'theirs');
 }
 
-/** For tests. */
+/** For tests: starts from nothing, whatever an earlier test left running. */
 export async function resetOutbox(): Promise<void> {
   stopOutbox();
+  chain = Promise.resolve();
+  replaying = null;
   await dropOtherOutboxes(null);
 }

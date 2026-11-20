@@ -194,7 +194,7 @@ function LoadedEditor({ note }: { note: Note }) {
       unanswered.current = [];
       keepTheirs.current = false;
     },
-    [note.id, adopt],
+    [note.id, adopt, ownerId],
   );
 
   // Leaving the note with a conflict still open must not drop anything, and
