@@ -4,6 +4,7 @@ import * as authApi from '../api/auth';
 import { ApiError, getToken, onTokenChangedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
 import { clearNotices } from '../lib/notices';
+import { dropOtherOutboxes, startOutbox, stopOutbox } from '../lib/outbox';
 import { discardUnsavedWork, putUnsavedWorkAside } from '../lib/unsavedWork';
 import {
   dropOfflineCache,
@@ -53,6 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const stopKeeping = useCallback(() => {
     const current = kept.current;
     kept.current = null;
+    // What is waiting to be sent stays on disk, for this user's next sign-in. See lib/outbox.ts.
+    stopOutbox();
     void current?.cache.then((cache) => cache.stop());
     return current?.userId ?? null;
   }, []);
@@ -63,9 +66,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (kept.current?.userId === who.id) return;
       stopKeeping();
       const entry = { userId: who.id } as { userId: string; cache: Promise<OfflineCache> };
-      entry.cache = dropOtherOfflineCaches(who.id).then(() =>
-        keepOffline(queryClient, who, () => kept.current === entry),
-      );
+      entry.cache = dropOtherOfflineCaches(who.id)
+        .then(() => keepOffline(queryClient, who, () => kept.current === entry))
+        .then(async (cache) => {
+          // Changes another user left unsent on this browser are not this user's to send or to see.
+          await dropOtherOutboxes(who.id);
+          if (kept.current === entry) await startOutbox(who.id, queryClient);
+          return cache;
+        });
       kept.current = entry;
       const cache = entry.cache;
       await cache;

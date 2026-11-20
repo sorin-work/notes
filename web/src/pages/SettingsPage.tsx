@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
 import { changePassword, deleteAccount, logoutEverywhere, updatePreferences, updateProfile } from '../api/auth';
+import { dropOutbox } from '../lib/outbox';
 import { listNotebooks } from '../api/notebooks';
 import { listNotes } from '../api/notes';
 import { deleteTag, listTags, renameTag } from '../api/tags';
@@ -220,7 +221,14 @@ function DeleteAccountDialog({ user, onClose }: { user: User; onClose(): void })
   const { logout } = useAuth();
   const [password, setPassword] = useState('');
   const download = useMutation({ mutationFn: exportAll });
-  const remove = useMutation({ mutationFn: () => deleteAccount(password), onSuccess: logout });
+  const remove = useMutation({
+    mutationFn: () => deleteAccount(password),
+    onSuccess: () => {
+      // The account is gone, and so is anything it still had waiting to be sent.
+      void dropOutbox(user.id);
+      logout();
+    },
+  });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
