@@ -1,6 +1,6 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router';
+import { Link, Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
@@ -90,6 +90,37 @@ describe('SharedNotePage', () => {
     expect(calls.every((call) => !call.url.includes('open'))).toBe(true);
     // One look at the link, then only the attempts: nothing is retried behind the reader's back.
     expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
+  });
+
+  it('starts over for another link: neither the note nor the password of the last one is carried along', async () => {
+    const calls = mockFetch({
+      'GET /api/public/notes/tok123': needsPassword,
+      'POST /api/public/notes/tok123': { body: bread },
+      'GET /api/public/notes/tok456': needsPassword,
+      'POST /api/public/notes/tok456': needsPassword,
+    });
+    renderWithProviders(
+      <>
+        <Link to="/s/tok456">Another link</Link>
+        <Routes>
+          <Route path="/s/:token" element={<SharedNotePage />} />
+        </Routes>
+      </>,
+      { route: '/s/tok123' },
+    );
+
+    await userEvent.type(await screen.findByLabelText('Password'), 'open sesame');
+    await userEvent.click(screen.getByRole('button', { name: 'Show the note' }));
+    expect(await screen.findByText('Feed the starter.')).toBeInTheDocument();
+
+    // A move inside the app, without a reload, to a link with a password of its own.
+    await userEvent.click(screen.getByRole('link', { name: 'Another link' }));
+
+    expect(await screen.findByRole('heading', { name: 'This note needs a password' })).toBeInTheDocument();
+    expect(screen.queryByText('Feed the starter.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Sourdough bread' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toHaveValue('');
+    expect(calls.filter((call) => call.url.endsWith('tok456')).map((call) => call.method)).toEqual(['GET']);
   });
 
   it('says when there were too many attempts, and when the link went away in the meantime', async () => {

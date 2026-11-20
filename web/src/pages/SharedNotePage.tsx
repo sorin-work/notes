@@ -13,6 +13,12 @@ const statusOf = (error: unknown) => (error instanceof ApiError ? error.status :
 /** The public, read-only page behind a share link. */
 export function SharedNotePage() {
   const { token = '' } = useParams();
+  // One instance per link. What was typed for a link, and the note it
+  // opened, are gone when the address changes to another link.
+  return <SharedLink key={token} token={token} />;
+}
+
+function SharedLink({ token }: { token: string }) {
   // Never retried: asking again does not make a missing link appear, and for a
   // link with a password every request counts against a small allowance.
   const first = useQuery({ queryKey: ['shared', token], queryFn: () => getSharedNote(token), retry: false });
