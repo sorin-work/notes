@@ -1,10 +1,10 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
-import { notebook, user } from '../test/fixtures';
+import { note, notebook, summary, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { Sidebar } from './Sidebar';
 
@@ -76,5 +76,44 @@ describe('Sidebar', () => {
     expect(screen.getByLabelText('Inside')).toHaveValue('p');
     await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ name: 'Ideas', parentId: 'p' });
+  });
+
+  it('makes a note from a template, in the notebook being shown, with today’s values', async () => {
+    const calls = mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: notebooks },
+      'GET /api/tags': { body: [] },
+      'GET /api/notes': { body: { items: [summary({ id: 't1', title: 'Weekly review template' })], total: 1 } },
+      'POST /api/notes': { body: note({ id: 'new', title: 'Weekly review' }) },
+    });
+    renderSidebar('/notes?notebook=m&view=templates');
+
+    expect(await screen.findByRole('link', { name: 'Templates' })).toHaveAttribute('aria-current', 'page');
+    const choice = await screen.findByRole('combobox', { name: 'New from template' });
+    expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('templates=true');
+    await userEvent.selectOptions(choice, 'Weekly review template');
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      templateId: 't1',
+      notebookId: 'm',
+      placeholders: {
+        date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        time: expect.stringMatching(/^\d{2}:\d{2}$/),
+      },
+    });
+  });
+
+  it('offers no template to choose from when there is none', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: notebooks },
+      'GET /api/tags': { body: [] },
+      'GET /api/notes': { body: { items: [], total: 0 } },
+    });
+    renderSidebar();
+    expect(await screen.findByRole('link', { name: 'Templates' })).toHaveAttribute('href', '/notes?view=templates');
+    await screen.findByRole('link', { name: /Work/ });
+    expect(screen.queryByRole('combobox', { name: 'New from template' })).not.toBeInTheDocument();
   });
 });

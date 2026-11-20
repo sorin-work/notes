@@ -552,6 +552,57 @@ describe('NoteEditor', () => {
     expect(textarea).toHaveValue('Typed a moment ago.');
   });
 
+  it('duplicates the note after saving what is typed, and opens the copy', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'POST /api/notes/n1/duplicate': { body: note({ id: 'n2', title: 'Project Atlas (copy)' }) },
+      }),
+    );
+    renderEditor();
+    fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed just now.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Duplicate' }));
+
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/notes/n1/duplicate')).toBe(true));
+    const sent = calls.filter((call) => call.method !== 'GET').map((call) => `${call.method} ${call.url}`);
+    expect(sent).toEqual(['PATCH /api/notes/n1', 'POST /api/notes/n1/duplicate']);
+    expect(calls.find((call) => call.method === 'PATCH')?.body).toMatchObject({ content: 'Typed just now.' });
+  });
+
+  it('turns a note into a template, which is no edit, and makes a note from it', async () => {
+    let saved = note();
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': () => ({ body: saved }),
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+          saved = { ...saved, ...(body as object) };
+          return { body: saved };
+        },
+        'POST /api/notes': { body: note({ id: 'n2', title: 'Project Atlas' }) },
+      }),
+    );
+    renderEditor();
+    const toggle = await screen.findByRole('button', { name: 'Template' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByText(/This is a template/)).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'));
+    // No title, no content and no revision: like a pin, it cannot conflict with typing.
+    expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({ isTemplate: true });
+
+    expect(screen.getByText(/This is a template/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'New note from this template' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      templateId: 'n1',
+      notebookId: null,
+      placeholders: {
+        date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        time: expect.stringMatching(/^\d{2}:\d{2}$/),
+      },
+    });
+  });
+
   it('shows notes in the trash as read-only', async () => {
     mockFetch(
       baseRoutes({
