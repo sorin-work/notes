@@ -123,4 +123,22 @@ describe('NotesPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Create a note' }));
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ notebookId: 'w' });
   });
+
+  it('lists the templates in a view of their own, and creates a template there', async () => {
+    const calls = mockFetch({
+      'GET /api/notes': { body: page([summary({ id: 't1', title: 'Weekly review template' })]) },
+      'GET /api/notebooks': { body: [] },
+      'POST /api/notes': { body: note({ id: 'new', isTemplate: true }) },
+      'GET /api/notes/new': { body: note({ id: 'new', isTemplate: true }) },
+    });
+    renderPage('/notes?view=templates');
+
+    expect(await screen.findByRole('heading', { name: 'Templates' })).toBeInTheDocument();
+    expect(await screen.findByText('1 template')).toBeInTheDocument();
+    expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('templates=true');
+
+    await userEvent.keyboard('{Alt>}n{/Alt}');
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ notebookId: null, isTemplate: true });
+  });
 });

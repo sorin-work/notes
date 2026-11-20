@@ -2,18 +2,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
-import { createNote } from '../api/notes';
+import { createNote, listNotes, openDailyNote } from '../api/notes';
 import { listTags } from '../api/tags';
-import type { Notebook } from '../api/types';
+import type { Notebook, NoteChanges } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { todaysNote } from '../lib/days';
 import { dropStashes } from '../lib/draftStash';
-import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
-import { notebookTree, totalNotes } from '../lib/notebooks';
+import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
+import { notebookTree, totalNotes, trashedWith } from '../lib/notebooks';
+import { fromTemplate } from '../lib/templates';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
 import { ShareDialog } from './ShareDialog';
+import { ErrorMessage } from './States';
 
 type NotebookAction =
   | { kind: 'create'; parentId: string | null }
@@ -38,6 +41,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const [params] = useSearchParams();
   const [action, setAction] = useState<NotebookAction | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [chosenTemplate, setChosenTemplate] = useState('');
 
   // Once the session has ended nothing can be saved, so what is unsaved goes
   // first. If that does not work, signing out would throw it away, and that
@@ -58,12 +62,36 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { notebook: activeNotebook, tag: activeTag, view } = shown;
   const showsAll = onNotes && !activeNotebook && !activeTag && !view;
 
+  // Under the 'notes' key, so that whatever refreshes the lists refreshes this one too.
+  const templates = useQuery({
+    queryKey: ['notes', 'templates'],
+    queryFn: () => listNotes({ templates: true, sort: 'title', pageSize: 100 }),
+  });
+
   const newNote = useMutation({
-    mutationFn: () => createNote(newNoteFor(shown)),
-    onSuccess: (note) => {
+    mutationFn: (start: NoteChanges | void) => createNote(start ?? newNoteFor(shown)),
+    onSuccess: (note, start) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
-      navigate({ pathname: `/notes/${note.id}`, search: onNotes ? location.search : '' });
+      void queryClient.invalidateQueries({ queryKey: ['tags'] });
+      setChosenTemplate('');
+      // A note is not shown in the list of templates, so that view is left behind.
+      const search = onNotes && !note.isTemplate ? leavingTemplates(location.search) : onNotes ? location.search : '';
+      // A note from a template starts untitled, so the cursor goes to its title.
+      navigate({ pathname: `/notes/${note.id}`, search }, { state: start?.templateId ? { focusTitle: true } : null });
+      onNavigate?.();
+    },
+  });
+
+  // "Today" is a day here, in the browser. The server finds the note of that day or makes it.
+  const today = useMutation({
+    mutationFn: () => openDailyNote(todaysNote()),
+    onSuccess: (note) => {
+      for (const key of ['notes', 'notebooks', 'tags']) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      // Shown among all notes: the list that was open may be one the note is not in.
+      navigate(`/notes/${note.id}`);
       onNavigate?.();
     },
   });
@@ -129,6 +157,36 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         >
           + New note
         </button>
+        {templates.data && templates.data.items.length > 0 && (
+          // Choosing is not creating: the arrow keys on a closed select change
+          // it at once, so the note is made only by the button.
+          <form
+            className="new-from-template"
+            onSubmit={(event) => {
+              event.preventDefault();
+              // The new note goes into the notebook that is being looked at. Its tags come from the template.
+              if (chosenTemplate) newNote.mutate(fromTemplate(chosenTemplate, newNoteFor(shown).notebookId));
+            }}
+          >
+            <select
+              aria-label="New from template"
+              value={chosenTemplate}
+              disabled={newNote.isPending}
+              onChange={(event) => setChosenTemplate(event.target.value)}
+            >
+              <option value="">New from template…</option>
+              {templates.data.items.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.title}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="button" disabled={!chosenTemplate || newNote.isPending}>
+              Create
+            </button>
+          </form>
+        )}
+        {newNote.error && <ErrorMessage error={newNote.error} />}
         <form role="search" onSubmit={submitSearch}>
           <input
             type="search"
@@ -144,11 +202,26 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="sidebar-scroll">
         <div className="nav-section">
+          <button
+            type="button"
+            className="nav-item nav-button"
+            title="Open today’s note, or start it"
+            disabled={today.isPending}
+            onClick={() => today.mutate()}
+          >
+            <span className="nav-label">Today</span>
+          </button>
+          {today.error && (
+            <p className="nav-empty" role="alert">
+              Today’s note could not be opened.
+            </p>
+          )}
           {filterLink('', showsAll, 'All notes')}
           {filterLink('?view=pinned', view === 'pinned', 'Pinned')}
           {filterLink('?view=favorites', view === 'favorites', 'Favourites')}
           {filterLink(`?notebook=${NO_NOTEBOOK}`, activeNotebook === NO_NOTEBOOK, 'Not in a notebook')}
           {filterLink('?view=orphans', view === 'orphans', 'Orphans')}
+          {filterLink('?view=templates', view === 'templates', 'Templates')}
         </div>
 
         <div className="nav-section">
@@ -288,7 +361,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               The notebook
               {tree.some((n) => n.id === action.notebook.id && n.children.length > 0) &&
                 ' and the notebooks inside it'}{' '}
-              will be deleted. Its notes move to the trash, where you can restore them for 30 days.
+              will be deleted. {trashedWith(notebooks.data ?? [], action.notebook.id)}
             </p>
           }
           confirmLabel="Delete notebook"

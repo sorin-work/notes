@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { excerpt } from '../common/text';
+import { workingNotes } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { extractWikiLinks, normalizeTitle } from './wikilinks';
 
@@ -39,7 +40,7 @@ export class LinksService {
     }
   }
 
-  /** Notes outside the trash whose [[links]] point at this note's title. */
+  /** The notes whose [[links]] point at this note's title. A template that links here is not one of them. */
   async backlinks(userId: string, noteId: string): Promise<Backlink[]> {
     const note = await this.prisma.note.findFirst({ where: { id: noteId, userId }, select: { title: true } });
     if (!note) {
@@ -48,8 +49,7 @@ export class LinksService {
     const key = normalizeTitle(note.title);
     const sources = await this.prisma.note.findMany({
       where: {
-        userId,
-        deletedAt: null,
+        ...workingNotes(userId),
         id: { not: noteId },
         outgoingLinks: { some: { targetKey: key } },
       },
@@ -133,7 +133,11 @@ export class LinksService {
     return rows.length > 0;
   }
 
-  /** The most recently edited note outside the trash with this title. */
+  /**
+   * The note outside the trash with this title. A note goes before a
+   * template of the same title, and among those left the most recently
+   * edited one wins.
+   */
   async resolve(userId: string, title: string): Promise<{ id: string; title: string }> {
     const target = (await this.resolveKeys(userId, [normalizeTitle(title)])).get(normalizeTitle(title));
     if (!target) {
@@ -161,9 +165,10 @@ export class LinksService {
     if (among) {
       const ids = 'notebookIds' in among ? among.notebookIds : among.noteIds;
       if (ids.length === 0) return result;
+      // A shared notebook shows its readers its notes, not its templates.
       within =
         'notebookIds' in among
-          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[])`
+          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[]) AND is_template = false`
           : Prisma.sql`AND id = ANY(${ids}::uuid[])`;
     }
     // Titles are matched case-insensitively. Prisma cannot express
@@ -171,12 +176,12 @@ export class LinksService {
     const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
       SELECT DISTINCT ON (key) id, key
       FROM (
-        SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at
+        SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, is_template, updated_at
         FROM notes
         WHERE user_id = ${userId}::uuid AND deleted_at IS NULL ${within}
       ) titled
       WHERE key = ANY(${keys})
-      ORDER BY key, updated_at DESC`;
+      ORDER BY key, is_template ASC, updated_at DESC`;
     for (const row of rows) result.set(row.key, row.id);
     return result;
   }
