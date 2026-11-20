@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
+import type { AuthUser } from '../common/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
@@ -126,6 +127,28 @@ export class AuthService {
     const user = await this.find(userId);
     await this.checkPassword(user, dto.password, 'Password is incorrect');
     await this.prisma.user.delete({ where: { id: userId } });
+  }
+
+  /**
+   * Whose login token this is, or null when it is forged, expired, from
+   * before the account's token version was bumped, or of a deleted account.
+   * The second half costs one primary-key lookup of two columns.
+   */
+  async identify(token: string): Promise<AuthUser | null> {
+    let payload: TokenPayload;
+    try {
+      payload = await this.jwt.verifyAsync<TokenPayload>(token);
+    } catch {
+      return null;
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { email: true, tokenVersion: true },
+    });
+    if (!user || user.tokenVersion !== (payload.ver ?? 0)) {
+      return null;
+    }
+    return { id: payload.sub, email: user.email };
   }
 
   /** For other routes that ask for the password again. Throws the same 403 as the ones here. */
