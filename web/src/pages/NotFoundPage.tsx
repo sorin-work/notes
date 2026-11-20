@@ -2,11 +2,11 @@ import { Link } from 'react-router';
 
 export function NotFoundPage() {
   return (
-    <div className="full-page-center">
+    <main className="full-page-center">
       <div className="empty-state">
-        <p className="empty-title">Page not found</p>
+        <h1 className="empty-title">Page not found</h1>
         <Link to="/notes">Back to your notes</Link>
       </div>
-    </div>
+    </main>
   );
 }

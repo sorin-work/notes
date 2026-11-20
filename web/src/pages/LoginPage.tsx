@@ -32,7 +32,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="auth-page">
+    <main className="auth-page">
       <form className="auth-card form" onSubmit={submit}>
         <h1>Sign in to Notes</h1>
         <label className="field">
@@ -69,6 +69,6 @@ export function LoginPage() {
           </p>
         )}
       </form>
-    </div>
+    </main>
   );
 }

@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { resetPassword } from '../api/auth';
 import { useAuth } from '../auth/AuthContext';
-import { ErrorMessage } from '../components/States';
+import { ErrorMessage, focusOnce } from '../components/States';
 
 function tokenIn(hash: string): string {
   return new URLSearchParams(hash.replace(/^#/, '')).get('token') ?? '';
@@ -44,34 +44,38 @@ export function ResetPasswordPage() {
 
   if (reset.isSuccess) {
     return (
-      <div className="auth-page">
+      <main className="auth-page">
         <div className="auth-card form" role="status">
-          <h1>Password changed</h1>
+          <h1 tabIndex={-1} ref={focusOnce}>
+            Password changed
+          </h1>
           <p>Every browser and device has been signed out. Sign in with the new password.</p>
           <p>
             <Link to="/login">Sign in</Link>
           </p>
         </div>
-      </div>
+      </main>
     );
   }
 
   if (!token) {
     return (
-      <div className="auth-page">
+      <main className="auth-page">
         <div className="auth-card form">
-          <h1>This link is not complete</h1>
+          <h1 tabIndex={-1} ref={focusOnce}>
+            This link is not complete
+          </h1>
           <p>Open the link from the mail again, or ask for a new one.</p>
           <p>
             <Link to="/forgot-password">Ask for a new link</Link>
           </p>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="auth-page">
+    <main className="auth-page">
       <form className="auth-card form" onSubmit={submit}>
         <h1>Choose a new password</h1>
         <label className="field">
@@ -109,6 +113,6 @@ export function ResetPasswordPage() {
           <Link to="/forgot-password">Ask for a new link</Link>
         </p>
       </form>
-    </div>
+    </main>
   );
 }

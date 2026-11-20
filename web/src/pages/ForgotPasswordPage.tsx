@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link } from 'react-router';
 import { requestPasswordReset } from '../api/auth';
-import { ErrorMessage } from '../components/States';
+import { ErrorMessage, focusOnce } from '../components/States';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -15,9 +15,11 @@ export function ForgotPasswordPage() {
 
   if (send.isSuccess) {
     return (
-      <div className="auth-page">
+      <main className="auth-page">
         <div className="auth-card form" role="status">
-          <h1>Check your mail</h1>
+          <h1 tabIndex={-1} ref={focusOnce}>
+            Check your mail
+          </h1>
           <p>
             If {email.trim()} has an account here, a mail with a link to choose a new password is on its way. The link
             works once, for an hour.
@@ -26,12 +28,12 @@ export function ForgotPasswordPage() {
             <Link to="/login">Back to sign in</Link>
           </p>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="auth-page">
+    <main className="auth-page">
       <form className="auth-card form" onSubmit={submit}>
         <h1>Forgot your password?</h1>
         <p className="muted">Enter the email of your account. A link to choose a new password is mailed to it.</p>
@@ -54,6 +56,6 @@ export function ForgotPasswordPage() {
           <Link to="/login">Back to sign in</Link>
         </p>
       </form>
-    </div>
+    </main>
   );
 }

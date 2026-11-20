@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { NotesPage } from '../pages/NotesPage';
+import { expectNoAxeViolations } from '../test/axe';
 import { note, summary, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { Layout } from './Layout';
@@ -100,5 +101,75 @@ describe('Layout', () => {
 
     await userEvent.keyboard('{Meta>}k{/Meta}');
     expect(screen.getByRole('dialog', { name: 'Go to note' })).toBeInTheDocument();
+  });
+
+  it('only opens the menu for "/" where the sidebar is a menu', async () => {
+    mockFetch(routes);
+    const narrow = vi.fn((query: string) => ({ matches: false, media: query }));
+    vi.stubGlobal('matchMedia', narrow);
+    renderLayout('/notes');
+    const search = await screen.findByLabelText('Search notes');
+
+    // On a wide screen the sidebar is always there. Opening a menu would only put its shade into the layout.
+    await userEvent.keyboard('/');
+    expect(search).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('.scrim')).toBeNull();
+
+    search.blur();
+    narrow.mockImplementation((query: string) => ({ matches: true, media: query }));
+    await userEvent.keyboard('/');
+    expect(search).toHaveFocus();
+    expect(narrow).toHaveBeenLastCalledWith('(max-width: 820px)');
+    expect(screen.getByRole('button', { name: 'Close menu' })).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.scrim')).not.toBeNull();
+  });
+
+  it('offers skip links to the content and to the open note', async () => {
+    mockFetch(routes);
+    renderLayout('/notes/n1');
+    await screen.findByLabelText('Note content');
+
+    // The first stop of Tab on the page.
+    await userEvent.tab();
+    expect(screen.getByRole('link', { name: 'Skip to content' })).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByRole('main')).toHaveFocus();
+
+    await userEvent.click(screen.getByRole('link', { name: 'Skip to the note' }));
+    expect(screen.getByLabelText('Note editor').closest('section')).toHaveFocus();
+  });
+
+  it('has no link to a note when none is open', async () => {
+    mockFetch(routes);
+    renderLayout('/notes');
+    expect(await screen.findByRole('link', { name: 'Skip to content' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Skip to the note' })).not.toBeInTheDocument();
+  });
+
+  it('passes the axe checks with a note open, in the quick switcher and in a dialog', async () => {
+    const tasks = note({ id: 'n1', title: 'Project Atlas', content: '# Plans\n\n- [ ] Draft\n- [x] Budget' });
+    mockFetch({
+      ...routes,
+      'GET /api/notes/n1': { body: tasks },
+      'GET /api/notes/n1/backlinks': {
+        body: [
+          { id: 'n2', title: 'Weekly review', updatedAt: '2026-01-02T10:00:00Z', context: 'See [[Project Atlas]]' },
+        ],
+      },
+    });
+    renderLayout('/notes/n1');
+    expect(await screen.findByRole('checkbox', { name: 'Draft' })).toBeInTheDocument();
+    await screen.findByText('See [[Project Atlas]]');
+    await expectNoAxeViolations();
+
+    await userEvent.keyboard('{Control>}k{/Control}');
+    await screen.findByRole('option', { name: 'Weekly review' });
+    await expectNoAxeViolations();
+    await userEvent.keyboard('{Escape}');
+
+    await userEvent.click(screen.getByRole('button', { name: 'New notebook' }));
+    expect(screen.getByRole('dialog', { name: 'New notebook' })).toBeInTheDocument();
+    await expectNoAxeViolations();
   });
 });

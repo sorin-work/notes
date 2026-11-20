@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Outlet } from 'react-router';
+import { MouseEvent, useCallback, useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { Outlet, useMatch } from 'react-router';
 import { QuickSwitcher } from './QuickSwitcher';
 import { Sidebar } from './Sidebar';
 
@@ -15,7 +16,17 @@ function isSwitcherKey(event: KeyboardEvent): boolean {
   return modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k';
 }
 
+/** The width below which styles.css turns the sidebar into a menu. */
+const NARROW_SCREEN = '(max-width: 820px)';
+
+/** The skip links move the focus without putting their "#id" in the address. */
+function skipTo(event: MouseEvent<HTMLAnchorElement>) {
+  event.preventDefault();
+  document.getElementById(event.currentTarget.hash.slice(1))?.focus();
+}
+
 export function Layout() {
+  const noteOpen = useMatch('/notes/:noteId') !== null;
   const [menuOpen, setMenuOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const closeSwitcher = useCallback(() => setSwitcherOpen(false), []);
@@ -24,7 +35,9 @@ export function Layout() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === '/' && !isTyping(event.target) && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        setMenuOpen(true);
+        // On a narrow screen the sidebar is a menu that is hidden until it is open, and a hidden box cannot
+        // take the focus. A wide screen has no menu to open.
+        if (window.matchMedia?.(NARROW_SCREEN).matches) flushSync(() => setMenuOpen(true));
         document.getElementById('global-search')?.focus();
       } else if (isSwitcherKey(event)) {
         // Unlike "/", this one has to work while typing: the editor is where it is used most.
@@ -43,6 +56,14 @@ export function Layout() {
 
   return (
     <div className={menuOpen ? 'app menu-open' : 'app'}>
+      <a href="#main" className="skip-link" onClick={skipTo}>
+        Skip to content
+      </a>
+      {noteOpen && (
+        <a href="#note" className="skip-link" onClick={skipTo}>
+          Skip to the note
+        </a>
+      )}
       <header className="mobile-bar">
         <button
           type="button"
@@ -57,7 +78,7 @@ export function Layout() {
       </header>
       <Sidebar onNavigate={() => setMenuOpen(false)} />
       {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
-      <main className="main">
+      <main className="main" id="main" tabIndex={-1}>
         <Outlet />
       </main>
       {switcherOpen && <QuickSwitcher onClose={closeSwitcher} />}

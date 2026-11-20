@@ -132,7 +132,7 @@ export function NotesPage() {
         </div>
       </section>
 
-      <section className="editor-pane">
+      <section className="editor-pane" id="note" tabIndex={-1}>
         {noteId ? (
           <>
             <Link to={{ pathname: '/notes', search: params.toString() }} className="back-link">

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
+import { expectNoAxeViolations } from '../test/axe';
 import { user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SettingsPage } from './SettingsPage';
@@ -143,5 +144,20 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(getToken()).toBeNull());
     expect(calls.find((call) => call.method === 'DELETE')?.body).toEqual({ password: 'demo-password' });
+  });
+
+  it('passes the axe checks, with the profile form filled in and the delete dialog open', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/tags': { body: [{ id: 't1', name: 'atlas', noteCount: 2 }] },
+    });
+    renderSettings();
+    expect(await screen.findByDisplayValue(user.email)).toBeInTheDocument();
+    await screen.findAllByText(/atlas/);
+    await expectNoAxeViolations({ part: true });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete account…' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await expectNoAxeViolations({ part: true });
   });
 });
