@@ -4,6 +4,7 @@ import { Page, skipFor } from '../common/pagination';
 import { cleanSnippet, excerpt } from '../common/text';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import type { NoteFilterQuery } from '../notes/dto/note.dto';
+import { workingNoteSql } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
 import { HIGHLIGHT_END, HIGHLIGHT_START, parseSearch } from './search-query';
@@ -61,7 +62,7 @@ export class SearchService {
 
     const conditions = [
       Prisma.sql`n.user_id = ${userId}::uuid`,
-      Prisma.sql`n.deleted_at IS NULL`,
+      workingNoteSql('n'),
       Prisma.sql`n.search_vector @@ query`,
     ];
     if (options.notebookId === 'none') {

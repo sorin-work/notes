@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { excerpt } from '../common/text';
+import { workingNoteSql, workingNotes } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { extractWikiLinks, normalizeTitle } from './wikilinks';
 
@@ -75,7 +76,7 @@ export class LinksService {
     }
   }
 
-  /** Notes outside the trash whose [[links]] point at this note's title. */
+  /** The notes whose [[links]] point at this note's title. A template that links here is not one of them. */
   async backlinks(userId: string, noteId: string): Promise<Backlink[]> {
     const note = await this.prisma.note.findFirst({ where: { id: noteId, userId }, select: { title: true } });
     if (!note) {
@@ -84,8 +85,7 @@ export class LinksService {
     const key = normalizeTitle(note.title);
     const sources = await this.prisma.note.findMany({
       where: {
-        userId,
-        deletedAt: null,
+        ...workingNotes(userId),
         id: { not: noteId },
         outgoingLinks: { some: { targetKey: key } },
       },
@@ -101,18 +101,18 @@ export class LinksService {
   }
 
   /**
-   * The notes outside the trash with no links in or out. A link counts, in
-   * either direction, when it leads from one note outside the trash to
-   * another one: the note its title resolves to, as in resolveKeys. A link
-   * to a title no note has, to a note in the trash or from a note to itself
-   * connects nothing.
+   * The working notes (outside the trash, not templates) with no links in
+   * or out. A link counts, in either direction, when it leads from one
+   * working note to another: the note its title resolves to, as in
+   * resolveKeys. A link to a title no note has, to a note in the trash or a
+   * template, or from a note to itself connects nothing.
    */
   async orphanIds(userId: string): Promise<string[]> {
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       WITH named AS (
         SELECT id, ${titleKey('title')} AS key, updated_at
         FROM notes
-        WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+        WHERE user_id = ${userId}::uuid AND ${workingNoteSql('notes')}
       ),
       resolved AS (
         SELECT DISTINCT ON (key) id, key FROM named ORDER BY key, updated_at DESC
@@ -132,18 +132,19 @@ export class LinksService {
   }
 
   /**
-   * Notes outside the trash as nodes, and the links between them as edges,
-   * in one query. A link leads to the note its title resolves to: the most
-   * recently edited one with that title, as everywhere else. Links to notes
-   * outside the graph, to missing notes and from a note to itself are left
-   * out of the edges. Each node says how many links it has in all, so that a
-   * note whose links all lead outside the graph is not taken for one without.
+   * Working notes (outside the trash, not templates) as nodes, and the links
+   * between them as edges, in one query. A link leads to the note its title
+   * resolves to: the most recently edited one with that title, as everywhere
+   * else. Links to notes outside the graph, to missing notes, to templates
+   * and from a note to itself are left out of the edges. Each node says how
+   * many links it has in all, so that a note whose links all lead outside the
+   * graph is not taken for one without.
    *
    * `notebookIds` narrows the graph to those notebooks, or with "none" to
    * the notes outside any notebook. `tag` narrows it to the notes with that tag.
    */
   async graph(userId: string, filter: { notebookIds?: string[] | 'none'; tag?: string } = {}): Promise<Graph> {
-    const conditions = [Prisma.sql`n.user_id = ${userId}::uuid`, Prisma.sql`n.deleted_at IS NULL`];
+    const conditions = [Prisma.sql`n.user_id = ${userId}::uuid`, workingNoteSql('n')];
     if (filter.notebookIds === 'none') {
       conditions.push(Prisma.sql`n.notebook_id IS NULL`);
     } else if (filter.notebookIds) {
@@ -170,16 +171,16 @@ export class LinksService {
         FROM (
           SELECT id, ${titleKey('title')} AS key, updated_at
           FROM notes
-          WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+          WHERE user_id = ${userId}::uuid AND ${workingNoteSql('notes')}
         ) named
         ORDER BY key, updated_at DESC
       ),
       connected AS (
         SELECT DISTINCT link.source_id AS source, titled.id AS target
         FROM note_links link
-        JOIN notes origin ON origin.id = link.source_id
+        JOIN notes n ON n.id = link.source_id
         JOIN titled ON titled.key = link.target_key
-        WHERE origin.user_id = ${userId}::uuid AND origin.deleted_at IS NULL AND link.source_id <> titled.id
+        WHERE n.user_id = ${userId}::uuid AND ${workingNoteSql('n')} AND link.source_id <> titled.id
       ),
       linked AS (
         SELECT connected.source, connected.target
@@ -239,7 +240,11 @@ export class LinksService {
     return rows.length > 0;
   }
 
-  /** The most recently edited note outside the trash with this title. */
+  /**
+   * The note outside the trash with this title. A note goes before a
+   * template of the same title, and among those left the most recently
+   * edited one wins.
+   */
   async resolve(userId: string, title: string): Promise<{ id: string; title: string }> {
     const target = (await this.resolveKeys(userId, [normalizeTitle(title)])).get(normalizeTitle(title));
     if (!target) {
@@ -267,9 +272,10 @@ export class LinksService {
     if (among) {
       const ids = 'notebookIds' in among ? among.notebookIds : among.noteIds;
       if (ids.length === 0) return result;
+      // A shared notebook shows its readers its notes, not its templates.
       within =
         'notebookIds' in among
-          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[])`
+          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[]) AND is_template = false`
           : Prisma.sql`AND id = ANY(${ids}::uuid[])`;
     }
     // Titles are matched case-insensitively. Prisma cannot express
@@ -277,12 +283,12 @@ export class LinksService {
     const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
       SELECT DISTINCT ON (key) id, key
       FROM (
-        SELECT id, ${titleKey('title')} AS key, updated_at
+        SELECT id, ${titleKey('title')} AS key, is_template, updated_at
         FROM notes
         WHERE user_id = ${userId}::uuid AND deleted_at IS NULL ${within}
       ) titled
       WHERE key = ANY(${keys})
-      ORDER BY key, updated_at DESC`;
+      ORDER BY key, is_template ASC, updated_at DESC`;
     for (const row of rows) result.set(row.key, row.id);
     return result;
   }

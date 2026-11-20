@@ -1,6 +1,12 @@
-import type { Note, NoteSummary, Notebook } from '../api/types';
+import type { Note, NoteSummary, Notebook, User } from '../api/types';
 
-export const user = { id: 'u1', email: 'demo@example.com', name: 'Demo User', createdAt: '2026-01-01T00:00:00Z' };
+export const user: User = {
+  id: 'u1',
+  email: 'demo@example.com',
+  name: 'Demo User',
+  createdAt: '2026-01-01T00:00:00Z',
+  preferences: { dailyNotes: { notebookId: null, templateId: null, dateFormat: 'iso' } },
+};
 
 export function note(overrides: Partial<Note> = {}): Note {
   return {
@@ -8,6 +14,8 @@ export function note(overrides: Partial<Note> = {}): Note {
     title: 'Project Atlas',
     content: 'Links to [[Atlas data model]].',
     revision: 3,
+    isTemplate: false,
+    dailyDate: null,
     notebookId: null,
     notebook: null,
     tags: ['atlas'],
@@ -43,6 +51,7 @@ export function notebook(overrides: Partial<Notebook> = {}): Notebook {
     name: 'Work',
     parentId: null,
     noteCount: 0,
+    templateCount: 0,
     shared: false,
     sharedThrough: null,
     createdAt: '2026-01-01T10:00:00Z',

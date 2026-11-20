@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPassword } from '../auth/password';
 import { APP_CONFIG, AppConfig } from '../config/config';
 import { LinksService } from '../links/links.service';
+import { WORKING_NOTE } from '../notes/note-scope';
 import { extractWikiLinks, normalizeTitle, unlinkExcept } from '../links/wikilinks';
 import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -250,7 +251,8 @@ export class SharesService {
     const [notebook, notes] = await Promise.all([
       this.prisma.notebook.findUniqueOrThrow({ where: { id: rootId ?? '' }, select: { name: true } }),
       this.prisma.note.findMany({
-        where: { userId: open.ownerId, deletedAt: null, notebookId: { in: open.notebookIds ?? [] } },
+        // The notes of the notebook, without the trash and without its templates.
+        where: { userId: open.ownerId, ...WORKING_NOTE, notebookId: { in: open.notebookIds ?? [] } },
         select: { id: true, title: true, updatedAt: true, notebookId: true, notebook: { select: NOTEBOOK_PATH } },
       }),
     ]);
@@ -276,8 +278,12 @@ export class SharesService {
     where: { id: string; notebookId?: { in: string[] } },
     now: Date,
   ): Promise<SharedNote> {
+    // A note opened through a shared notebook is never one of its templates.
+    // A template with a link of its own is shared like any note.
     const note = await this.prisma.note.findFirst({
-      where: { ...where, userId: open.ownerId, deletedAt: null },
+      where: where.notebookId
+        ? { ...where, userId: open.ownerId, ...WORKING_NOTE }
+        : { ...where, userId: open.ownerId, deletedAt: null },
       select: NOTE_FIELDS,
     });
     if (!note) {

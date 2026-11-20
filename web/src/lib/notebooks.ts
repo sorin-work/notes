@@ -88,3 +88,19 @@ export function possibleParents(notebooks: Notebook[], moving: Notebook | null):
     (node) => node.depth + height <= MAX_NOTEBOOK_DEPTH && !(moving && isInside(notebooks, node.id, moving.id)),
   );
 }
+
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What deleting a notebook moves to the trash, counting the notebooks inside it at any depth, as a sentence. */
+export function trashedWith(notebooks: Notebook[], id: string): string {
+  const deleted = notebooks.filter((notebook) => isInside(notebooks, notebook.id, id));
+  const notes = deleted.reduce((sum, notebook) => sum + notebook.noteCount, 0);
+  const templates = deleted.reduce((sum, notebook) => sum + notebook.templateCount, 0);
+  if (notes === 0 && templates === 0) return 'There are no notes in it.';
+  const what = [
+    ...(notes > 0 ? [count(notes, 'note', 'notes')] : []),
+    ...(templates > 0 ? [count(templates, 'template', 'templates')] : []),
+  ].join(' and ');
+  const one = notes + templates === 1;
+  return `${what} ${one ? 'moves' : 'move'} to the trash, where you can restore ${one ? 'it' : 'them'} for 30 days.`;
+}

@@ -689,6 +689,7 @@ describe('api tokens', () => {
       'AuthController.changePassword',
       'AuthController.deleteAccount',
       'AuthController.logoutEverywhere',
+      'AuthController.updatePreferences',
       'AuthController.updateProfile',
     ]);
     expect(names(routes.filter((route) => route.isPublic))).toEqual([
@@ -1137,6 +1138,8 @@ describe('orphans and unlinked mentions', () => {
     const dangling = await post({ title: 'Dangling', content: 'Only to [[A note that is missing]].' });
     const selfish = await post({ title: 'Selfish', content: 'Only to [[Selfish]] itself.' });
     const lost = await post({ title: 'Lost', content: 'Only to [[Gone]], which is in the trash.' });
+    // A template is in no list, and its links connect nothing.
+    await post({ title: 'Meeting template', content: 'Notes for [[Alone]].', isTemplate: true });
 
     const orphans = async (query = '') => {
       const response = await request(server).get(`/api/notes?orphans=true&sort=title${query}`).set(auth).expect(200);
@@ -1420,6 +1423,8 @@ describe('graph', () => {
     });
     const alone = await post('/api/notes', { title: 'Alone', content: 'No links.' });
     const gone = await post('/api/notes', { title: 'Gone', content: 'See [[Hub]].' });
+    // A template is no node, and its link to the hub is no edge and is not counted.
+    await post('/api/notes', { title: 'Hub template', content: 'See [[Hub]].', isTemplate: true });
     await request(server).delete(`/api/notes/${gone}`).set(auth).expect(204);
     await post('/api/notes', { title: 'Hub', content: 'See [[Plan]].' }, other.auth);
 
@@ -1723,6 +1728,343 @@ describe('nested notebooks', () => {
   });
 });
 
+describe('templates and copies', () => {
+  it('keeps a template out of the lists and makes notes from it with the placeholders filled in', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object = {}, headers = auth) =>
+      (await request(server).post(path).set(headers).send(body).expect(201)).body;
+    const get = async (path: string) => (await request(server).get(path).set(auth).expect(200)).body;
+    const ids = (items: { id: string }[]) => items.map((item) => item.id);
+
+    const notebook = await post('/api/notebooks', { name: 'Work' });
+    const target = await post('/api/notes', { title: 'Deep Work', content: 'A book.' });
+    const template = await post('/api/notes', {
+      title: 'Weekly review template',
+      content: '# {{title}}\n\nWeek ending {{date}}, written at {{ time }}. {{mood}}\n\nInspired by [[Deep Work]].',
+      notebookId: notebook.id,
+      tags: ['review'],
+      pinned: true,
+    });
+    await request(server).post(`/api/notes/${template.id}/share`).set(auth).expect(200);
+    expect(ids(await get(`/api/notes/${target.id}/backlinks`))).toEqual([template.id]);
+
+    // Making it a template is no edit: same revision, same "last edited".
+    const marked = await request(server).patch(`/api/notes/${template.id}`).set(auth).send({ isTemplate: true });
+    expect(marked.body).toMatchObject({ isTemplate: true, revision: 0, updatedAt: template.updatedAt });
+
+    // Gone from everything that lists notes, through the one shared condition.
+    expect(ids((await get('/api/notes')).items)).toEqual([target.id]);
+    expect(ids((await get('/api/notes?pinned=true')).items)).toEqual([]);
+    expect(ids((await get('/api/search?q=weekly')).items)).toEqual([]);
+    expect(ids(await get('/api/notes/titles?q=Weekly'))).toEqual([]);
+    expect(ids(await get('/api/notes/titles'))).toEqual([target.id]);
+    expect(await get(`/api/notes/${target.id}/backlinks`)).toEqual([]);
+    // The notebook counts it apart, so that deleting the notebook can say a template goes with it.
+    expect(await get('/api/notebooks')).toMatchObject([{ noteCount: 0, templateCount: 1 }]);
+    expect(await get('/api/tags')).toEqual([]);
+    // It has a list of its own, is still a note by its id, and a link to its title still leads to it.
+    expect(ids((await get('/api/notes?templates=true')).items)).toEqual([template.id]);
+    expect((await get(`/api/notes/${template.id}`)).isTemplate).toBe(true);
+    expect((await get('/api/notes/resolve?title=weekly%20review%20template')).id).toBe(template.id);
+
+    // A note from the template: text and tags with the placeholders filled in, and nothing else of it.
+    const made = await post('/api/notes', {
+      templateId: template.id,
+      title: 'Weekly review',
+      placeholders: { date: '2026-11-20', time: '19:30' },
+    });
+    expect(made).toMatchObject({
+      title: 'Weekly review',
+      content: '# Weekly review\n\nWeek ending 2026-11-20, written at 19:30. {{mood}}\n\nInspired by [[Deep Work]].',
+      tags: ['review'],
+      isTemplate: false,
+      pinned: false,
+      shared: false,
+      notebookId: null,
+      revision: 0,
+    });
+    expect(await get(`/api/notes/${made.id}/versions`)).toEqual([]);
+    // Its links are real links: the new note shows up as a backlink, the template still does not.
+    expect(await get(`/api/notes/${made.id}/links`)).toEqual([{ title: 'Deep Work', noteId: target.id }]);
+    expect(ids(await get(`/api/notes/${target.id}/backlinks`))).toEqual([made.id]);
+
+    // Without values the placeholders stay as written: the server does not guess the day.
+    // Nor the title: the note does not take the template's, it starts untitled.
+    const unfilled = await post('/api/notes', { templateId: template.id });
+    expect(unfilled.title).toBe('Untitled');
+    expect(unfilled.content).toContain('Week ending {{date}}, written at {{ time }}.');
+    expect(unfilled.content).toContain('# {{title}}\n');
+
+    // Only a template of one's own can be used, and only the known placeholders are taken.
+    const body = { templateId: template.id };
+    await request(server).post('/api/notes').set(other.auth).send(body).expect(404);
+    await request(server).post('/api/notes').set(auth).send({ templateId: target.id }).expect(404);
+    await request(server).post('/api/notes').set(auth).send({ templateId: 'nope' }).expect(400);
+    await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ ...body, placeholders: { author: 'me' } })
+      .expect(400);
+    await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ ...body, placeholders: { date: 'x\0' } })
+      .expect(400);
+    await request(server).delete(`/api/notes/${template.id}`).set(auth).expect(204);
+    await request(server).post('/api/notes').set(auth).send(body).expect(404);
+    expect(ids((await get('/api/notes?templates=true')).items)).toEqual([]);
+  });
+
+  it('leads a link to a note before a template of the same title, and renames links in templates too', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body;
+    const resolve = async (title: string) =>
+      (await request(server).get('/api/notes/resolve').query({ title }).set(auth).expect(200)).body.id;
+
+    const meeting = await post({ title: 'Meeting notes', content: 'The real one.' });
+    const template = await post({ title: 'Meeting notes', content: 'Agenda for [[Atlas]].', isTemplate: true });
+    const linking = await post({ title: 'Monday', content: 'See [[Meeting notes]].' });
+    // The template was edited last, and still the link leads to the note.
+    await request(server).patch(`/api/notes/${template.id}`).set(auth).send({ content: 'Agenda for [[Atlas]]!' });
+    expect(await resolve('meeting notes')).toBe(meeting.id);
+    const links = await request(server).get(`/api/notes/${linking.id}/links`).set(auth).expect(200);
+    expect(links.body).toEqual([{ title: 'Meeting notes', noteId: meeting.id }]);
+    // With the note gone, the template is what the title leads to.
+    await request(server).delete(`/api/notes/${meeting.id}`).set(auth).expect(204);
+    expect(await resolve('Meeting notes')).toBe(template.id);
+
+    // The notes made from a template later should not start with a link to an old title.
+    const atlas = await post({ title: 'Atlas' });
+    await request(server).patch(`/api/notes/${atlas.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+    const renamed = await request(server)
+      .post(`/api/notes/${atlas.id}/rename-links`)
+      .set(auth)
+      .send({ from: 'Atlas' })
+      .expect(200);
+    expect(renamed.body).toMatchObject({ updated: 1, noteIds: [template.id] });
+    const after = await request(server).get(`/api/notes/${template.id}`).set(auth).expect(200);
+    expect(after.body).toMatchObject({ content: 'Agenda for [[Project Atlas]]!', isTemplate: true });
+  });
+
+  it('duplicates a note with its text, tags and notebook, and leaves the rest behind', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object = {}) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+
+    const notebook = await post('/api/notebooks', { name: 'Work' });
+    const original = await post('/api/notes', {
+      title: 'Plan',
+      content: 'Due {{date}}, see [[Atlas]].',
+      notebookId: notebook.id,
+      tags: ['q1', 'work'],
+      pinned: true,
+      favorite: true,
+    });
+    await request(server)
+      .patch(`/api/notes/${original.id}`)
+      .set(auth)
+      .send({ content: 'Due {{date}}, see [[Atlas]]!' });
+    await request(server).post(`/api/notes/${original.id}/share`).set(auth).expect(200);
+
+    const copy = await post(`/api/notes/${original.id}/duplicate`);
+    expect(copy).toMatchObject({
+      title: 'Plan (copy)',
+      content: 'Due {{date}}, see [[Atlas]]!',
+      notebookId: notebook.id,
+      tags: ['q1', 'work'],
+      pinned: false,
+      favorite: false,
+      shared: false,
+      isTemplate: false,
+      revision: 0,
+    });
+    expect(copy.id).not.toBe(original.id);
+    const versions = await request(server).get(`/api/notes/${copy.id}/versions`).set(auth).expect(200);
+    expect(versions.body).toEqual([]);
+    const links = await request(server).get(`/api/notes/${copy.id}/links`).set(auth).expect(200);
+    expect(links.body).toEqual([{ title: 'Atlas', noteId: null }]);
+
+    // A copy of a template is a template.
+    await request(server).patch(`/api/notes/${original.id}`).set(auth).send({ isTemplate: true }).expect(200);
+    expect((await post(`/api/notes/${original.id}/duplicate`)).isTemplate).toBe(true);
+
+    await request(server).post(`/api/notes/${original.id}/duplicate`).set(other.auth).expect(404);
+    await request(server).delete(`/api/notes/${original.id}`).set(auth).expect(204);
+    await request(server).post(`/api/notes/${original.id}/duplicate`).set(auth).expect(409);
+  });
+});
+
+describe('daily notes', () => {
+  it('opens one note per day, made the way the preferences say, however often and however it is asked for', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object = {}) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+    const daily = (body: object, headers = auth) => request(server).post('/api/notes/daily').set(headers).send(body);
+    const today = { date: '2026-11-20', placeholders: { date: '2026-11-20', time: '08:15' } };
+
+    // Nothing chosen yet: the defaults come with the account.
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(me.body.preferences).toEqual({ dailyNotes: { notebookId: null, templateId: null, dateFormat: 'iso' } });
+
+    const journal = await post('/api/notebooks', { name: 'Journal' });
+    const template = await post('/api/notes', {
+      title: 'Daily template',
+      content: '# {{title}}\n\nStarted at {{time}}.\n\n- [ ] Plan the day',
+      tags: ['journal'],
+      isTemplate: true,
+    });
+    const saved = await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { notebookId: journal.id, templateId: template.id, dateFormat: 'long' } })
+      .expect(200);
+    expect(saved.body.dailyNotes).toEqual({ notebookId: journal.id, templateId: template.id, dateFormat: 'long' });
+    // Only what is sent changes, and the choices come back with the account on any device.
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'us' } })
+      .expect(200);
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'long' } })
+      .expect(200);
+    const again = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(again.body.preferences.dailyNotes).toEqual(saved.body.dailyNotes);
+
+    // Several tabs ask for today's note at once. There is one note, and they all get it.
+    const answers = await Promise.all(Array.from({ length: 6 }, () => daily(today)));
+    expect(answers.map((answer) => answer.status)).toEqual([200, 200, 200, 200, 200, 200]);
+    const [note] = answers.map((answer) => answer.body);
+    expect(new Set(answers.map((answer) => answer.body.id)).size).toBe(1);
+    expect(note).toMatchObject({
+      title: '20 November 2026',
+      content: '# 20 November 2026\n\nStarted at 08:15.\n\n- [ ] Plan the day',
+      notebookId: journal.id,
+      tags: ['journal'],
+      isTemplate: false,
+      revision: 0,
+    });
+    const list = await request(server).get('/api/notes').set(auth).expect(200);
+    expect(list.body.items.map((item: { id: string }) => item.id)).toEqual([note.id]);
+
+    // Still the same note after it was written in, renamed, and the format was changed.
+    await request(server)
+      .patch(`/api/notes/${note.id}`)
+      .set(auth)
+      .send({ title: 'A long Friday', revision: 0 })
+      .expect(200);
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'iso' } })
+      .expect(200);
+    const later = await daily({ date: '2026-11-20' }).expect(200);
+    expect(later.body).toMatchObject({ id: note.id, title: 'A long Friday', revision: 1 });
+
+    // Another day is another note. One that was written by hand under that day's title is taken for it.
+    const byHand = await post('/api/notes', { title: 'november 21, 2026', content: 'Written the evening before.' });
+    const tomorrow = await daily({ date: '2026-11-21' }).expect(200);
+    expect(tomorrow.body).toMatchObject({ id: byHand.id, content: 'Written the evening before.', revision: 0 });
+    expect(tomorrow.body.updatedAt).toBe(byHand.updatedAt);
+
+    // In the trash, the note of a day makes room for a new one and stays what it was.
+    await request(server).delete(`/api/notes/${note.id}`).set(auth).expect(204);
+    const fresh = await daily({ date: '2026-11-20' }).expect(200);
+    expect(fresh.body.id).not.toBe(note.id);
+    expect(fresh.body.title).toBe('2026-11-20');
+    await request(server).post(`/api/trash/${note.id}/restore`).set(auth).expect(204);
+    expect((await daily({ date: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
+
+    // A copy of a daily note is an ordinary note, and each account has its own days.
+    await post(`/api/notes/${fresh.body.id}/duplicate`);
+    expect((await daily({ date: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
+    const theirs = await daily({ date: '2026-11-20' }, other.auth).expect(200);
+    expect(theirs.body.id).not.toBe(fresh.body.id);
+    expect(theirs.body).toMatchObject({ content: '', notebookId: null, tags: [] });
+
+    // The title is written in the format stored now, also for a tab that read another one earlier.
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'us' } })
+      .expect(200);
+    expect((await daily({ date: '2026-11-23' }).expect(200)).body.title).toBe('November 23, 2026');
+
+    // A template or a notebook that is gone is no longer used, and nothing fails over it.
+    await request(server).delete(`/api/notes/${template.id}`).set(auth).expect(204);
+    await request(server).delete(`/api/notebooks/${journal.id}`).set(auth).expect(200);
+    const plain = await daily({ date: '2026-11-22' }).expect(200);
+    expect(plain.body).toMatchObject({ content: '', notebookId: null, tags: [] });
+  });
+
+  it('lets a note go from its day, after which neither the day nor its title leads back to it', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const daily = (date: string) => request(server).post('/api/notes/daily').set(auth).send({ date }).expect(200);
+
+    // Unrelated, but titled with a day: it is taken for that day.
+    const unrelated = await request(server).post('/api/notes').set(auth).send({ title: '2026-11-21', content: 'Mine' });
+    const adopted = await daily('2026-11-21');
+    expect(adopted.body).toMatchObject({ id: unrelated.body.id, dailyDate: '2026-11-21' });
+
+    await request(server).delete(`/api/notes/${unrelated.body.id}/daily`).set(other.auth).expect(404);
+    const released = await request(server).delete(`/api/notes/${unrelated.body.id}/daily`).set(auth).expect(200);
+    expect(released.body).toMatchObject({ title: '2026-11-21', content: 'Mine', dailyDate: null, revision: 0 });
+    expect(released.body.updatedAt).toBe(unrelated.body.updatedAt);
+
+    // The next "Today" makes a note of its own, and keeps it.
+    const fresh = await daily('2026-11-21');
+    expect(fresh.body.id).not.toBe(unrelated.body.id);
+    expect(fresh.body.dailyDate).toBe('2026-11-21');
+    expect((await daily('2026-11-21')).body.id).toBe(fresh.body.id);
+    // Released, the old note is not taken for that day again, not even when the new one goes.
+    await request(server).delete(`/api/notes/${fresh.body.id}`).set(auth).expect(204);
+    expect((await daily('2026-11-21')).body.id).not.toBe(unrelated.body.id);
+  });
+
+  it('takes only real days, no title, and preferences that are the user’s own', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const daily = (body: object) => request(server).post('/api/notes/daily').set(auth).send(body);
+
+    await daily({ date: '2026-02-30' }).expect(400);
+    await daily({ date: '20 November 2026' }).expect(400);
+    await daily({}).expect(400);
+    // The title is the server's to write, from the format the account has now.
+    await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(400);
+    await daily({ date: '2026-11-20', notebookId: 'x' }).expect(400);
+    await request(server).post('/api/notes/daily').send({ date: '2026-11-20' }).expect(401);
+
+    const preferences = (body: object) => request(server).patch('/api/auth/preferences').set(auth).send(body);
+    const theirNotebook = await request(server).post('/api/notebooks').set(other.auth).send({ name: 'Theirs' });
+    const ordinary = await request(server).post('/api/notes').set(auth).send({ title: 'No template' });
+    await preferences({ dailyNotes: { notebookId: theirNotebook.body.id } }).expect(400);
+    await preferences({ dailyNotes: { templateId: ordinary.body.id } }).expect(400);
+    await preferences({ dailyNotes: { dateFormat: 'roman' } }).expect(400);
+    // There is always a format, and always a set of daily note choices: null is no value for either.
+    await preferences({ dailyNotes: { dateFormat: null } }).expect(400);
+    await preferences({ dailyNotes: null }).expect(400);
+    await preferences({ dailyNotes: { notebookId: 'not-an-id' } }).expect(400);
+    await preferences({ theme: 'dark' }).expect(400);
+    const untouched = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(untouched.body.preferences).toEqual({
+      dailyNotes: { notebookId: null, templateId: null, dateFormat: 'iso' },
+    });
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
@@ -1924,6 +2266,34 @@ describe('sharing a notebook', () => {
     await request(server).get(`${link}/${deep.id}`).expect(404);
     const after = await request(server).get(`/api/notes/${deep.id}`).set(auth).expect(200);
     expect(after.body.sharedThrough).toBeNull();
+  });
+
+  it('shows its readers no template that sits in the notebook', async () => {
+    const { server, auth, recipes, soup, link } = await kitchen();
+    const template = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Recipe template', content: 'Serves {{title}}', notebookId: recipes, isTemplate: true })
+      .expect(201);
+    // A note in the notebook links to it by title.
+    await request(server)
+      .patch(`/api/notes/${soup}`)
+      .set(auth)
+      .send({ content: 'Leeks, see [[Recipe template]].' })
+      .expect(200);
+
+    const index = await request(server).get(link).expect(200);
+    expect(JSON.stringify(index.body)).not.toContain('Recipe template');
+    const never = await request(server).get(`${link}/6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e`).expect(404);
+    const hidden = await request(server).get(`${link}/${template.body.id}`).expect(404);
+    expect(hidden.body).toEqual(never.body);
+    // The link reads as plain words, as one to a note the reader may not open.
+    const shared = await request(server).get(`${link}/${soup}`).expect(200);
+    expect(shared.body.links).toEqual({});
+    expect(shared.body.content).not.toContain(template.body.id);
+    // And the owner is not told that the template is public.
+    const own = await request(server).get(`/api/notes/${template.body.id}`).set(auth).expect(200);
+    expect(own.body.sharedThrough).toBeNull();
   });
 
   it('shows the notes of the notebook and of the notebooks inside it, and nothing from outside', async () => {

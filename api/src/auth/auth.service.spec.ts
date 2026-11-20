@@ -3,6 +3,10 @@ import { JwtService } from '@nestjs/jwt';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { AuthService } from './auth.service';
 import { hashPassword, verifyPassword } from './password';
+import { DEFAULT_PREFERENCES } from './preferences';
+
+const NOTEBOOK = '11111111-1111-4111-8111-111111111111';
+const TEMPLATE = '22222222-2222-4222-8222-222222222222';
 
 describe('AuthService', () => {
   let prisma: PrismaMock;
@@ -39,7 +43,13 @@ describe('AuthService', () => {
       const data = prisma.user.create.mock.calls[0][0].data;
       expect(data.passwordHash).not.toBe('correct-horse');
       expect(await verifyPassword('correct-horse', data.passwordHash)).toBe(true);
-      expect(result.user).toEqual({ id: user.id, email: user.email, name: 'Ada', createdAt: user.createdAt });
+      expect(result.user).toEqual({
+        id: user.id,
+        email: user.email,
+        name: 'Ada',
+        createdAt: user.createdAt,
+        preferences: DEFAULT_PREFERENCES,
+      });
       expect(result.user).not.toHaveProperty('passwordHash');
       expect(jwt.verify(result.token)).toMatchObject({ sub: user.id, ver: 0 });
     });
@@ -84,7 +94,57 @@ describe('AuthService', () => {
         email: user.email,
         name: user.name,
         createdAt: user.createdAt,
+        preferences: DEFAULT_PREFERENCES,
       });
+    });
+
+    it('returns the preferences that are stored, and defaults for what is missing or wrong', async () => {
+      const stored = { dailyNotes: { notebookId: NOTEBOOK, templateId: 'not-an-id', dateFormat: 'long' }, extra: 1 };
+      prisma.user.findUnique.mockResolvedValue({ ...user, preferences: stored });
+      expect((await service.me(user.id)).preferences).toEqual({
+        dailyNotes: { notebookId: NOTEBOOK, templateId: null, dateFormat: 'long' },
+      });
+    });
+  });
+
+  describe('updatePreferences', () => {
+    beforeEach(() => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...user,
+        preferences: { dailyNotes: { notebookId: NOTEBOOK, dateFormat: 'long' } },
+      });
+      // Answers with what was stored, like the database does.
+      prisma.user.update.mockImplementation(({ data }) => Promise.resolve({ ...user, preferences: data.preferences }));
+    });
+
+    it('changes what is sent, keeps the rest and stores the whole', async () => {
+      prisma.note.findFirst.mockResolvedValue({ id: TEMPLATE });
+      const next = await service.updatePreferences(user.id, { dailyNotes: { templateId: TEMPLATE } });
+      expect(next).toEqual({ dailyNotes: { notebookId: NOTEBOOK, templateId: TEMPLATE, dateFormat: 'long' } });
+      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: user.id }, data: { preferences: next } });
+      // The template has to be a template of this user, outside the trash.
+      expect(prisma.note.findFirst).toHaveBeenCalledWith({
+        where: { userId: user.id, deletedAt: null, isTemplate: true, id: TEMPLATE },
+      });
+    });
+
+    it('clears a choice with null, without looking anything up', async () => {
+      const next = await service.updatePreferences(user.id, { dailyNotes: { notebookId: null, dateFormat: 'us' } });
+      expect(next.dailyNotes).toEqual({ notebookId: null, templateId: null, dateFormat: 'us' });
+      expect(prisma.notebook.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('refuses a notebook or a template that is not the user’s own', async () => {
+      prisma.notebook.findFirst.mockResolvedValue(null);
+      prisma.note.findFirst.mockResolvedValue(null);
+      await expect(service.updatePreferences(user.id, { dailyNotes: { notebookId: TEMPLATE } })).rejects.toThrow(
+        'There is no such notebook',
+      );
+      await expect(service.updatePreferences(user.id, { dailyNotes: { templateId: NOTEBOOK } })).rejects.toThrow(
+        'There is no such template',
+      );
+      expect(prisma.notebook.findFirst).toHaveBeenCalledWith({ where: { id: TEMPLATE, userId: user.id } });
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
     it('404s for a user that was deleted after the token was issued', async () => {

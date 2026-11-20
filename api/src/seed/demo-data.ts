@@ -12,6 +12,8 @@ export interface DemoNote {
   tags?: string[];
   pinned?: boolean;
   favorite?: boolean;
+  /** A note that new notes are made from. It is not in the lists. */
+  template?: boolean;
   createdDaysAgo: number;
   updatedDaysAgo: number;
   trashedDaysAgo?: number;
@@ -368,9 +370,9 @@ const sqlIndexes = `# Postgres index cheat sheet
 
 Used this for the [[Atlas data model]].`;
 
-const weeklyReview = `# Weekly review template
+const weeklyReview = `# {{title}}
 
-Friday afternoon, 30 minutes.
+Week ending {{date}}. Friday afternoon, 30 minutes.
 
 1. Empty the inbox, the desk and the downloads folder
 2. Look at the calendar: last week, then the next two weeks
@@ -596,6 +598,7 @@ export const DEMO_NOTES: DemoNote[] = [
     title: 'Weekly review template',
     notebook: [],
     tags: ['productivity', 'checklist'],
+    template: true,
     createdDaysAgo: 210,
     updatedDaysAgo: 4,
     content: weeklyReview,

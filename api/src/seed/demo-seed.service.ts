@@ -72,6 +72,7 @@ export class DemoSeedService implements OnApplicationBootstrap {
               content: demo.content,
               pinned: demo.pinned ?? false,
               favorite: demo.favorite ?? false,
+              isTemplate: demo.template ?? false,
               createdAt: daysAgo(demo.createdDaysAgo),
               updatedAt,
               deletedAt: demo.trashedDaysAgo === undefined ? null : daysAgo(demo.trashedDaysAgo),

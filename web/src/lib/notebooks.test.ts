@@ -9,10 +9,21 @@ import {
   notebookTree,
   possibleParents,
   totalNotes,
+  trashedWith,
 } from './notebooks';
 
-function nb(id: string, name: string, parentId: string | null = null, noteCount = 0): Notebook {
-  return { id, name, parentId, noteCount, shared: false, sharedThrough: null, createdAt: '', updatedAt: '' };
+function nb(id: string, name: string, parentId: string | null = null, noteCount = 0, templateCount = 0): Notebook {
+  return {
+    id,
+    name,
+    parentId,
+    noteCount,
+    templateCount,
+    shared: false,
+    sharedThrough: null,
+    createdAt: '',
+    updatedAt: '',
+  };
 }
 
 const notebooks = [
@@ -86,5 +97,21 @@ describe('possibleParents', () => {
     expect(names(possibleParents(notebooks, q1))).toEqual(['personal', 'Work', 'atlas', 'Meetings', 'Weekly']);
     const work = notebooks[1] as Notebook;
     expect(possibleParents(notebooks, work)).toEqual([]);
+  });
+});
+
+describe('trashedWith', () => {
+  it('counts the notes and the templates of the notebook and those inside it, at any depth', () => {
+    const withTemplates = [...notebooks, nb('t', 'Forms', 'w', 0, 1), nb('o', 'Only templates', null, 0, 2)];
+    expect(trashedWith(withTemplates, 'w')).toBe(
+      '20 notes and 1 template move to the trash, where you can restore them for 30 days.',
+    );
+    // Meetings, Weekly inside it and Q1 inside that.
+    expect(trashedWith(withTemplates, 'm')).toBe('14 notes move to the trash, where you can restore them for 30 days.');
+    expect(trashedWith(withTemplates, 'o')).toBe(
+      '2 templates move to the trash, where you can restore them for 30 days.',
+    );
+    expect(trashedWith(withTemplates, 'p')).toBe('1 note moves to the trash, where you can restore it for 30 days.');
+    expect(trashedWith([nb('e', 'Empty')], 'e')).toBe('There are no notes in it.');
   });
 });
