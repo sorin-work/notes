@@ -40,7 +40,9 @@ Markdown import/export.
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
 - **Account**: change your name, email and password in Settings, sign out
-  everywhere at once, or delete the account with everything in it.
+  everywhere at once, or delete the account with everything in it. A
+  forgotten password can be reset through a link sent by mail, on servers
+  that have SMTP settings.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
@@ -87,11 +89,28 @@ shared notes. Set `SEED_DEMO=false` to start with an empty database.
 | web     | http://localhost:5181 | nginx, proxies `/api` to the API            |
 | api     | http://localhost:4401 | `GET /api/health` checks the database too   |
 | db      | `localhost:5441`      | Postgres 17, user/password/database `notes` |
+| mailpit | http://localhost:8041 | Shows the mail the API sends, delivers none |
 
-The ports can be changed with `WEB_PORT`, `API_PORT` and `DB_PORT`. The API
-container runs `prisma migrate deploy` before it starts. Data lives in the
-`db-data` volume; `docker compose down -v` removes it. The next section is
-about keeping a copy of it.
+The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
+`MAILPIT_UI_PORT`. The API container runs `prisma migrate deploy` before it
+starts. Data lives in the `db-data` volume; `docker compose down -v` removes
+it. [Backup and restore](#backup-and-restore) is about keeping a copy of it.
+
+### Mail
+
+The API sends one kind of mail: the link behind "Forgot password?" on the
+sign-in page. In the Compose stack that mail goes to
+[mailpit](https://mailpit.axllent.org), which keeps it and shows it at
+http://localhost:8041 instead of delivering it. So to try a reset with the
+demo account, ask for the link and pick it up there. The mailpit page is
+bound to `127.0.0.1` and its SMTP port is not published at all, because
+whoever can read that page can open every reset link.
+
+For real mail, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` and, if the server
+wants a login, `SMTP_USER` and `SMTP_PASSWORD` in `.env`, and set `APP_URL`
+to the address people open the app at, since the links in the mails start
+with it. `SMTP_HOST=` with nothing after it switches mail off: the sign-in
+page then does not offer a reset.
 
 ## Backup and restore
 
@@ -195,17 +214,28 @@ npm run dev
 
 ### Configuration
 
-| Variable               | Default    | Purpose                                                    |
-| ---------------------- | ---------- | ---------------------------------------------------------- |
-| `DATABASE_URL`         | (required) | Postgres connection string                                 |
-| `JWT_SECRET`           | (required) | Signs login tokens, at least 32 characters                 |
-| `JWT_EXPIRES_IN`       | `7d`       | How long a login lasts                                     |
-| `PORT`                 | `4401`     | API port                                                   |
-| `CORS_ORIGINS`         | (none)     | Comma-separated browser origins, only needed without nginx |
-| `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                         |
-| `SEED_DEMO`            | `false`    | Create the demo account on start-up                        |
-| `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good             |
-| `AUTH_THROTTLE_LIMIT`  | `10`       | Per-minute limit per client on routes that take a password |
+| Variable               | Default                 | Purpose                                                                    |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| `DATABASE_URL`         | (required)              | Postgres connection string                                                 |
+| `JWT_SECRET`           | (required)              | Signs login tokens, at least 32 characters                                 |
+| `JWT_EXPIRES_IN`       | `7d`                    | How long a login lasts                                                     |
+| `PORT`                 | `4401`                  | API port                                                                   |
+| `CORS_ORIGINS`         | (none)                  | Comma-separated browser origins, only needed without nginx                 |
+| `LOG_LEVEL`            | `info`                  | `debug`, `info`, `warn` or `error`                                         |
+| `SEED_DEMO`            | `false`                 | Create the demo account on start-up                                        |
+| `TRASH_RETENTION_DAYS` | `30`                    | Days before trashed notes are deleted for good                             |
+| `AUTH_THROTTLE_LIMIT`  | `10`                    | Per-minute limit per client on routes that take a password                 |
+| `SMTP_HOST`            | (none)                  | SMTP server. Without it no mail is sent and password reset is off          |
+| `SMTP_PORT`            | `587`                   | Its port. `465` means TLS from the start, others use STARTTLS when offered |
+| `SMTP_FROM`            | (none)                  | Sender of the mails, required with `SMTP_HOST`                             |
+| `SMTP_USER`            | (none)                  | Login for the SMTP server, if it wants one                                 |
+| `SMTP_PASSWORD`        | (none)                  | Password for that login                                                    |
+| `APP_URL`              | `http://localhost:5181` | Address of the web app, used for the links in mails                        |
+
+The API on its own sends no mail unless `SMTP_HOST` is set, and mailpit's
+SMTP port is not reachable from outside the Compose network. To work on
+password reset with the API running locally, point `SMTP_HOST` at any SMTP
+server you can reach.
 
 ## Tests and checks
 
@@ -263,6 +293,7 @@ api/
     search/             Postgres full-text search
     shares/             read-only share links
     transfer/           zip export, Markdown import, front matter
+    mail/               outgoing mail over SMTP
     seed/               demo account
     common/, config/    shared helpers and environment configuration
   test/                 end-to-end tests
@@ -308,11 +339,22 @@ answers with a new token for the browser that made the change. Changing the
 email and deleting the account ask for the password again; a wrong one is a
 `403`, not a `401`, because the session itself is still good.
 
+`POST /auth/password-reset` with `{ email }` mails a link to
+`/reset-password?token=...` in the web app, and answers `204` whether or not
+the address has an account. The token is random, only its SHA-256 hash is
+stored, and it works once within an hour. `POST /auth/password-reset/confirm`
+with `{ token, password }` sets the password and bumps the token version, so
+every session of the account ends. Asking again replaces the earlier link,
+and an account gets one mail a minute at most. Without `SMTP_HOST` both
+answer `404`, and `GET /auth/password-reset` says `{ "enabled": false }`,
+which is how the sign-in page knows to hide the link.
+
 | Method & path                                                  | What it does                              |
 | -------------------------------------------------------------- | ----------------------------------------- |
 | `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
 | `GET/PATCH/DELETE /auth/me`                                    | Read, change or delete the current user   |
 | `PATCH /auth/password`, `POST /auth/logout-all`                | Change password, sign out everywhere      |
+| `GET/POST /auth/password-reset`, `POST .../confirm`            | Reset a forgotten password by mail        |
 | `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
