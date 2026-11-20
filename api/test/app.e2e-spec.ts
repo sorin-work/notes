@@ -858,6 +858,192 @@ describe('graph', () => {
   });
 });
 
+describe('nested notebooks', () => {
+  it('nests four levels, moves a notebook with what is inside it and refuses loops and a fifth level', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const create = (name: string, parentId?: string, headers = auth) =>
+      request(server).post('/api/notebooks').set(headers).send({ name, parentId });
+    const move = (id: string, parentId: string | null) =>
+      request(server).patch(`/api/notebooks/${id}`).set(auth).send({ parentId });
+    const id = async (name: string, parentId?: string) => (await create(name, parentId).expect(201)).body.id as string;
+
+    const a = await id('A');
+    const b = await id('B', a);
+    const c = await id('C', b);
+    const d = await id('D', c);
+    const fifth = await create('E', d).expect(400);
+    expect(fifth.body.message).toBe('Notebooks can be nested 4 levels deep at most');
+
+    // The same name is fine in another place, and refused side by side.
+    await create('D', a).expect(201);
+    await create('d', c).expect(409);
+
+    // No loops: not into itself, not into anything inside it.
+    await move(a, a).expect(400);
+    expect((await move(a, d).expect(400)).body.message).toBe(
+      'A notebook cannot be moved into a notebook that is inside it',
+    );
+    expect((await move(b, c).expect(400)).body.message).toContain('inside it');
+
+    // "B" takes up three levels. It fits inside a top-level notebook, and not one level further down.
+    const x = await id('X');
+    const y = await id('Y', x);
+    await move(b, y).expect(400);
+    const moved = await move(b, x).expect(200);
+    expect(moved.body).toMatchObject({ id: b, parentId: x });
+    const parents = async () =>
+      Object.fromEntries(
+        (await request(server).get('/api/notebooks').set(auth).expect(200)).body.map(
+          (notebook: { id: string; parentId: string | null }) => [notebook.id, notebook.parentId],
+        ),
+      );
+    // What was inside "B" came along untouched.
+    expect(await parents()).toMatchObject({ [b]: x, [c]: b, [d]: c, [a]: null });
+
+    // Another account's notebook is neither a parent nor movable.
+    const theirs = (await create('Theirs', undefined, other.auth).expect(201)).body.id as string;
+    await move(a, theirs).expect(404);
+    await request(server).patch(`/api/notebooks/${a}`).set(other.auth).send({ parentId: null }).expect(404);
+    await create('Mine', theirs).expect(404);
+  });
+
+  it('lets only one of two moves through that would make a loop together', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const id = async (name: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name }).expect(201)).body.id as string;
+    const move = (notebook: string, parentId: string) =>
+      request(server).patch(`/api/notebooks/${notebook}`).set(auth).send({ parentId });
+
+    for (let round = 0; round < 5; round++) {
+      const [p, q] = [await id(`P${round}`), await id(`Q${round}`)];
+      // Each move is fine alone. Together they would leave P inside Q inside P.
+      const [first, second] = await Promise.all([move(p, q), move(q, p)]);
+      expect([first.status, second.status].sort()).toEqual([200, 400]);
+      const list = await request(server).get('/api/notebooks').set(auth).expect(200);
+      const parentOf = (notebook: string) =>
+        list.body.find((item: { id: string }) => item.id === notebook).parentId as string | null;
+      expect([parentOf(p), parentOf(q)].filter((parent) => parent === null)).toHaveLength(1);
+    }
+  });
+
+  it('means the notebook and everything below it for the list, the search, the graph and deleting', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const notebook = async (name: string, parentId?: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name, parentId }).expect(201)).body.id as string;
+    const note = async (title: string, notebookId?: string) =>
+      (await request(server).post('/api/notes').set(auth).send({ title, content: 'Deep sync', notebookId }).expect(201))
+        .body.id as string;
+    const ids = (response: { body: { items?: { id: string }[]; nodes?: { id: string }[] } }) =>
+      (response.body.items ?? response.body.nodes ?? []).map((item) => item.id).sort();
+
+    const work = await notebook('Work');
+    const meetings = await notebook('Meetings', work);
+    const weekly = await notebook('Weekly', meetings);
+    const march = await notebook('March', weekly);
+    const top = await note('Top', work);
+    const mid = await note('Mid', weekly);
+    const deep = await note('Deep', march);
+    const outside = await note('Outside');
+    const old = await note('Old', march);
+    await request(server).delete(`/api/notes/${old}`).set(auth).expect(204);
+
+    const all = [top, mid, deep].sort();
+    expect(ids(await request(server).get(`/api/notes?notebookId=${work}`).set(auth).expect(200))).toEqual(all);
+    expect(ids(await request(server).get(`/api/notes?notebookId=${meetings}`).set(auth).expect(200))).toEqual(
+      [mid, deep].sort(),
+    );
+    expect(ids(await request(server).get(`/api/notes?notebookId=${march}`).set(auth).expect(200))).toEqual([deep]);
+    expect(ids(await request(server).get('/api/search').query({ q: 'sync', notebookId: work }).set(auth))).toEqual(all);
+    expect(ids(await request(server).get('/api/links/graph').query({ notebookId: meetings }).set(auth))).toEqual(
+      [mid, deep].sort(),
+    );
+
+    // Deleting a notebook in the middle takes everything below it, and the notes go to the trash.
+    const removed = await request(server).delete(`/api/notebooks/${meetings}`).set(auth).expect(200);
+    expect(removed.body).toEqual({ trashedNotes: 2 });
+    const left = await request(server).get('/api/notebooks').set(auth).expect(200);
+    expect(left.body.map((item: { name: string }) => item.name)).toEqual(['Work']);
+    expect(ids(await request(server).get('/api/notes').set(auth).expect(200))).toEqual([top, outside].sort());
+    const trash = await request(server).get('/api/trash').set(auth).expect(200);
+    expect(trash.body.map((item: { id: string }) => item.id).sort()).toEqual([mid, deep, old].sort());
+    // A note restored from there is not lost, it just has no notebook any more.
+    await request(server).post(`/api/trash/${deep}/restore`).set(auth).expect(204);
+    const restored = await request(server).get(`/api/notes/${deep}`).set(auth).expect(200);
+    expect(restored.body).toMatchObject({ notebookId: null, deletedAt: null });
+  });
+
+  it('exports nested folders and imports them at the same depth, folding only what is deeper', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const notebook = async (name: string, parentId?: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name, parentId }).expect(201)).body.id as string;
+
+    const work = await notebook('Work');
+    const clients = await notebook('Clients', work);
+    const acme = await notebook('Acme', clients);
+    const year = await notebook('2026', acme);
+    // A notebook next to a note whose file would have its name.
+    const odd = await notebook('Offer.md', acme);
+    for (const [title, notebookId] of [
+      ['Kickoff', year],
+      ['Offer', acme],
+      ['Terms', odd],
+    ]) {
+      await request(server).post('/api/notes').set(auth).send({ title, content: 'Text', notebookId }).expect(201);
+    }
+
+    const exported = await request(server)
+      .get('/api/export')
+      .set(auth)
+      .buffer(true)
+      .parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => done(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    const zip = await JSZip.loadAsync(exported.body as Buffer);
+    const files = Object.values(zip.files)
+      .filter((file) => !file.dir)
+      .map((file) => file.name)
+      .sort();
+    expect(files).toEqual([
+      'Work/Clients/Acme/2026/Kickoff.md',
+      'Work/Clients/Acme/Offer (2).md',
+      'Work/Clients/Acme/Offer.md/Terms.md',
+    ]);
+
+    // One folder too many for the import: it is folded into the fourth level.
+    zip.file('Work/Clients/Acme/2026/Q1/Review.md', 'Deeper than notebooks go.');
+    const other = await signUp();
+    const imported = await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .attach('files', await zip.generateAsync({ type: 'nodebuffer' }), 'export.zip')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 4, notebooksCreated: 6, skipped: [] });
+
+    const list = await request(server).get('/api/notebooks').set(other.auth).expect(200);
+    const byId = new Map<string, { name: string; parentId: string | null }>(
+      list.body.map((item: { id: string; name: string; parentId: string | null }) => [item.id, item]),
+    );
+    const pathOf = (item: { name: string; parentId: string | null }): string =>
+      item.parentId ? `${pathOf(byId.get(item.parentId)!)}/${item.name}` : item.name;
+    expect([...byId.values()].map(pathOf).sort()).toEqual([
+      'Work',
+      'Work/Clients',
+      'Work/Clients/Acme',
+      'Work/Clients/Acme/2026',
+      'Work/Clients/Acme/2026 - Q1',
+      'Work/Clients/Acme/Offer.md',
+    ]);
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
