@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Patch, Post, UseGu
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
+import { AllowApiToken, SessionOnly } from '../common/session-only.decorator';
 import { AuthResult, AuthService, PublicUser } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
@@ -9,6 +10,12 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
+/**
+ * Everything here that is not public needs a login. An API token gets as far
+ * as "who am I" and no further: it cannot change the name, email or
+ * password, delete the account or sign out everywhere.
+ */
+@SessionOnly()
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -28,6 +35,7 @@ export class AuthController {
     return this.auth.login(dto);
   }
 
+  @AllowApiToken()
   @Get('me')
   me(@CurrentUser() user: AuthUser): Promise<PublicUser> {
     return this.auth.me(user.id);

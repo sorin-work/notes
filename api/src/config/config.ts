@@ -21,6 +21,8 @@ export interface AppConfig {
   seedDemo: boolean;
   trashRetentionDays: number;
   authThrottleLimit: number;
+  /** Requests a minute that one API token may make. */
+  apiTokenThrottleLimit: number;
   /** Null without SMTP_HOST: no mail is sent and password reset is off. */
   mail: MailConfig | null;
   /** Where people reach the web app, for the links in mails. No trailing slash. */
@@ -111,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
     authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
+    apiTokenThrottleLimit: toInt('API_TOKEN_THROTTLE_LIMIT', env.API_TOKEN_THROTTLE_LIMIT, 120, 1),
     mail: mailFrom(env),
     appUrl: appUrlFrom(env.APP_URL),
   };

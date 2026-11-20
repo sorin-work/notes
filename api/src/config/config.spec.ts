@@ -15,6 +15,7 @@ describe('loadConfig', () => {
       seedDemo: false,
       trashRetentionDays: 30,
       authThrottleLimit: 10,
+      apiTokenThrottleLimit: 120,
       mail: null,
       appUrl: 'http://localhost:5181',
     });
@@ -28,8 +29,10 @@ describe('loadConfig', () => {
       CORS_ORIGINS: 'http://localhost:5181, https://notes.example.com',
       SEED_DEMO: 'true',
       TRASH_RETENTION_DAYS: '7',
+      API_TOKEN_THROTTLE_LIMIT: '30',
       LOG_LEVEL: 'debug',
     });
+    expect(config.apiTokenThrottleLimit).toBe(30);
     expect(config.port).toBe(8080);
     expect(config.corsOrigins).toEqual(['http://localhost:5181', 'https://notes.example.com']);
     expect(config.seedDemo).toBe(true);
