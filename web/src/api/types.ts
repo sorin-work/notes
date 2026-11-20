@@ -120,6 +120,12 @@ export interface MentionPage extends Page<Mention> {
 export interface GraphNode {
   id: string;
   title: string;
+  /**
+   * How many links the note has to and from other notes, wherever they are.
+   * More than its edges in the graph when some lead to notes that the
+   * filters or the limit left out.
+   */
+  links: number;
 }
 
 /** Notes and the links between them. `total` is larger than the number of nodes when the server cut the graph short. */
