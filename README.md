@@ -35,6 +35,9 @@ Markdown import/export.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+- **Backups**: with Docker, an optional service dumps the whole database once
+  a day and keeps the last seven dumps. See
+  [Backup and restore](#backup-and-restore).
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
 
 | Shortcut           | Action                            |
@@ -80,7 +83,71 @@ shared notes. Set `SEED_DEMO=false` to start with an empty database.
 
 The ports can be changed with `WEB_PORT`, `API_PORT` and `DB_PORT`. The API
 container runs `prisma migrate deploy` before it starts. Data lives in the
-`db-data` volume; `docker compose down -v` removes it.
+`db-data` volume; `docker compose down -v` removes it. The next section is
+about keeping a copy of it.
+
+## Backup and restore
+
+"Export all notes" in Settings leaves out the trash, version history and
+share links. For a full copy there is a `backup` service that dumps the whole
+database with `pg_dump`. It is behind a Compose profile, so it only runs when
+asked for:
+
+```bash
+docker compose --profile backup up -d
+```
+
+To have it start with every `docker compose up`, put `COMPOSE_PROFILES=backup`
+in `.env`.
+
+Dumps land in `./backups` as `notes-<UTC date and time>.dump`. The first one
+is made when the service starts (on a new stack, once the API has created the
+tables) and the next one a day after the newest dump, so restarting the stack
+does not add dumps. After each dump only the newest seven are kept. Files
+with any other name are left alone: rename a dump to keep it for good.
+
+| Variable                  | Default     | Purpose                               |
+| ------------------------- | ----------- | ------------------------------------- |
+| `BACKUP_DIR`              | `./backups` | Folder on the host the dumps go to    |
+| `BACKUP_KEEP`             | `7`         | How many dumps to keep                |
+| `BACKUP_INTERVAL_SECONDS` | `86400`     | Seconds from one dump to the next one |
+
+A dump right now, for example before an upgrade:
+
+```bash
+docker compose --profile backup run --rm backup once
+```
+
+To restore, stop the API, name the dump and start the API again:
+
+```bash
+docker compose stop api
+docker compose --profile backup run --rm backup restore notes-20261120T030000Z.dump
+docker compose start api
+```
+
+`restore` without a file name lists the dumps. The restore replaces the whole
+database, so everything written after the dump is gone. The dump is loaded
+into a new database first, and that one takes the place of the old one only
+when the load worked: a damaged file, or an API that is still running, leaves
+the data as it was. When the API starts again it applies any migrations that
+are newer than the dump.
+
+After losing the volume, or on another machine, it is the same command: put
+the dump in `./backups`, run the `restore` line (it starts the database by
+itself), then `docker compose up -d`.
+
+Good to know:
+
+- A dump holds every note and the password hashes, and it is not encrypted.
+  The files can only be read by their owner. On Linux that is the owner of
+  the folder they are in, not root.
+- The dumps sit on the same disk as the database unless `BACKUP_DIR` points
+  somewhere else. Copying them to another machine is up to you.
+- Nothing warns you when a dump fails. `docker compose logs backup` shows
+  every dump and every failure, and a failed dump is tried again a minute
+  later.
+- `docker compose down -v` removes the database volume, not the dumps.
 
 ## Running locally
 
@@ -147,6 +214,17 @@ The end-to-end tests apply the migrations to the database they are given and
 sign up a fresh user per test, so pointing them at a separate schema (as
 above) keeps them away from your own notes.
 
+A restore that is never tested is not a backup, so CI also runs
+`scripts/check-backup.sh` on the database the end-to-end tests leave behind.
+It takes three dumps while keeping two, restores the newest into a scratch
+database and compares the row count of every table. To run it against the
+database of the Compose stack (it needs some rows in it, and nothing writing
+to it meanwhile):
+
+```bash
+docker compose --profile backup run --rm --entrypoint sh backup /scripts/check-backup.sh
+```
+
 ## Project layout
 
 ```
@@ -174,6 +252,10 @@ web/
     hooks/              autosave, theme and small state helpers
     lib/                wiki links, dates, text helpers
     pages/              one component per route
+scripts/
+  backup.sh             the backup service: daily dumps, pruning and restore
+  check-backup.sh       dumps, restores and compares row counts, run by CI
+backups/                where the dumps go by default, ignored by git
 ```
 
 ## How links and versions work
