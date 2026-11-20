@@ -4,7 +4,7 @@ import { LinksService } from '../links/links.service';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { VersionsService } from '../versions/versions.service';
-import { lineAround, MAX_CANDIDATES, MentionsService } from './mentions.service';
+import { lineAround, MAX_CANDIDATES, MAX_PARSED_LENGTH, MentionsService } from './mentions.service';
 
 const USER = 'user-1';
 const updatedAt = new Date('2026-01-10T09:00:00Z');
@@ -44,6 +44,8 @@ describe('MentionsService', () => {
     // writeNoteText is an updateMany that says whether it found the note at the revision it was given.
     prisma.note.updateMany.mockResolvedValue({ count: 1 });
   });
+
+  afterEach(() => jest.restoreAllMocks());
 
   describe('list', () => {
     it('keeps the candidates that really mention the title, in the order the index gave them', async () => {
@@ -114,6 +116,59 @@ describe('MentionsService', () => {
       const read = prisma.note.findMany.mock.calls.flatMap(([args]) => args.where.id.in as string[]);
       expect(read).toHaveLength(MAX_CANDIDATES);
       expect(read).not.toContain(`n${MAX_CANDIDATES}`);
+    });
+
+    it('lists only a mention that "Link" would take, and goes past one it would not', async () => {
+      // The first mention would make a reference link to the definition, the second a [[link]] in a link label.
+      const refused = 'The project atlas.\n\n[project atlas]: https://x.test';
+      const later = 'In [*Project Atlas*](x.md) first.\n\nThen project atlas.\n\nAnd Project Atlas.';
+      prisma.$queryRaw.mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+      prisma.note.findMany.mockResolvedValue([source('a', refused), source('b', later)]);
+
+      const result = await service.list(USER, 'target', page());
+
+      expect(result.items.map(({ id, offset, match }) => ({ id, offset, match }))).toEqual([
+        { id: 'b', offset: later.indexOf('project atlas'), match: 'project atlas' },
+      ]);
+      // And "Link" takes what is listed.
+      prisma.note.findFirst.mockResolvedValueOnce(target).mockResolvedValueOnce(source('b', later));
+      await service.link(USER, 'target', 'b', { offset: result.items[0].offset, text: 'project atlas', version: 7 });
+      expect(prisma.note.updateMany).toHaveBeenCalled();
+    });
+
+    it('stops parsing at its budget and says the list is capped, passing over notes without the title for free', async () => {
+      const long = `Project Atlas. ${'word '.repeat(19_000)}`;
+      const count = Math.ceil(MAX_PARSED_LENGTH / long.length) + 5;
+      const ids = Array.from({ length: count }, (_, i) => ({ id: `n${i}` }));
+      prisma.$queryRaw.mockResolvedValue(ids);
+      prisma.note.findMany.mockImplementation(({ where }: { where: { id: { in: string[] } } }) =>
+        Promise.resolve(
+          where.id.in.map((id) =>
+            source(id, id === 'n0' ? `Only stems: projects atlases. ${'word '.repeat(19_000)}` : long),
+          ),
+        ),
+      );
+
+      // The clock stands still, so only the budget of characters counts here.
+      jest.spyOn(Date, 'now').mockReturnValue(0);
+      const result = await service.list(USER, 'target', page());
+
+      expect(result.capped).toBe(true);
+      // n0 costs nothing, and every other note that fits the budget is listed.
+      expect(result.total).toBe(Math.floor(MAX_PARSED_LENGTH / long.length));
+      expect(result.items.map((mention) => mention.id)).not.toContain('n0');
+    });
+
+    it('stops parsing when its time is up and says the list is capped', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+      prisma.note.findMany.mockResolvedValue(['a', 'b', 'c'].map((id) => source(id, 'About Project Atlas.')));
+      let now = 0;
+      // Each look at the clock is 400 ms later than the one before: the second note is still read, the third is not.
+      jest.spyOn(Date, 'now').mockImplementation(() => (now += 400) - 400);
+
+      const result = await service.list(USER, 'target', page());
+
+      expect(result).toMatchObject({ total: 2, capped: true });
     });
 
     it.each([
@@ -228,13 +283,13 @@ describe('MentionsService', () => {
       untouched();
     });
 
-    it('refuses a link that would take the note past the longest text a note can have', async () => {
+    it('refuses, with a reason, a note too long to look for mentions in', async () => {
+      // Such a note is never listed either. The longest text a note can have is far beyond it.
       const full = `Project Atlas ${'x'.repeat(MAX_CONTENT_LENGTH - 16)}`;
-      expect(full.length).toBe(MAX_CONTENT_LENGTH - 2);
       given(source('a', full));
-      await expect(
-        service.link(USER, 'target', 'a', { offset: 0, text: 'Project Atlas', version: 7 }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.link(USER, 'target', 'a', { offset: 0, text: 'Project Atlas', version: 7 })).rejects.toThrow(
+        new BadRequestException('That note is too long or too deeply nested to look for mentions in'),
+      );
       untouched();
     });
 

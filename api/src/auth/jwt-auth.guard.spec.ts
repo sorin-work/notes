@@ -6,6 +6,7 @@ import { IS_PUBLIC } from '../common/public.decorator';
 import { ALLOW_API_TOKEN } from '../common/allow-api-token.decorator';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import type { ApiTokensService } from './api-tokens.service';
+import { AuthService } from './auth.service';
 import { bearerToken, JwtAuthGuard } from './jwt-auth.guard';
 
 const response = { setHeader: jest.fn() };
@@ -31,7 +32,8 @@ describe('JwtAuthGuard', () => {
     prisma.user.findUnique.mockResolvedValue({ email: 'ada@example.com', tokenVersion: 0 });
     apiTokens = { identify: jest.fn(), throttle: jest.fn().mockResolvedValue(0) };
     response.setHeader.mockReset();
-    guard = new JwtAuthGuard(jwt, reflector, asPrismaService(prisma), apiTokens as unknown as ApiTokensService);
+    const auth = new AuthService(asPrismaService(prisma), jwt);
+    guard = new JwtAuthGuard(reflector, auth, apiTokens as unknown as ApiTokensService);
   });
 
   it('lets public routes through without a token', async () => {

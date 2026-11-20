@@ -6,7 +6,17 @@ const USER = 'user-1';
 const now = new Date('2026-02-01T10:00:00Z');
 
 function notebook(id: string, overrides: Partial<{ name: string; parentId: string | null }> = {}) {
-  return { id, userId: USER, name: id, parentId: null, createdAt: now, updatedAt: now, ...overrides };
+  return {
+    id,
+    userId: USER,
+    name: id,
+    parentId: null,
+    createdAt: now,
+    updatedAt: now,
+    share: null as { expiresAt: Date | null } | null,
+    parent: null as { id: string; name: string; share: { expiresAt: Date | null } | null } | null,
+    ...overrides,
+  };
 }
 
 describe('NotebooksService', () => {
@@ -23,34 +33,68 @@ describe('NotebooksService', () => {
       prisma.notebook.findMany.mockResolvedValue([{ ...notebook('work'), _count: { notes: 3 } }]);
       const result = await service.list(USER);
       expect(result).toEqual([
-        { id: 'work', name: 'work', parentId: null, createdAt: now, updatedAt: now, noteCount: 3 },
+        {
+          id: 'work',
+          name: 'work',
+          parentId: null,
+          createdAt: now,
+          updatedAt: now,
+          noteCount: 3,
+          shared: false,
+          sharedThrough: null,
+        },
       ]);
       expect(prisma.notebook.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: USER },
-          include: { _count: { select: { notes: { where: { deletedAt: null } } } } },
+          include: expect.objectContaining({ _count: { select: { notes: { where: { deletedAt: null } } } } }),
         }),
       );
+    });
+
+    it('says which shared notebook makes a notebook public: its own link, or that of the one it is inside', async () => {
+      const shared = { expiresAt: null };
+      const runOut = { expiresAt: new Date(Date.now() - 1000) };
+      prisma.notebook.findMany.mockResolvedValue([
+        { ...notebook('recipes', { name: 'Recipes' }), share: shared, _count: { notes: 1 } },
+        {
+          ...notebook('bread', { name: 'Bread', parentId: 'recipes' }),
+          parent: { id: 'recipes', name: 'Recipes', share: shared },
+          _count: { notes: 1 },
+        },
+        { ...notebook('old', { name: 'Old' }), share: runOut, _count: { notes: 0 } },
+        { ...notebook('work', { name: 'Work' }), _count: { notes: 0 } },
+      ]);
+      const result = await service.list(USER);
+      expect(result.map(({ id, shared, sharedThrough }) => [id, shared, sharedThrough])).toEqual([
+        ['recipes', true, { id: 'recipes', name: 'Recipes' }],
+        ['bread', false, { id: 'recipes', name: 'Recipes' }],
+        // A link that has run out lets nobody in.
+        ['old', true, null],
+        ['work', false, null],
+      ]);
     });
   });
 
   describe('create', () => {
     it('creates a top-level notebook', async () => {
       prisma.notebook.findFirst.mockResolvedValue(null);
-      prisma.notebook.create.mockResolvedValue(notebook('new', { name: 'Ideas' }));
+      prisma.notebook.create.mockResolvedValue({ ...notebook('new', { name: 'Ideas' }), _count: { notes: 0 } });
       const result = await service.create(USER, { name: 'Ideas' });
-      expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, name: 'Ideas', parentId: null } });
+      expect(prisma.notebook.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { userId: USER, name: 'Ideas', parentId: null } }),
+      );
       expect(result).toMatchObject({ name: 'Ideas', noteCount: 0 });
       expect(result).not.toHaveProperty('userId');
     });
 
     it('nests a notebook under a top-level one', async () => {
       prisma.notebook.findFirst.mockResolvedValueOnce(notebook('work')).mockResolvedValueOnce(null);
-      prisma.notebook.create.mockResolvedValue(notebook('meetings', { parentId: 'work' }));
+      prisma.notebook.create.mockResolvedValue({ ...notebook('meetings', { parentId: 'work' }), _count: { notes: 0 } });
       await service.create(USER, { name: 'Meetings', parentId: 'work' });
-      expect(prisma.notebook.create).toHaveBeenCalledWith({
-        data: { userId: USER, name: 'Meetings', parentId: 'work' },
-      });
+      expect(prisma.notebook.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { userId: USER, name: 'Meetings', parentId: 'work' } }),
+      );
     });
 
     it('does not nest more than one level deep', async () => {

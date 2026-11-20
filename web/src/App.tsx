@@ -41,6 +41,7 @@ export function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/s/:token" element={<SharedNotePage />} />
+      <Route path="/s/:token/:noteId" element={<SharedNotePage />} />
       <Route
         element={
           <RequireAuth>
