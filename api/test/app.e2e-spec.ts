@@ -2017,6 +2017,7 @@ describe('the JSON backup', () => {
     version: number;
     notebooks: { id: string; name: string; parentId: string | null }[];
     tags: { name: string }[];
+    preferences: { dailyNotes: { notebookId: string | null; templateId: string | null; dateFormat: string } };
     shareLinks: { noteId: string | null; notebookId: string | null; hasPassword: boolean }[];
     notes: {
       id: string;
@@ -2049,7 +2050,13 @@ describe('the JSON backup', () => {
   const comparable = (backup: Backup) => {
     const notebook = new Map(backup.notebooks.map((item) => [item.id, item.name]));
     const note = new Map(backup.notes.map((item) => [item.id, item.title]));
+    const daily = backup.preferences.dailyNotes;
     return {
+      preferences: {
+        ...daily,
+        notebookId: daily.notebookId && notebook.get(daily.notebookId),
+        templateId: daily.templateId && note.get(daily.templateId),
+      },
       notebooks: backup.notebooks
         .map((item) => ({ ...item, id: undefined, parentId: item.parentId && notebook.get(item.parentId) }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -2087,6 +2094,12 @@ describe('the JSON backup', () => {
     await prisma.noteVersion.create({
       data: { noteId: monday.id, title: 'Monday', content: 'Agenda', createdAt: new Date('2026-01-05T09:00:00Z') },
     });
+    const template = await make('/api/notes', { title: 'Day', content: '## Plan', isTemplate: true });
+    await prisma.note.update({ where: { id: plan.id }, data: { dailyDate: new Date('2026-03-02T00:00:00Z') } });
+    await prisma.user.update({
+      where: { id: (await prisma.note.findUniqueOrThrow({ where: { id: plan.id } })).userId },
+      data: { preferences: { dailyNotes: { notebookId: work.id, templateId: template.id, dateFormat: 'long' } } },
+    });
     const old = await make('/api/notes', { title: 'Old idea', content: 'Gone' });
     await request(server)
       .delete(`/api/notes/${old.id as string}`)
@@ -2104,7 +2117,9 @@ describe('the JSON backup', () => {
 
     const { raw, backup } = await download(owner.auth);
     expect(backup).toMatchObject({ format: 'notes-backup', version: 1 });
-    expect(backup.notes).toHaveLength(3);
+    expect(backup.notes).toHaveLength(4);
+    expect(backup.notes.find((note) => note.title === 'Day')).toMatchObject({ isTemplate: true });
+    expect(backup.notes.find((note) => note.title === 'Plan')).toMatchObject({ dailyDate: '2026-03-02' });
     expect(backup.notes.find((note) => note.title === 'Old idea')?.deletedAt).not.toBeNull();
     expect(backup.notes.find((note) => note.title === 'Monday')).toMatchObject({
       revision: 1,
@@ -2127,13 +2142,14 @@ describe('the JSON backup', () => {
       .set(fresh.auth)
       .attach('file', Buffer.from(raw), 'backup.json')
       .expect(201);
-    expect(restored.body).toEqual({ notes: 3, notebooks: 2, tags: 1, versions: 2, shareLinksNotRestored: 1 });
+    expect(restored.body).toEqual({ notes: 4, notebooks: 2, tags: 1, versions: 2, shareLinksNotRestored: 1 });
 
     const again = await download(fresh.auth);
     const { shared, ...rest } = comparable(again.backup);
     const { shared: sharedBefore, ...before } = comparable(backup);
     expect(rest).toEqual(before);
     expect(sharedBefore).toEqual(['Plan']);
+    expect(before.preferences).toEqual({ notebookId: 'Work', templateId: 'Day', dateFormat: 'long' });
     expect(shared).toEqual([]);
 
     // The structure works in the app, not only in the file: links, trash and nesting.
