@@ -274,6 +274,29 @@ mark {
   height: 100%;
 }
 
+/* Out of sight until the keyboard reaches them, then on top of everything. */
+.skip-link {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 60;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transform: translateY(-300%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+/* Where the skip links land. The focus is on the whole area, which needs no ring. */
+.main:focus,
+.editor-pane:focus {
+  outline: none;
+}
+
 .mobile-bar {
   display: none;
 }
@@ -1372,11 +1395,17 @@ ul.error-box {
     width: min(85vw, var(--sidebar-width));
     z-index: 40;
     transform: translateX(-100%);
-    transition: transform 0.2s ease;
+    /* Hidden once it has slid out, so that Tab does not wander into a menu nobody can see. */
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0s 0.2s;
   }
 
   .menu-open .sidebar {
     transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease;
     box-shadow: var(--shadow);
   }
 
