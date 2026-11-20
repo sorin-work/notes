@@ -77,6 +77,12 @@ describe('LinksService', () => {
       ]);
     });
 
+    it('asks for the links in the order of their title keys', async () => {
+      prisma.note.findFirst.mockResolvedValue({ outgoingLinks: [] });
+      await service.outgoing(USER, 'n1');
+      expect(prisma.note.findFirst.mock.calls[0][0].select.outgoingLinks.orderBy).toEqual([{ targetKey: 'asc' }]);
+    });
+
     it('does not query titles for a note without links', async () => {
       prisma.note.findFirst.mockResolvedValue({ outgoingLinks: [] });
       await expect(service.outgoing(USER, 'n1')).resolves.toEqual([]);
