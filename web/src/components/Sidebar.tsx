@@ -12,15 +12,26 @@ import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/f
 import { notebookTree, totalNotes, trashedWith } from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
-import { PencilIcon, TrashIcon } from './Icons';
+import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
+import { ShareDialog } from './ShareDialog';
 import { ErrorMessage } from './States';
 
 type NotebookAction =
   | { kind: 'create'; parentId: string | null }
   | { kind: 'edit'; notebook: Notebook }
+  | { kind: 'share'; notebook: Notebook }
   | { kind: 'delete'; notebook: Notebook };
+
+/** Why anyone with a link can read the notes of a notebook, or null when nobody can. */
+function publicBecause(notebook: Notebook): string | null {
+  const through = notebook.sharedThrough;
+  if (!through) return null;
+  return through.id === notebook.id
+    ? 'Shared with a link: anyone who has it can read the notes in here'
+    : `Public through the shared notebook “${through.name}”`;
+}
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
@@ -106,7 +117,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.();
   };
 
-  const filterLink = (search: string, active: boolean, label: string, count?: number, className = '') => (
+  const filterLink = (
+    search: string,
+    active: boolean,
+    label: string,
+    count?: number,
+    className = '',
+    /** Why the notebook is public, when it is. */
+    publicTitle: string | null = null,
+  ) => (
     <Link
       to={`/notes${search}`}
       className={`nav-item ${className} ${active ? 'active' : ''}`.trim()}
@@ -114,6 +133,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       onClick={onNavigate}
     >
       <span className="nav-label">{label}</span>
+      {publicTitle && (
+        <span className="public-mark" title={publicTitle}>
+          public
+        </span>
+      )}
       {count !== undefined && count > 0 && <span className="count">{count}</span>}
     </Link>
   );
@@ -217,7 +241,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             {tree.map((parent) => (
               <li key={parent.id}>
                 <div className="nav-row">
-                  {filterLink(`?notebook=${parent.id}`, activeNotebook === parent.id, parent.name, totalNotes(parent))}
+                  {filterLink(
+                    `?notebook=${parent.id}`,
+                    activeNotebook === parent.id,
+                    parent.name,
+                    totalNotes(parent),
+                    '',
+                    publicBecause(parent),
+                  )}
                   <NotebookMenu
                     notebook={parent}
                     canNest
@@ -236,6 +267,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                           child.name,
                           child.noteCount,
                           'nested',
+                          publicBecause(child),
                         )}
                         <NotebookMenu
                           notebook={child}
@@ -319,6 +351,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           }}
         />
       )}
+      {action?.kind === 'share' && <ShareDialog notebookId={action.notebook.id} onClose={() => setAction(null)} />}
       {action?.kind === 'delete' && (
         <ConfirmDialog
           title={`Delete “${action.notebook.name}”?`}
@@ -348,7 +381,7 @@ function NotebookMenu({
 }: {
   notebook: Notebook;
   canNest?: boolean;
-  onAction(kind: 'create' | 'edit' | 'delete'): void;
+  onAction(kind: 'create' | 'edit' | 'share' | 'delete'): void;
 }) {
   return (
     <span className="nav-actions">
@@ -371,6 +404,15 @@ function NotebookMenu({
         onClick={() => onAction('edit')}
       >
         <PencilIcon />
+      </button>
+      <button
+        type="button"
+        className="icon-button small"
+        aria-label={`Share ${notebook.name}`}
+        title="Share with a link"
+        onClick={() => onAction('share')}
+      >
+        <LinkIcon />
       </button>
       <button
         type="button"

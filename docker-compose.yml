@@ -20,7 +20,8 @@ services:
   api:
     build: ./api
     environment:
-      DATABASE_URL: postgresql://notes:notes@db:5432/notes
+      # The name is what a restore lists when it finds the database busy.
+      DATABASE_URL: postgresql://notes:notes@db:5432/notes?application_name=notes-api
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me-0123456789}
       PORT: 4401
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -28,6 +29,7 @@ services:
       API_TOKEN_THROTTLE_LIMIT: ${API_TOKEN_THROTTLE_LIMIT:-120}
       # The page and the OpenAPI document at /api/docs. false turns both off.
       API_DOCS: ${API_DOCS:-true}
+      PUBLIC_THROTTLE_LIMIT: ${PUBLIC_THROTTLE_LIMIT:-60}
       # Creates demo@example.com / demo-password with sample notes.
       SEED_DEMO: ${SEED_DEMO:-true}
       # Password reset mails. Unless told otherwise they go to the mailpit

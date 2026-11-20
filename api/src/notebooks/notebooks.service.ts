@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Notebook } from '@prisma/client';
+import type { Notebook, Prisma } from '@prisma/client';
 import { templateNotes, WORKING_NOTE } from '../notes/note-scope';
+import { sharedThrough, SharedThrough } from '../notes/note-view';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotebookDto, UpdateNotebookDto } from './dto/notebook.dto';
 
@@ -14,8 +15,35 @@ export interface NotebookView {
    * same, and deleting it moves them to the trash with the notes.
    */
   templateCount: number;
+  /** Whether the notebook has a share link of its own. */
+  shared: boolean;
+  /**
+   * The shared notebook that makes this one public, itself or the one it is
+   * inside, if one does.
+   */
+  sharedThrough: SharedThrough | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+const notebookInclude = {
+  _count: { select: { notes: { where: WORKING_NOTE } } },
+  share: { select: { expiresAt: true } },
+  parent: { select: { id: true, name: true, share: { select: { expiresAt: true } } } },
+} satisfies Prisma.NotebookInclude;
+
+function toNotebookView(
+  notebook: Prisma.NotebookGetPayload<{ include: typeof notebookInclude }>,
+  templateCount: number,
+): NotebookView {
+  const { _count, userId: _userId, share, parent, ...rest } = notebook;
+  return {
+    ...rest,
+    noteCount: _count.notes,
+    templateCount,
+    shared: share !== null,
+    sharedThrough: sharedThrough({ id: rest.id, name: rest.name, share, parent }),
+  };
 }
 
 @Injectable()
@@ -26,14 +54,10 @@ export class NotebooksService {
     const notebooks = await this.prisma.notebook.findMany({
       where: { userId },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { notes: { where: WORKING_NOTE } } } },
+      include: notebookInclude,
     });
     const templates = await this.templateCounts(userId);
-    return notebooks.map(({ _count, userId: _userId, ...notebook }) => ({
-      ...notebook,
-      noteCount: _count.notes,
-      templateCount: templates.get(notebook.id) ?? 0,
-    }));
+    return notebooks.map((notebook) => toNotebookView(notebook, templates.get(notebook.id) ?? 0));
   }
 
   async create(userId: string, dto: CreateNotebookDto): Promise<NotebookView> {
@@ -42,10 +66,11 @@ export class NotebooksService {
       await this.assertCanBeParent(userId, parentId);
     }
     await this.assertNameFree(userId, parentId, dto.name);
-    const { userId: _userId, ...notebook } = await this.prisma.notebook.create({
+    const notebook = await this.prisma.notebook.create({
       data: { userId, name: dto.name, parentId },
+      include: notebookInclude,
     });
-    return { ...notebook, noteCount: 0, templateCount: 0 };
+    return toNotebookView(notebook, 0);
   }
 
   async update(userId: string, id: string, dto: UpdateNotebookDto): Promise<NotebookView> {
@@ -108,13 +133,9 @@ export class NotebooksService {
   }
 
   private async view(userId: string, id: string): Promise<NotebookView> {
-    const notebook = await this.prisma.notebook.findFirstOrThrow({
-      where: { id, userId },
-      include: { _count: { select: { notes: { where: WORKING_NOTE } } } },
-    });
-    const { _count, userId: _userId, ...rest } = notebook;
+    const notebook = await this.prisma.notebook.findFirstOrThrow({ where: { id, userId }, include: notebookInclude });
     const templates = await this.templateCounts(userId, id);
-    return { ...rest, noteCount: _count.notes, templateCount: templates.get(id) ?? 0 };
+    return toNotebookView(notebook, templates.get(id) ?? 0);
   }
 
   /** How many templates each notebook holds, by notebook id. */
