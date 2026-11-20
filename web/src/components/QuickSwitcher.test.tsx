@@ -54,6 +54,7 @@ describe('QuickSwitcher', () => {
     expect(await screen.findByRole('option', { name: 'Weekly review' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('option', { name: 'Project Atlas' })).not.toBeInTheDocument();
     expect(calls[0]?.url).toBe('/api/notes/titles?limit=10');
+    expect(screen.getByText('2 notes')).toHaveAttribute('role', 'status');
 
     await userEvent.keyboard('{ArrowDown}');
     const groceries = screen.getByRole('option', { name: 'Groceries' });

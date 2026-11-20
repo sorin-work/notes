@@ -88,10 +88,17 @@ describe('NoteEditor', () => {
     await userEvent.type(textarea, 'See [[[[Wee');
     const option = await screen.findByRole('option', { name: 'Weekly sync' });
     expect(screen.getByRole('option', { name: /New note Wee/ })).toBeInTheDocument();
+    // The text field tells a screen reader where the list is and which option is highlighted.
+    expect(textarea).toHaveAttribute('aria-controls', screen.getByRole('listbox', { name: 'Link to note' }).id);
+    expect(textarea).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'Weekly review' }).id);
 
-    await userEvent.keyboard('{ArrowDown}{Enter}');
+    await userEvent.keyboard('{ArrowDown}');
+    expect(textarea).toHaveAttribute('aria-activedescendant', option.id);
+    await userEvent.keyboard('{Enter}');
     expect(option).not.toBeInTheDocument();
     expect(textarea).toHaveValue('See [[Weekly sync]]');
+    expect(textarea).not.toHaveAttribute('aria-controls');
+    expect(textarea).not.toHaveAttribute('aria-activedescendant');
   });
 
   it('ticks tasks from the preview and saves the change like typed text', async () => {
