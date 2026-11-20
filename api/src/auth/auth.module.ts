@@ -3,9 +3,12 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { APP_CONFIG, AppConfig } from '../config/config';
+import { MailModule } from '../mail/mail.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { PasswordResetController } from './password-reset.controller';
+import { PasswordResetService } from './password-reset.service';
 
 @Module({
   imports: [
@@ -16,14 +19,16 @@ import { JwtAuthGuard } from './jwt-auth.guard';
         signOptions: { expiresIn: config.jwtExpiresIn as `${number}d` },
       }),
     }),
-    // Only the routes that take a password use the ThrottlerGuard: sign-up,
-    // login, and the account changes that ask for it again.
+    // Only the routes that take a password or send mail use the
+    // ThrottlerGuard: sign-up, login, the account changes that ask for the
+    // password again, and password reset.
     ThrottlerModule.forRootAsync({
       inject: [APP_CONFIG],
       useFactory: (config: AppConfig) => [{ ttl: 60_000, limit: config.authThrottleLimit }],
     }),
+    MailModule,
   ],
-  controllers: [AuthController],
-  providers: [AuthService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
+  controllers: [AuthController, PasswordResetController],
+  providers: [AuthService, PasswordResetService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
 export class AuthModule {}
