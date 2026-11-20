@@ -434,9 +434,11 @@ so one-level data is untouched.
 
 The importer keeps folders as notebooks four levels deep and joins what is
 deeper into the fourth ("D - E"), the way it used to join everything below the
-first. The exporter writes nested folders. A folder claims its name before the
-files next to it, so a notebook and a note that want the same name in the zip
-both get in.
+first. It makes the notebooks of each note in the transaction of that note,
+under the same lock as a move, so a move at the same moment cannot push them
+deeper. The exporter writes nested folders, read in one snapshot. A folder
+claims its name before the files next to it, so a notebook and a note that
+want the same name in the zip both get in.
 
 In the sidebar the notebooks are a nested list with a fold button in front of
 every notebook that has others inside, and the folded ones are remembered in
