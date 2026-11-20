@@ -74,7 +74,13 @@ Markdown import/export.
   be opened through it, and a link to one reads as its words.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
-  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault or a
+  Notion export (page ids are stripped and links between pages become
+  `[[wiki links]]`), and Evernote `.enex` files (each file becomes a notebook,
+  attachments are left out). Importing the same files again leaves out the
+  notes that are there already. A full JSON backup of one account (trash,
+  history and all) restores into an empty account. "Print" in the browser
+  gives the note alone, ready to save as PDF.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
@@ -225,8 +231,10 @@ of the `api` service, or set `TRUST_PROXY=0`.
 ## Backup and restore
 
 "Export all notes" in Settings leaves out the trash, version history and
-share links. For a full copy there is a `backup` service that dumps the whole
-database with `pg_dump`. It is behind a Compose profile, so it only runs when
+share links. "Download a full backup" next to it keeps them: see
+[The JSON backup](#the-json-backup) below. For a copy of the whole database,
+every account in it, there is a `backup` service that dumps it with
+`pg_dump`. It is behind a Compose profile, so it only runs when
 asked for:
 
 ```bash
@@ -304,6 +312,86 @@ Good to know:
   every dump and every failure, and a failed dump is tried again a minute
   later.
 - `docker compose down -v` removes the database volume, not the dumps.
+
+### The JSON backup
+
+`GET /export/backup` writes one account's data as a JSON file. It is written
+out as it is read, a batch of notes at a time. Settings, "Download a full
+backup", gets a link from `POST /export/backup/link` that works once, within
+a minute, without a login, and lets the browser follow it, so the browser
+saves the file to disk as it comes in instead of holding it in memory. The
+format is versioned. This is version 1:
+
+```json
+{
+  "format": "notes-backup",
+  "version": 1,
+  "exportedAt": "2026-11-20T21:00:00.000Z",
+  "preferences": {
+    "dailyNotes": { "notebookId": "…", "templateId": "…", "dateFormat": "iso" }
+  },
+  "notebooks": [
+    {
+      "id": "…",
+      "name": "Work",
+      "parentId": null,
+      "createdAt": "…",
+      "updatedAt": "…"
+    }
+  ],
+  "tags": [{ "name": "q1", "createdAt": "…" }],
+  "shareLinks": [
+    {
+      "noteId": "…",
+      "notebookId": null,
+      "hasPassword": true,
+      "expiresAt": null,
+      "viewCount": 4,
+      "createdAt": "…"
+    }
+  ],
+  "notes": [
+    {
+      "id": "…",
+      "title": "Plan",
+      "content": "Markdown",
+      "notebookId": "…",
+      "tags": ["q1"],
+      "pinned": false,
+      "favorite": false,
+      "isTemplate": false,
+      "dailyDate": "2026-11-20",
+      "dailyReleased": false,
+      "revision": 7,
+      "createdAt": "…",
+      "updatedAt": "…",
+      "deletedAt": null,
+      "versions": [{ "title": "Plan", "content": "…", "createdAt": "…" }]
+    }
+  ]
+}
+```
+
+All times are UTC. `deletedAt` is set for a note in the trash. `versions` is
+the note's history, oldest first. Notebooks come before the notebooks inside
+them. `shareLinks` is a record of what was shared. It has no link addresses
+and no password hashes, so the file opens nothing for whoever holds it.
+Templates are notes with `isTemplate`, and `dailyDate` marks the daily note
+of a day. `preferences` holds the daily note choices, with ids from the file.
+
+`POST /import/backup` (Settings, "Restore") takes the file itself as the
+request body, sent as `application/octet-stream`, and puts it into an
+account that has no notes, notebooks or tags yet: the same notes with their
+history, revisions, tags, notebooks, trash, templates, daily notes and daily
+note choices, under new ids, with links synced. The file is read while it
+comes in and checked part by part against the app's own limits, so any
+backup the app writes restores, whatever its size, and only a batch of notes
+is in memory at a time. The parts come in the order the app writes them; the
+notebooks have to come before the notes. Everything is written in one
+transaction, so a refused or failed restore leaves the account empty. An
+account that has something in it gets `409`. Share links are not made again:
+a new link would have a new address, and a link that had a password would
+come back without one. Share again what should be shared.
 
 ## Running locally
 
@@ -432,7 +520,7 @@ api/
     trash/              trash, restore and the hourly purge
     search/             Postgres full-text search
     shares/             read-only share links
-    transfer/           zip export, Markdown import, front matter
+    transfer/           zip export, Markdown/Evernote/Notion import
     mail/               outgoing mail over SMTP
     seed/               demo account
     common/, config/    shared helpers and environment configuration
@@ -648,12 +736,27 @@ ended, or the note changed once more on the way out).
 
 What waits in the outbox belongs to the user who wrote it. It goes when that
 user signs out and agrees to throw it away, when the account is deleted and
-when another user signs in on this browser. It stays when the session ends
-by itself (a 401, "Sign out everywhere", or a sign-out in another tab): unsent
-changes stay in that browser until the same person signs in there again and
-they are sent, or someone else signs in there and they are deleted. Settings
-says so beside "Sign out everywhere". Only text and new notes wait: a pin, a tag, a notebook or
-a move to the trash still need a connection.
+when another user signs in on this browser, who is asked first. It stays when
+the session ends by itself (a 401, "Sign out everywhere", or a sign-out in
+another tab): unsent changes stay in that browser until the same person signs
+in there again and they are sent, or someone else signs in there and they are
+deleted. Settings says so beside "Sign out everywhere". Unsent text has no
+expiry, and nothing can wipe it remotely: on a lost or stolen device it stays
+in that browser's storage, readable by whoever can open the browser profile,
+until one of those things happens there. Only text and new notes wait: a pin,
+a tag, a notebook or a move to the trash still need a connection.
+
+Every send checks that the login token still names the user the change
+belongs to, so a sign-in as someone else in another tab never sends it under
+their name. Changes are written and read under a lock shared by the tabs (Web
+Locks), held only briefly, and a send is put back only if the entry did not
+change while the request was on its way; otherwise the newer text stays and
+goes next, on the revision the answer named. A server error is tried again
+later, waiting longer each time, up to ten minutes. A change to a note that is
+gone, no longer shared, or in the trash is listed with "Save as a new note",
+"Copy text" and "Discard this change", and is tried again every few minutes,
+so restoring the note from the trash sends it. New text of that note never
+goes into such a stuck change.
 
 ## API overview
 
@@ -819,6 +922,21 @@ becomes `Private plan`, with `links: {}`.
 `GET /notes/:id` and `GET /notebooks` carry `sharedThrough`, the notebook
 whose live link makes the note or notebook public, or `null`.
 
+`POST /import` takes up to 50 files as `files`, 20 MB each, and the form
+field `skipExisting` (`true` unless `false` is sent), which leaves out notes
+whose title, notebook and text the account already has. The answer counts
+what was imported, the notebooks made, the notes left out as `duplicates`
+and the Evernote attachments that were not imported, and lists every file it
+skipped with the reason. Imported notes get the same limits as typed ones
+and their links are synced. Their text is stored as Markdown and never shown
+as HTML. Zips are read within limits: 10,000 entries, 12 folders deep, 4 MB
+unpacked per file and 100 MB per import, counted while unpacking. An entry
+whose path leads out of the zip is skipped, and a zip inside a zip is not
+opened. An `.enex` file is read without its DTD: one that declares a DTD of
+its own, or uses an entity beyond XML's five, is refused. Front matter is
+read as YAML with the core schema only (no custom tags, no aliases); a block
+that is not clean YAML stays at the top of the note as text.
+
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
 | Method & path                                | What it does                              |
@@ -828,4 +946,5 @@ The endpoints a script is most likely to want. The rest is in `/api/docs`.
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
 | `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
 | `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
-| `POST /import`                               | Markdown, text or zip files, as `files`   |
+| `GET /export/backup`, `POST /import/backup`  | The JSON backup, and its restore          |
+| `POST /import`                               | Markdown, text, `.enex` or zip, `files`   |

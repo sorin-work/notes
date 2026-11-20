@@ -11,7 +11,7 @@ import { readStash, stashDraft } from '../lib/draftStash';
 import { outboxEntryFor, queueText } from '../lib/outbox';
 import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
-import { note, notebook, user } from '../test/fixtures';
+import { note, notebook, user, userToken } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
 import { Notices } from './Notices';
@@ -90,6 +90,18 @@ describe('NoteEditor', () => {
     expect(
       await screen.findByText('Anyone with the link to the shared notebook “Recipes” can read this note.'),
     ).toBeInTheDocument();
+  });
+
+  it('puts the preview on the page while printing in "Edit", and only then', async () => {
+    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ content: '# Printed heading' }) } }));
+    renderEditor(undefined, 'edit');
+    await screen.findByLabelText('Note content');
+    expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument();
+
+    fireEvent(window, new Event('beforeprint'));
+    expect(screen.getByRole('heading', { name: 'Printed heading' })).toBeInTheDocument();
+    fireEvent(window, new Event('afterprint'));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument());
   });
 
   it('autosaves edits to the title and content', async () => {
@@ -674,7 +686,7 @@ describe('NoteEditor', () => {
 
     /** The editor for a signed-in user, with somewhere else to go and the notices beside it, as in the app. */
     function renderSignedIn() {
-      setToken('tok');
+      setToken(userToken);
       localStorage.setItem('notes.editorMode', 'split');
       return renderWithProviders(
         <AuthProvider>

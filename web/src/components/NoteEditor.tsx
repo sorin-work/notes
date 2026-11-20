@@ -30,7 +30,7 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { notify } from '../lib/notices';
-import { cannotReachServer, onSent, outboxEntryFor, queueText, resolveEntry, useOutbox } from '../lib/outbox';
+import { cannotReachServer, onSent, openEntryFor, queueText, resolveEntry, useOutbox } from '../lib/outbox';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { fromTemplate } from '../lib/templates';
@@ -91,11 +91,24 @@ function LoadedEditor({ note }: { note: Note }) {
   const previewRef = useRef<HTMLDivElement>(null);
 
   // Text kept on this device that the server has not seen yet is newer than the note it came with.
-  const [queuedAtOpen] = useState(() => outboxEntryFor(note.id));
+  const [queuedAtOpen] = useState(() => openEntryFor(note.id));
   const [title, setTitle] = useState(queuedAtOpen?.title ?? note.title);
   const [content, setContent] = useState(queuedAtOpen?.content ?? note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
+  // In "Edit" there is no preview on the page, and printing is about the preview. One is put
+  // in for as long as the browser prints, and only then, so typing does not render it twice.
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    const before = () => flushSync(() => setPrinting(true));
+    const after = () => setPrinting(false);
+    window.addEventListener('beforeprint', before);
+    window.addEventListener('afterprint', after);
+    return () => {
+      window.removeEventListener('beforeprint', before);
+      window.removeEventListener('afterprint', after);
+    };
+  }, []);
   // A move into a shared notebook waits for a yes: it makes the note public.
   const [publicMove, setPublicMove] = useState<{ notebookId: string; through: SharedThrough } | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
@@ -153,7 +166,7 @@ function LoadedEditor({ note }: { note: Note }) {
         server.title === savedTitle(sent.title) && server.content === sent.content;
       // While this note has text waiting on the device, newer text joins it
       // there, so that the changes to the note reach the server in order.
-      if (ownerId && outboxEntryFor(note.id)) {
+      if (ownerId && openEntryFor(note.id)) {
         await queueText(ownerId, note.id, draft, revision.current);
         return;
       }
@@ -887,6 +900,11 @@ function LoadedEditor({ note }: { note: Note }) {
                 onPick={insertLink}
               />
             )}
+          </div>
+        )}
+        {mode === 'edit' && printing && (
+          <div className="editor-preview print-only">
+            <MarkdownPreview content={content} missingTitles={missingTitles} />
           </div>
         )}
         {mode !== 'edit' && (

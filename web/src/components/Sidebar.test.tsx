@@ -337,6 +337,7 @@ describe('Sidebar', () => {
     });
     renderSidebar('/notes?notebook=m');
     await screen.findByRole('link', { name: /Work/ });
+    await screen.findByText(user.name);
     await userEvent.click(screen.getByRole('button', { name: '+ New note' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/notes\/[0-9a-f-]{36}/));
     const id = screen.getByTestId('location').textContent!.split('/')[2]!.split('?')[0]!;

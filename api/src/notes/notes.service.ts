@@ -40,6 +40,13 @@ export interface RenamedLinks {
   noteIds: string[];
 }
 
+/** Whether an insert failed on the primary key of notes, as Prisma reports it (`target` is the columns or the index). */
+export function isIdTaken(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return false;
+  const target = (error.meta as { target?: unknown } | undefined)?.target;
+  return Array.isArray(target) ? target.length === 1 && target[0] === 'id' : target === 'notes_pkey';
+}
+
 @Injectable()
 export class NotesService {
   constructor(
@@ -119,8 +126,8 @@ export class NotesService {
       )
       .catch((error: unknown) => {
         // The id is the primary key: a taken one fails the insert, also in a race.
-        const taken = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-        throw dto.id && taken ? new NoteExistsException() : error;
+        // Only that constraint means "taken"; any other unique violation is something else.
+        throw dto.id && isIdTaken(error) ? new NoteExistsException() : error;
       });
     return toView(created);
   }

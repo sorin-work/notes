@@ -702,6 +702,7 @@ describe('api tokens', () => {
       'PublicSharesController.unlock',
       'PublicSharesController.view',
       'PublicSharesController.viewNote',
+      'TransferController.downloadBackup',
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AuthController',
@@ -2044,6 +2045,271 @@ describe('links between shared notes', () => {
   });
 });
 
+describe('the JSON backup', () => {
+  interface Backup {
+    format: string;
+    version: number;
+    notebooks: { id: string; name: string; parentId: string | null }[];
+    tags: { name: string }[];
+    preferences: { dailyNotes: { notebookId: string | null; templateId: string | null; dateFormat: string } };
+    shareLinks: { noteId: string | null; notebookId: string | null; hasPassword: boolean }[];
+    notes: {
+      id: string;
+      title: string;
+      notebookId: string | null;
+      deletedAt: string | null;
+      revision: number;
+      versions: { title: string; content: string; createdAt: string }[];
+      [key: string]: unknown;
+    }[];
+  }
+
+  const download = async (auth: { Authorization: string }) => {
+    const response = await request(app.getHttpServer())
+      .get('/api/export/backup')
+      .set(auth)
+      .buffer(true)
+      .parse((res, done) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
+        res.on('end', () => done(null, body));
+      })
+      .expect(200);
+    expect(response.headers['content-type']).toMatch(/^application\/json/);
+    expect(response.headers['content-disposition']).toMatch(/^attachment; filename="notes-backup-.*\.json"$/);
+    return { raw: response.body as string, backup: JSON.parse(response.body as string) as Backup };
+  };
+
+  /** The backup with ids replaced by names, which is what has to come back the same. */
+  const comparable = (backup: Backup) => {
+    const notebook = new Map(backup.notebooks.map((item) => [item.id, item.name]));
+    const note = new Map(backup.notes.map((item) => [item.id, item.title]));
+    const daily = backup.preferences.dailyNotes;
+    return {
+      preferences: {
+        ...daily,
+        notebookId: daily.notebookId && notebook.get(daily.notebookId),
+        templateId: daily.templateId && note.get(daily.templateId),
+      },
+      notebooks: backup.notebooks
+        .map((item) => ({ ...item, id: undefined, parentId: item.parentId && notebook.get(item.parentId) }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      tags: backup.tags,
+      notes: backup.notes
+        .map((item) => ({ ...item, id: undefined, notebookId: item.notebookId && notebook.get(item.notebookId) }))
+        .sort((a, b) => a.title.localeCompare(b.title)),
+      shared: backup.shareLinks.map((link) =>
+        link.noteId ? note.get(link.noteId) : notebook.get(link.notebookId ?? ''),
+      ),
+    };
+  };
+
+  it('restores into an empty account with the same notes, history, trash and structure', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const owner = await signUp();
+    const make = async (path: string, body: object) =>
+      (await request(server).post(path).set(owner.auth).send(body).expect(201)).body;
+
+    const work = await make('/api/notebooks', { name: 'Work' });
+    const meetings = await make('/api/notebooks', { name: 'Meetings', parentId: work.id });
+    const plan = await make('/api/notes', {
+      title: 'Plan',
+      content: 'See [[Monday]].',
+      notebookId: work.id,
+      tags: ['q1'],
+    });
+    const monday = await make('/api/notes', { title: 'Monday', content: 'Agenda', notebookId: meetings.id });
+    await request(server)
+      .patch(`/api/notes/${monday.id as string}`)
+      .set(owner.auth)
+      .send({ content: 'Agenda, revised', revision: monday.revision })
+      .expect(200);
+    await prisma.noteVersion.create({
+      data: { noteId: monday.id, title: 'Monday', content: 'Agenda', createdAt: new Date('2026-01-05T09:00:00Z') },
+    });
+    const template = await make('/api/notes', { title: 'Day', content: '## Plan', isTemplate: true });
+    await prisma.note.update({ where: { id: plan.id }, data: { dailyDate: new Date('2026-03-02T00:00:00Z') } });
+    await prisma.user.update({
+      where: { id: (await prisma.note.findUniqueOrThrow({ where: { id: plan.id } })).userId },
+      data: { preferences: { dailyNotes: { notebookId: work.id, templateId: template.id, dateFormat: 'long' } } },
+    });
+    const old = await make('/api/notes', { title: 'Old idea', content: 'Gone' });
+    await request(server)
+      .delete(`/api/notes/${old.id as string}`)
+      .set(owner.auth)
+      .expect(204);
+    const share = await request(server)
+      .post(`/api/notes/${plan.id as string}/share`)
+      .set(owner.auth)
+      .expect(200);
+    await request(server)
+      .patch(`/api/notes/${plan.id as string}/share`)
+      .set(owner.auth)
+      .send({ password: 'open sesame' })
+      .expect(200);
+
+    const { raw, backup } = await download(owner.auth);
+    expect(backup).toMatchObject({ format: 'notes-backup', version: 1 });
+    expect(backup.notes).toHaveLength(4);
+    expect(backup.notes.find((note) => note.title === 'Day')).toMatchObject({ isTemplate: true });
+    expect(backup.notes.find((note) => note.title === 'Plan')).toMatchObject({ dailyDate: '2026-03-02' });
+    expect(backup.notes.find((note) => note.title === 'Old idea')?.deletedAt).not.toBeNull();
+    expect(backup.notes.find((note) => note.title === 'Monday')).toMatchObject({
+      revision: 1,
+      content: 'Agenda, revised',
+      // Oldest first: the one put in by hand, then the one the edit above kept.
+      versions: [
+        { title: 'Monday', content: 'Agenda', createdAt: '2026-01-05T09:00:00.000Z' },
+        { title: 'Monday', content: 'Agenda', createdAt: expect.any(String) },
+      ],
+    });
+    expect(backup.shareLinks).toEqual([expect.objectContaining({ noteId: plan.id, hasPassword: true })]);
+    // Nothing that would open the share: no token, no hash.
+    expect(raw).not.toContain(share.body.token as string);
+    expect(raw).not.toMatch(/\$2[aby]\$/);
+    expect(raw).not.toContain('passwordHash');
+
+    const fresh = await signUp();
+    const restored = await request(server)
+      .post('/api/import/backup')
+      .set(fresh.auth)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(raw))
+      .expect(201);
+    expect(restored.body).toEqual({ notes: 4, notebooks: 2, tags: 1, versions: 2, shareLinksNotRestored: 1 });
+
+    const again = await download(fresh.auth);
+    const { shared, ...rest } = comparable(again.backup);
+    const { shared: sharedBefore, ...before } = comparable(backup);
+    expect(rest).toEqual(before);
+    expect(sharedBefore).toEqual(['Plan']);
+    expect(before.preferences).toEqual({ notebookId: 'Work', templateId: 'Day', dateFormat: 'long' });
+    expect(shared).toEqual([]);
+
+    // The structure works in the app, not only in the file: links, trash and nesting.
+    const list = await request(server).get('/api/notes').set(fresh.auth).expect(200);
+    const restoredPlan = list.body.items.find((item: { title: string }) => item.title === 'Plan');
+    const links = await request(server)
+      .get(`/api/notes/${restoredPlan.id as string}/links`)
+      .set(fresh.auth)
+      .expect(200);
+    expect(links.body).toEqual([{ title: 'Monday', noteId: expect.any(String) }]);
+    const trash = await request(server).get('/api/trash').set(fresh.auth).expect(200);
+    expect(JSON.stringify(trash.body)).toContain('Old idea');
+    // The owner's data only: the first account's backup is unchanged by any of this.
+    expect(comparable((await download(owner.auth)).backup)).toEqual(comparable(backup));
+  });
+
+  it('downloads through a link that works once, without a login', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    await request(server).post('/api/notes').set(owner.auth).send({ title: 'Linked' }).expect(201);
+    const { url } = (await request(server).post('/api/export/backup/link').set(owner.auth).expect(201)).body as {
+      url: string;
+    };
+    expect(url).toMatch(/^\/api\/export\/backup\/download\?ticket=/);
+
+    const first = await request(server)
+      .get(url)
+      .buffer(true)
+      .parse((res, done) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
+        res.on('end', () => done(null, body));
+      });
+    expect(first.status).toBe(200);
+    expect(first.headers['content-disposition']).toMatch(/^attachment; filename="notes-backup-/);
+    expect((JSON.parse(first.body as string) as Backup).notes.map((note) => note.title)).toEqual(['Linked']);
+
+    await request(server).get(url).expect(404);
+    await request(server)
+      .get(url.replace(/.$/, (last) => (last === 'A' ? 'B' : 'A')))
+      .expect(404);
+    await request(server).get('/api/export/backup/download').expect(404);
+  });
+
+  it('restores a backup larger than any fixed cap, read as it comes in', async () => {
+    const server = app.getHttpServer();
+    const fresh = await signUp();
+    const at = '2026-01-01T00:00:00.000Z';
+    const count = 20_001;
+    const notes = Array.from({ length: count }, (_, index) =>
+      JSON.stringify({
+        id: `n${index}`,
+        title: `Note ${index}`,
+        content: '',
+        notebookId: index % 2 ? 'nb' : null,
+        tags: index % 100 === 0 ? ['every-hundredth'] : [],
+        pinned: false,
+        favorite: false,
+        isTemplate: false,
+        dailyDate: null,
+        dailyReleased: false,
+        revision: 0,
+        createdAt: at,
+        updatedAt: at,
+        deletedAt: null,
+        versions: [],
+      }),
+    );
+    const file =
+      `{"format":"notes-backup","version":1,"exportedAt":"${at}","preferences":{},` +
+      `"notebooks":[{"id":"nb","name":"Half","parentId":null,"createdAt":"${at}","updatedAt":"${at}"}],` +
+      `"tags":[],"shareLinks":[],"notes":[\n${notes.join(',\n')}\n]}`;
+
+    const restored = await request(server)
+      .post('/api/import/backup')
+      .set(fresh.auth)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(file))
+      .expect(201);
+    expect(restored.body).toEqual({ notes: count, notebooks: 1, tags: 1, versions: 0, shareLinksNotRestored: 0 });
+    const tagged = await request(server).get('/api/notes?tag=every-hundredth&pageSize=1').set(fresh.auth).expect(200);
+    expect(tagged.body.total).toBe(201);
+  }, 120_000);
+
+  it('restores only into an empty account, and only a file it can read', async () => {
+    const server = app.getHttpServer();
+    const someone = await signUp();
+    await request(server).post('/api/notes').set(someone.auth).send({ title: 'Mine' }).expect(201);
+    const { raw } = await download(someone.auth);
+
+    const busy = await request(server)
+      .post('/api/import/backup')
+      .set(someone.auth)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(raw))
+      .expect(409);
+    expect(busy.body.message).toMatch(/empty account/);
+
+    const empty = await signUp();
+    // Not sent as the file itself.
+    await request(server)
+      .post('/api/import/backup')
+      .set(empty.auth)
+      .attach('file', Buffer.from(raw), 'backup.json')
+      .expect(415);
+    const broken = JSON.parse(raw) as Backup;
+    broken.notes[0].notebookId = 'nowhere';
+    for (const [file, message] of [
+      ['not json', /not JSON/],
+      [JSON.stringify({ format: 'something-else' }), /is not a notes-backup file/],
+      [JSON.stringify(broken), /notes\[0\]\.notebookId names no notebook/],
+      [raw.slice(0, raw.length - 10), /ends too early/],
+    ] as const) {
+      const response = await request(server)
+        .post('/api/import/backup')
+        .set(empty.auth)
+        .set('Content-Type', 'application/octet-stream')
+        .send(Buffer.from(file))
+        .expect(400);
+      expect(response.body.message).toMatch(message);
+    }
+    expect((await request(server).get('/api/notes').set(empty.auth).expect(200)).body.items).toEqual([]);
+  });
+});
+
 describe('import and export', () => {
   it('round-trips notes through a zip', async () => {
     const { auth } = await signUp();
@@ -2073,10 +2339,89 @@ describe('import and export', () => {
       .set(other.auth)
       .attach('files', exported.body as Buffer, 'export.zip')
       .expect(201);
-    expect(imported.body).toEqual({ imported: 1, notebooksCreated: 1, skipped: [] });
+    expect(imported.body).toEqual({
+      imported: 1,
+      notebooksCreated: 1,
+      duplicates: 0,
+      attachmentsSkipped: 0,
+      skipped: [],
+    });
 
     const list = await request(server).get('/api/notes?tag=baking').set(other.auth).expect(200);
     expect(list.body.items[0]).toMatchObject({ title: 'Bread', tags: ['baking'] });
+
+    // The same zip again: nothing new, unless asked for.
+    const again = await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .attach('files', exported.body as Buffer, 'export.zip')
+      .expect(201);
+    expect(again.body).toMatchObject({ imported: 0, duplicates: 1, notebooksCreated: 0 });
+    const twice = await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .field('skipExisting', 'false')
+      .attach('files', exported.body as Buffer, 'export.zip')
+      .expect(201);
+    expect(twice.body).toMatchObject({ imported: 1, duplicates: 0 });
+    await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .field('skipExisting', 'maybe')
+      .attach('files', exported.body as Buffer, 'export.zip')
+      .expect(400);
+  });
+
+  it('imports an Evernote export with its links synced, and the text stays text', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const enex = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export4.dtd">
+<en-export><note><title>Garden</title><content><![CDATA[<en-note><div>Water the [[Tomatoes]] &lt;script&gt;</div><script>x()</script><en-media hash="a" type="image/png"/></en-note>]]></content><created>20250301T090000Z</created><tag>home</tag><resource/></note></en-export>`;
+
+    const imported = await request(server)
+      .post('/api/import')
+      .set(auth)
+      .attach('files', Buffer.from(enex), 'Home.enex')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 1, notebooksCreated: 1, attachmentsSkipped: 1, skipped: [] });
+
+    const list = await request(server).get('/api/notes?tag=home').set(auth).expect(200);
+    const note = await request(server)
+      .get(`/api/notes/${list.body.items[0].id as string}`)
+      .set(auth)
+      .expect(200);
+    expect(note.body).toMatchObject({
+      title: 'Garden',
+      content: 'Water the \\[\\[Tomatoes\\]\\] <script>',
+      notebook: { name: 'Home' },
+      createdAt: '2025-03-01T09:00:00.000Z',
+    });
+  });
+
+  it('imports a Notion export with links between its pages', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const id = 'a'.repeat(32);
+    const other = 'b'.repeat(32);
+    const zip = new JSZip();
+    zip.file(`Ideas ${id}.md`, `# Ideas\n\nSee [Next](Ideas%20${id}/Next%20${other}.md).`);
+    zip.file(`Ideas ${id}/Next ${other}.md`, '# Next\n\nSoon.');
+    const imported = await request(server)
+      .post('/api/import')
+      .set(auth)
+      .attach('files', await zip.generateAsync({ type: 'nodebuffer' }), 'notion.zip')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 2, notebooksCreated: 1 });
+
+    const ideas = (await request(server).get('/api/notes?sort=title').set(auth).expect(200)).body.items.find(
+      (item: { title: string }) => item.title === 'Ideas',
+    );
+    const links = await request(server)
+      .get(`/api/notes/${ideas.id as string}/links`)
+      .set(auth)
+      .expect(200);
+    expect(links.body).toEqual([{ title: 'Next', noteId: expect.any(String) }]);
   });
 });
 

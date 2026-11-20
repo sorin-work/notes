@@ -210,8 +210,22 @@ export interface SharedNotebook {
 /** What a link shares: a note, or a notebook with everything in it. */
 export type ShareSubject = { noteId: string } | { notebookId: string };
 
+/** What a restored backup put into the account. */
+export interface RestoreResult {
+  notes: number;
+  notebooks: number;
+  tags: number;
+  versions: number;
+  /** Share links listed in the backup. They are not made again. */
+  shareLinksNotRestored: number;
+}
+
 export interface ImportResult {
   imported: number;
   notebooksCreated: number;
+  /** Notes left out because the account has them already. */
+  duplicates: number;
+  /** Attachments and images in Evernote notes, which are not imported. */
+  attachmentsSkipped: number;
   skipped: { file: string; reason: string }[];
 }

@@ -1,12 +1,13 @@
-import { Link } from 'react-router';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router';
 import { useOnline } from '../hooks/useOnline';
-import { discardEntry, replay, useOutbox } from '../lib/outbox';
+import { discardEntry, type OutboxEntry, replay, saveAsNewNote, useOutbox } from '../lib/outbox';
 import { savedTitle } from '../lib/text';
 
 /**
  * What the outbox holds: changes made without a connection that the server
  * does not have yet. Those it could not apply stay there and are listed here
- * by note, until the user decides.
+ * by note, with what can be done about each, until the user decides.
  */
 export function PendingChanges() {
   const entries = useOutbox();
@@ -22,7 +23,7 @@ export function PendingChanges() {
           {waiting === 1 ? '1 change' : `${waiting} changes`} made without a connection{' '}
           {online ? 'will be sent now.' : 'will be sent when the server can be reached.'}{' '}
           {online && (
-            <button type="button" className="link-button" onClick={() => void replay()}>
+            <button type="button" className="link-button" onClick={() => void replay(true)}>
               Send now
             </button>
           )}
@@ -31,23 +32,47 @@ export function PendingChanges() {
       {attention.length > 0 && (
         <ul>
           {attention.map((entry) => (
-            <li key={entry.noteId}>
-              <Link to={`/notes/${entry.noteId}`}>{savedTitle(entry.title)}</Link>:{' '}
-              {entry.state === 'conflict'
-                ? 'the note was changed elsewhere meanwhile. Open it to decide what to keep.'
-                : `could not be sent. ${entry.problem ?? ''}`}
-              {entry.state === 'stuck' && (
-                <>
-                  {' '}
-                  <button type="button" className="link-button" onClick={() => void discardEntry(entry.noteId)}>
-                    Discard this change
-                  </button>
-                </>
-              )}
-            </li>
+            <Attention key={entry.seq} entry={entry} />
           ))}
         </ul>
       )}
     </section>
+  );
+}
+
+function Attention({ entry }: { entry: OutboxEntry }) {
+  const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
+  const title = <Link to={`/notes/${entry.noteId}`}>{savedTitle(entry.title)}</Link>;
+  if (entry.state === 'conflict') {
+    return <li>{title}: the note was changed elsewhere meanwhile. Open it to decide what to keep.</li>;
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(entry.content);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  const keep = async () => {
+    const id = await saveAsNewNote(entry.seq!);
+    if (id) navigate(`/notes/${id}`);
+  };
+  return (
+    <li>
+      {entry.reason === 'gone' ? savedTitle(entry.title) : title}: could not be sent. {entry.problem}{' '}
+      {entry.reason !== 'refused' && (
+        <button type="button" className="link-button" onClick={() => void keep()}>
+          Save as a new note
+        </button>
+      )}{' '}
+      <button type="button" className="link-button" onClick={() => void copy()}>
+        {copied ? 'Text copied' : 'Copy text'}
+      </button>{' '}
+      <button type="button" className="link-button" onClick={() => void discardEntry(entry.seq!)}>
+        Discard this change
+      </button>
+    </li>
   );
 }

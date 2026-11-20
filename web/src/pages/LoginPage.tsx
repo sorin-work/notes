@@ -3,6 +3,7 @@ import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { passwordResetEnabled } from '../api/auth';
 import { useAuth } from '../auth/AuthContext';
+import { useDiscardOthersQuestion } from '../components/DiscardOthersQuestion';
 import { ErrorMessage } from '../components/States';
 
 export function LoginPage() {
@@ -13,6 +14,7 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDiscard, discardQuestion] = useDiscardOthersQuestion();
   // Only servers that can send mail offer a reset. Until the answer is in,
   // and if it never comes, the link stays hidden.
   const canReset = useQuery({ queryKey: ['password-reset-enabled'], queryFn: passwordResetEnabled, retry: false });
@@ -22,7 +24,10 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await login(email, password);
+      if (!(await login(email, password, confirmDiscard))) {
+        setBusy(false);
+        return;
+      }
       const from = (location.state as { from?: string } | null)?.from;
       navigate(from && from !== '/login' ? from : '/notes', { replace: true });
     } catch (err) {
@@ -69,6 +74,7 @@ export function LoginPage() {
           </p>
         )}
       </form>
+      {discardQuestion}
     </main>
   );
 }

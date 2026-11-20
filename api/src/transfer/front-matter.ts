@@ -1,8 +1,14 @@
+import { parseDocument } from 'yaml';
+
 /**
- * A small reader and writer for the YAML front matter at the top of exported
- * notes. It understands what the export writes (strings, booleans, dates and
- * lists of strings) plus the common ways other apps write tags, which is
- * enough for importing notes without pulling in a YAML parser.
+ * Reads and writes the YAML front matter at the top of exported notes.
+ *
+ * Reading uses a real YAML parser with the core schema only: plain strings,
+ * numbers, booleans, null, lists and maps. No custom tags, no aliases, and
+ * nothing in the file can make the parser run code or fetch anything. A
+ * block that is not clean YAML is left in the note as text, so nothing the
+ * file holds is lost. Values are boiled down to what the import uses:
+ * strings, booleans and lists of strings.
  */
 export type FrontMatterValue = string | boolean | string[];
 export type FrontMatter = Record<string, FrontMatterValue>;
@@ -13,53 +19,58 @@ export interface ParsedMarkdown {
 }
 
 const OPENING = /^\uFEFF?---[ \t]*\r?\n/;
+/** Front matter is a few lines of metadata. A longer block is not read. */
+export const MAX_FRONT_MATTER_LENGTH = 64 * 1024;
 
 export function parseFrontMatter(text: string): ParsedMarkdown {
+  const plain = { data: {}, body: text.replace(/^\uFEFF/, '') };
   const opening = OPENING.exec(text);
-  if (!opening) {
-    return { data: {}, body: text.replace(/^\uFEFF/, '') };
-  }
+  if (!opening) return plain;
   const rest = text.slice(opening[0].length);
   const closing = /^(---|\.\.\.)[ \t]*(\r?\n|$)/m.exec(rest);
-  if (!closing) {
-    return { data: {}, body: text.replace(/^\uFEFF/, '') };
-  }
+  if (!closing || closing.index > MAX_FRONT_MATTER_LENGTH) return plain;
 
-  const data: FrontMatter = {};
-  let listKey: string | null = null;
-  for (const rawLine of rest.slice(0, closing.index).split(/\r?\n/)) {
-    const line = rawLine.replace(/\s+#.*$/, '');
-    if (!line.trim()) continue;
-
-    const item = /^\s*-\s*(.*)$/.exec(line);
-    if (item && listKey) {
-      const list = data[listKey];
-      const value = unquote(item[1].trim());
-      if (Array.isArray(list) && value) list.push(value);
-      continue;
-    }
-
-    const pair = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
-    if (!pair) {
-      listKey = null;
-      continue;
-    }
-    const [, key, value] = pair;
-    listKey = null;
-    if (value === '') {
-      data[key] = [];
-      listKey = key;
-    } else if (value.startsWith('[') && value.endsWith(']')) {
-      data[key] = splitInlineList(value.slice(1, -1));
-    } else if (value === 'true' || value === 'false') {
-      data[key] = value === 'true';
-    } else {
-      data[key] = unquote(value.trim());
-    }
-  }
-
+  const data = readYaml(rest.slice(0, closing.index));
+  if (!data) return plain;
   const body = rest.slice(closing.index + closing[0].length).replace(/^\r?\n/, '');
   return { data, body };
+}
+
+/** The top-level keys of a YAML block, or null when the block is not clean YAML. */
+function readYaml(source: string): FrontMatter | null {
+  const doc = parseDocument(source, { schema: 'core', uniqueKeys: false, logLevel: 'silent' });
+  // A tag the core schema does not know, such as !!js/function, is a warning. It is refused like an error.
+  if (doc.errors.length > 0 || doc.warnings.length > 0) return null;
+  let value: unknown;
+  try {
+    value = doc.toJS({ maxAliasCount: 0 });
+  } catch {
+    // An alias: refused, so that no block can expand into more than it says.
+    return null;
+  }
+  if (value === null || value === undefined) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const data: FrontMatter = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (Array.isArray(item)) {
+      data[key] = item.flatMap((entry) => {
+        const read = scalar(entry);
+        return read === null || read === '' ? [] : [String(read).trim()];
+      });
+      continue;
+    }
+    const read = scalar(item);
+    if (read !== null) data[key] = typeof read === 'boolean' ? read : read.trim();
+  }
+  return data;
+}
+
+function scalar(value: unknown): string | boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'bigint') return String(value);
+  return null;
 }
 
 export function serializeFrontMatter(data: FrontMatter): string {
@@ -75,30 +86,6 @@ export function serializeFrontMatter(data: FrontMatter): string {
   }
   lines.push('---', '');
   return lines.join('\n');
-}
-
-function splitInlineList(inner: string): string[] {
-  const values: string[] = [];
-  for (const match of inner.matchAll(/\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)'|([^,]+))/g)) {
-    const value = match[1] !== undefined ? unescapeDouble(match[1]) : (match[2]?.replace(/''/g, "'") ?? match[3]);
-    const trimmed = value?.trim();
-    if (trimmed) values.push(trimmed);
-  }
-  return values;
-}
-
-function unquote(value: string): string {
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return unescapeDouble(value.slice(1, -1));
-  }
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'");
-  }
-  return value;
-}
-
-function unescapeDouble(value: string): string {
-  return value.replace(/\\(["\\nt])/g, (_, char: string) => ({ n: '\n', t: '\t' })[char] ?? char);
 }
 
 function quoteIfNeeded(value: string): string {

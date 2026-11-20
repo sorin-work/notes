@@ -59,3 +59,6 @@ export function notebook(overrides: Partial<Notebook> = {}): Notebook {
     ...overrides,
   };
 }
+
+/** A login token shaped like the API's, naming `user`: what the outbox checks before it sends. */
+export const userToken = `header.${btoa(JSON.stringify({ sub: user.id, ver: 0 }))}.signature`;
