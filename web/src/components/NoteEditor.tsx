@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
@@ -209,11 +210,13 @@ function LoadedEditor({ note }: { note: Note }) {
     const next = toggleTask(content, line, checked);
     if (next === content) return;
     // Replacing the text moves the caret in the source to the end. The text
-    // is as long as it was, so the selection can go back where it was.
+    // is as long as it was, so the selection goes back where it was. That has
+    // to happen before the next click reads it, so the new text is written
+    // right here and not on the next frame.
     const textarea = textareaRef.current;
     const selection = textarea && ([textarea.selectionStart, textarea.selectionEnd] as const);
-    change({ content: next });
-    if (textarea && selection) requestAnimationFrame(() => textarea.setSelectionRange(...selection));
+    flushSync(() => change({ content: next }));
+    if (textarea && selection) textarea.setSelectionRange(...selection);
   };
 
   const onContentChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
