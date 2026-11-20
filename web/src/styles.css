@@ -652,7 +652,72 @@ mark {
 }
 
 .notebook-select {
-  max-width: 14rem;
+  position: relative;
+  max-width: 16rem;
+}
+
+.notebook-select-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+}
+
+.notebook-select-current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Laid over what is under the button, like the list of a select. */
+.notebook-select-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(24rem, 90vw);
+  max-height: min(60vh, 24rem);
+  overflow: auto;
+  padding: 0.3rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 15%);
+}
+
+.notebook-select-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notebook-select-list ul ul {
+  padding-left: 1rem;
+}
+
+.notebook-option {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.notebook-option:hover {
+  background: var(--surface-2);
+}
+
+.notebook-option[aria-current] {
+  background: var(--accent-soft);
+  font-weight: 600;
 }
 
 .toolbar-group {
