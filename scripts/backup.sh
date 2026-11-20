@@ -196,7 +196,17 @@ restore() {
     drop "$incoming"
     fail "could not replace $PGDATABASE, something is still connected to it. It was left as it was. Stop the api and try again."
   fi
-  psql -qX -v ON_ERROR_STOP=1 -d postgres -c "ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\""
+  rename="ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\""
+  if ! psql -qX -v ON_ERROR_STOP=1 -d postgres -c "$rename"; then
+    # The old database is gone and the copy does not have its name yet.
+    log "$PGDATABASE was dropped, but the restored copy could not be given its name." >&2
+    log "Nothing is lost: the data from $(basename "$file") is in the database $incoming." >&2
+    log "To finish the restore, run this against the same server:" >&2
+    log "  psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
+    log "With the compose stack that is:" >&2
+    log "  docker compose exec db psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
+    exit 1
+  fi
   log "restored $PGDATABASE from $(basename "$file")"
 }
 
