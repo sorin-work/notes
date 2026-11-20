@@ -116,6 +116,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, [logout]);
 
+  // When the provider goes away, so does what it keeps writing: the copy of
+  // the cache is written a second after the last change, and that write must
+  // not land after the next provider (a test, or a remount) has started.
+  useEffect(() => () => void stopKeeping(), [stopKeeping]);
+
   // Signing out in one tab signs out the others, cached notes included. A
   // tab that finds another user signed in under it lets go of everything of
   // the old one: its draft is put aside under that user, not saved as the

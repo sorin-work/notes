@@ -7,6 +7,7 @@ import { getNote } from '../api/notes';
 import { user } from '../test/fixtures';
 import { keptUsers, seedOfflineCache } from '../test/offline';
 import { mockFetch, renderWithProviders } from '../test/render';
+import { dropOtherOfflineCaches } from '../lib/offlineCache';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { AuthProvider, page, useAuth } from './AuthContext';
 
@@ -136,6 +137,19 @@ describe('the notes kept for reading offline', () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(screen.getByText('status: signed-out')).toBeInTheDocument();
     expect(screen.getByText('user: none')).toBeInTheDocument();
+  });
+
+  it('are not written any more once the provider has gone', async () => {
+    mockFetch(signedIn);
+    setToken(tokenFor(user.id));
+    const { queryClient, unmount } = renderApp();
+    await screen.findByText('status: signed-in');
+    // A change that would be written a second later.
+    queryClient.setQueryData(['note', 'n9'], { id: 'n9', title: 'Late' });
+    unmount();
+    await dropOtherOfflineCaches(null);
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(await keptUsers()).toEqual([]);
   });
 
   it('of one user go when another user signs in on this browser', async () => {
