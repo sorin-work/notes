@@ -22,10 +22,10 @@ Markdown import/export.
   own view.
 - **Templates**: "Template" in a note's toolbar turns it into a template.
   Templates have a list of their own and stay out of the other lists, the
-  search, the quick switcher, link suggestions and backlinks. "New from
-  template" under the new-note button starts a note from one, with
-  `{{date}}`, `{{time}}` and `{{title}}` filled in. "Duplicate" makes a plain
-  copy of any note.
+  search, the quick switcher, link suggestions and backlinks. Choose one in
+  "New from template" under the new-note button and press "Create" to start
+  a note from it, with `{{date}}` and `{{time}}` filled in. "Duplicate" makes
+  a plain copy of any note.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
@@ -477,13 +477,17 @@ on without asking.
 
 A note made from a template gets the template's text and tags. Three
 placeholders are filled in, and no others: `{{date}}` (as `2026-11-20`),
-`{{time}}` (as `19:30`) and `{{title}}`, the title of the new note. Date and
-time are those of the browser's clock, because the server does not know what
-day it is where you are. Anything else in double braces is left as written.
-The note is named after the template, less a closing "template": a note from
-"Weekly review template" is a "Weekly review". Its `[[links]]` are real
+`{{time}}` (as `19:30`) and `{{title}}`, the title given for the new note.
+Date and time are those of the browser's clock, because the server does not
+know what day it is where you are. Anything else in double braces, and a
+placeholder without a value, is left as written. The note does not take the
+template's title: it starts as "Untitled" with the cursor in the title, and
+`{{title}}` stays in the text until you replace it. Its `[[links]]` are real
 links from then on, while the links written in a template do not count as
-backlinks. A link to a template's title still leads to the template. Neither
+backlinks. A link to a template's title still leads to the template, unless
+a note has the same title: a note always goes first. The notebook list
+counts templates apart from notes, and deleting a notebook says how many of
+each go to the trash with it. Neither
 a note from a template nor a duplicate takes the pin, the star, the share
 link or the history of the original. Turning a note into a template is no
 edit: it changes neither "last edited" nor the revision.
@@ -517,8 +521,11 @@ without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
 
 `POST /notes` with `"templateId"` makes the note from that template, and
-`"placeholders": {"date": "...", "time": "..."}` gives the text to fill in.
+`"placeholders": {"date": "...", "time": "..."}` gives the text to fill in,
+and `"title"` is the title of the new note and the value of `{{title}}`.
 The API only puts in what it is sent and never works out a date by itself.
+`GET /notebooks` gives each notebook a `noteCount` and, apart, a
+`templateCount`.
 `PATCH /notes/:id` with `"isTemplate"` turns a note into a template or back.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password

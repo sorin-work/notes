@@ -428,9 +428,11 @@ and tags. The placeholders are a closed set, `{{date}}`, `{{time}}` and
 the API never guesses what day it is, and anything else in double braces is
 left as written. A template's links are copied as text and stored for the
 new note. Neither a note from a template nor a duplicate takes the pin, the
-star, the share link or the history along. Beyond the design: a note is named
-after its template without a closing "template", a link to a template's title
-still leads to it, renaming a note also updates the links in templates, and
-export and import keep the flag. Still open: the daily note, placeholders are
+star, the share link or the history along. A note from a template starts
+untitled with the cursor in its title, and `{{title}}` is only filled with a
+title that is given. Beyond the design: a link to a template's title still
+leads to it unless a note has that title, renaming a note also updates the
+links in templates, notebooks count their templates apart so that deleting
+one can say they go too, and export and import keep the flag. Still open: the daily note, placeholders are
 also filled inside code, and a template can still be shared by a link like
 any note.
