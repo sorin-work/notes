@@ -9,6 +9,7 @@ import { normalizeTagName } from '../tags/tag-name';
 import { TagsService } from '../tags/tags.service';
 import { VersionsService } from '../versions/versions.service';
 import { CreateNoteDto, ListNotesQuery, MAX_CONTENT_LENGTH, UpdateNoteDto } from './dto/note.dto';
+import { IN_TRASH, refusedWrite, writeNoteText } from './note-text';
 import { noteInclude, NoteSummary, NoteView, toSummary, toView } from './note-view';
 
 export const DEFAULT_TITLE = 'Untitled';
@@ -108,12 +109,28 @@ export class NotesService {
       await this.notebooks.findOwned(userId, dto.notebookId);
     }
 
+    // Only a save of the title or the content can be out of date. Pinning,
+    // tags and moving a note are sent without them, and must not get in the
+    // way of what is being typed in the same tab.
+    const savesText = dto.title !== undefined || dto.content !== undefined;
+    if (savesText && dto.revision !== undefined && dto.revision !== note.revision) {
+      throw await refusedWrite(this.prisma, userId, id);
+    }
     const title = dto.title === undefined ? note.title : dto.title || DEFAULT_TITLE;
     const content = dto.content ?? note.content;
     const textChanged = title !== note.title || content !== note.content;
     const notebookChanged = dto.notebookId !== undefined && dto.notebookId !== note.notebookId;
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (savesText) {
+        // The first statement, and the one that decides: it only writes while
+        // the note is still at the revision the save names. A save that
+        // raced this one and got in first makes this one fail here, with
+        // nothing else changed. From here on `note` is known to be the state
+        // this save replaces.
+        const written = await writeNoteText(tx, { id, userId, revision: dto.revision }, { title, content });
+        if (!written) throw await refusedWrite(tx, userId, id);
+      }
       let tagsChanged = false;
       if (dto.tags !== undefined) {
         const before = (await tx.noteTag.findMany({ where: { noteId: id }, include: { tag: true } }))
@@ -123,13 +140,13 @@ export class NotesService {
         tagsChanged = before.join('\n') !== after.join('\n');
       }
       if (textChanged) {
-        await this.versions.snapshotIfDue(tx, note);
+        await (dto.keepVersion ? this.versions.snapshot(tx, note) : this.versions.snapshotIfDue(tx, note));
       }
       if (content !== note.content) {
         await this.links.sync(tx, id, content);
       }
 
-      const data: Prisma.NoteUpdateInput = { title, content };
+      const data: Prisma.NoteUpdateInput = {};
       if (dto.notebookId !== undefined) {
         data.notebook = dto.notebookId ? { connect: { id: dto.notebookId } } : { disconnect: true };
       }
@@ -170,13 +187,10 @@ export class NotesService {
         const now = new Date();
         let count = 0;
         for (const { source, content } of await this.linkRewrites(tx, userId, note, from)) {
-          // The old text is part of the condition: a note that was edited or
-          // trashed since it was read is left alone, not overwritten.
-          const written = await tx.note.updateMany({
-            where: { id: source.id, userId, deletedAt: null, content: source.content },
-            data: { content },
-          });
-          if (written.count === 0) continue;
+          // Tied to the revision that was read: a note that was edited or
+          // trashed since then is left alone, not overwritten.
+          const written = await writeNoteText(tx, { id: source.id, userId, revision: source.revision }, { content });
+          if (!written) continue;
           await this.versions.snapshot(tx, source, now);
           await this.links.sync(tx, source.id, content);
           count++;
@@ -263,7 +277,7 @@ export class NotesService {
       throw new NotFoundException('Note not found');
     }
     if (note.deletedAt) {
-      throw new ConflictException('This note is in the trash. Restore it before changing it.');
+      throw new ConflictException(IN_TRASH);
     }
     return note;
   }
