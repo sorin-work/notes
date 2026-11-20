@@ -507,8 +507,9 @@ function ApiTokensSection() {
       <p className="muted">
         For scripts. A request that sends a token as <code>Authorization: Bearer nt_…</code> is treated as yours. A
         token can read and change notes, or only read them if it is read-only. It cannot change the account or manage
-        tokens. Tokens do not expire, and signing out everywhere or changing the password leaves them alone, so revoke
-        the ones you no longer use. Making one takes your password, because it outlives every login.
+        tokens. Tokens do not expire. Signing out everywhere and changing the password leave them alone, and only a
+        password reset by mail revokes them all, so revoke the ones you no longer use. Making one takes your password,
+        because it outlives every login.
       </p>
       {tokens.error && <ErrorMessage error={tokens.error} />}
       {tokens.data?.length === 0 && <p className="muted">No tokens yet.</p>}

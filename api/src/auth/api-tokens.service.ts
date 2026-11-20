@@ -63,13 +63,19 @@ export class ApiTokensService {
   }
 
   async create(userId: string, dto: Pick<CreateApiTokenDto, 'name' | 'readOnly'>): Promise<CreatedApiToken> {
-    if ((await this.prisma.apiToken.count({ where: { userId } })) >= MAX_API_TOKENS) {
-      throw new BadRequestException(`An account can have ${MAX_API_TOKENS} API tokens. Revoke one first.`);
-    }
     const token = API_TOKEN_PREFIX + randomBytes(32).toString('base64url');
-    const created = await this.prisma.apiToken.create({
-      data: { userId, name: dto.name, readOnly: dto.readOnly ?? false, tokenHash: hashApiToken(token) },
-      select: VIEW,
+    const created = await this.prisma.$transaction(async (tx) => {
+      // Requests for one account wait for each other here, as they do for
+      // reset links. Otherwise several at once would each count the tokens
+      // before any had added one, and go past the limit together.
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId}::uuid FOR UPDATE`;
+      if ((await tx.apiToken.count({ where: { userId } })) >= MAX_API_TOKENS) {
+        throw new BadRequestException(`An account can have ${MAX_API_TOKENS} API tokens. Revoke one first.`);
+      }
+      return tx.apiToken.create({
+        data: { userId, name: dto.name, readOnly: dto.readOnly ?? false, tokenHash: hashApiToken(token) },
+        select: VIEW,
+      });
     });
     return { ...created, token };
   }

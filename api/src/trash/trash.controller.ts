@@ -1,7 +1,9 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { TrashedNote, TrashService } from './trash.service';
 
+@AllowApiToken()
 @Controller('trash')
 export class TrashController {
   constructor(private readonly trash: TrashService) {}

@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { note } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { VersionHistoryDialog } from './VersionHistoryDialog';
@@ -70,5 +71,26 @@ describe('VersionHistoryDialog', () => {
     mockFetch({ 'GET /api/notes/n1/versions': { body: [] } });
     renderWithProviders(<VersionHistoryDialog noteId="n1" current={current} onClose={vi.fn()} onRestored={vi.fn()} />);
     expect(await screen.findByText(/No earlier versions yet/)).toBeInTheDocument();
+  });
+
+  it('passes the axe checks in the preview and in the changes', async () => {
+    const version = { id: 'v1', title: 'Plan', characters: 30, createdAt: '2026-01-01T10:00:00Z' };
+    mockFetch({
+      'GET /api/notes/n1/versions': { body: [version] },
+      'GET /api/notes/n1/versions/v1': { body: { ...version, content: '## Plan\n\n- [x] Outline\n\nShip in March' } },
+    });
+    renderWithProviders(
+      <VersionHistoryDialog
+        noteId="n1"
+        current={{ title: 'Plan for spring', content: '## Plan\n\nShip in April' }}
+        onClose={vi.fn()}
+        onRestored={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole('checkbox', { name: 'Outline' })).toBeDisabled();
+    await expectNoAxeViolations({ part: true });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Changes' }));
+    await expectNoAxeViolations({ part: true });
   });
 });

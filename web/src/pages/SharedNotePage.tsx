@@ -19,7 +19,7 @@ export function SharedNotePage() {
   if (note.isLoading) return <FullPageSpinner />;
 
   return (
-    <div className="shared-page">
+    <main className="shared-page">
       {note.error &&
         (note.error instanceof ApiError && note.error.status === 404 ? (
           <div className="shared-missing">
@@ -43,6 +43,6 @@ export function SharedNotePage() {
         </article>
       )}
       <footer className="shared-footer muted">Shared read-only from Notes</footer>
-    </div>
+    </main>
   );
 }

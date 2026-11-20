@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import type { AuthenticatedRequest } from '../common/current-user.decorator';
 import { IS_PUBLIC } from '../common/public.decorator';
-import { SESSION_ONLY } from '../common/session-only.decorator';
+import { ALLOW_API_TOKEN } from '../common/allow-api-token.decorator';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import type { ApiTokensService } from './api-tokens.service';
 import { bearerToken, JwtAuthGuard } from './jwt-auth.guard';
@@ -101,6 +101,7 @@ describe('JwtAuthGuard', () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((asked: unknown) => asked === key);
 
     it('looks the token up instead of reading it as a JWT', async () => {
+      markedAs(ALLOW_API_TOKEN);
       apiTokens.identify.mockResolvedValue(identity);
       const request = withToken('POST');
       await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
@@ -116,6 +117,7 @@ describe('JwtAuthGuard', () => {
     });
 
     it('lets a read-only token read and nothing else', async () => {
+      markedAs(ALLOW_API_TOKEN);
       apiTokens.identify.mockResolvedValue({ ...identity, readOnly: true });
       await expect(guard.canActivate(contextFor(withToken('GET')))).resolves.toBe(true);
       await expect(guard.canActivate(contextFor(withToken('HEAD')))).resolves.toBe(true);
@@ -124,11 +126,13 @@ describe('JwtAuthGuard', () => {
       }
     });
 
-    it('keeps every token, read-only or not, out of routes that need a login', async () => {
-      markedAs(SESSION_ONLY);
+    it('keeps every token out of a route that is not marked as open to tokens', async () => {
+      // No mark at all: what a route that someone adds tomorrow looks like.
       apiTokens.identify.mockResolvedValue(identity);
       await expect(guard.canActivate(contextFor(withToken('GET')))).rejects.toBeInstanceOf(ForbiddenException);
       await expect(guard.canActivate(contextFor(withToken('DELETE')))).rejects.toBeInstanceOf(ForbiddenException);
+      apiTokens.identify.mockResolvedValue({ ...identity, readOnly: true });
+      await expect(guard.canActivate(contextFor(withToken('GET')))).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('answers 429 with Retry-After once the token is over its allowance', async () => {

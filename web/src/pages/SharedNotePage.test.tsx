@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SharedNotePage } from './SharedNotePage';
 
@@ -39,5 +40,21 @@ describe('SharedNotePage', () => {
     mockFetch({});
     renderShared();
     expect(await screen.findByRole('heading', { name: 'This note is not shared' })).toBeInTheDocument();
+  });
+
+  it('passes the axe checks, with read-only task boxes in the note', async () => {
+    mockFetch({
+      'GET /api/public/notes/tok123': {
+        body: {
+          title: 'Sourdough bread',
+          content: '## Method\n\n- [x] Feed the starter\n- [ ] Bake',
+          tags: ['baking'],
+          updatedAt: '2026-01-02T10:00:00Z',
+        },
+      },
+    });
+    renderShared();
+    expect(await screen.findByRole('checkbox', { name: 'Bake' })).toBeDisabled();
+    await expectNoAxeViolations();
   });
 });

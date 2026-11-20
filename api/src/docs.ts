@@ -3,8 +3,8 @@ import { DiscoveryService, Reflector } from '@nestjs/core';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ALLOW_API_TOKEN } from './common/allow-api-token.decorator';
 import { IS_PUBLIC } from './common/public.decorator';
-import { SESSION_ONLY } from './common/session-only.decorator';
 
 /** Swagger UI is at /api/docs, the document itself at /api/docs-json. */
 export const DOCS_PATH = 'api/docs';
@@ -81,7 +81,7 @@ export function buildApiDocument(app: INestApplication): OpenAPIObject {
 
 /**
  * Says for every operation which credentials it takes, read from the same
- * @Public() and @SessionOnly() marks that JwtAuthGuard goes by, so that the
+ * @Public() and @AllowApiToken() marks that JwtAuthGuard goes by, so that the
  * document cannot say something else than the guard does. Also groups the
  * operations by the first part of their path.
  */
@@ -102,6 +102,8 @@ function describeCredentials(
       if (!operation) continue;
       operation.tags = [path.replace(/^\/api\//, '').split('/')[0]];
 
+      // Until the marks say otherwise, the most that is claimed is "needs a login".
+      operation.security = [{ [LOGIN]: [] }];
       const source = handlers.get(operation.operationId ?? '');
       const controller = source && controllers.get(source.controller);
       const handler = controller && (controller.prototype as Record<string, unknown>)[source.method];
@@ -110,9 +112,7 @@ function describeCredentials(
       const targets = [handler, controller];
       if (reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) {
         operation.security = [];
-      } else if (reflector.getAllAndOverride<boolean>(SESSION_ONLY, targets)) {
-        operation.security = [{ [LOGIN]: [] }];
-      } else {
+      } else if (reflector.getAllAndOverride<boolean>(ALLOW_API_TOKEN, targets)) {
         operation.security = [{ [LOGIN]: [] }, { [API_TOKEN]: [] }];
       }
     }

@@ -1,6 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, MaxLength } from 'class-validator';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Page } from '../common/pagination';
 import { NoteFilterQuery } from '../notes/dto/note.dto';
@@ -17,6 +18,7 @@ export class SearchQuery extends NoteFilterQuery {
   q: string;
 }
 
+@AllowApiToken()
 @Controller('search')
 export class SearchController {
   constructor(private readonly searchService: SearchService) {}

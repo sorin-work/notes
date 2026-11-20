@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { RenameTagDto } from './dto/rename-tag.dto';
 import { TagsService, TagView } from './tags.service';
 
+@AllowApiToken()
 @Controller('tags')
 export class TagsController {
   constructor(private readonly tags: TagsService) {}

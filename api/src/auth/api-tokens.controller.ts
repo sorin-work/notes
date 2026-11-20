@@ -12,14 +12,15 @@ import {
 } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { SessionOnly } from '../common/session-only.decorator';
 import { AccountThrottlerGuard } from './account-throttler.guard';
 import { ApiTokensService, ApiTokenView, CreatedApiToken } from './api-tokens.service';
 import { AuthService } from './auth.service';
 import { CreateApiTokenDto } from './dto/create-api-token.dto';
 
-/** Tokens are managed from a login. A token cannot list, make or revoke tokens. */
-@SessionOnly()
+/**
+ * Tokens are managed from a login. A token cannot list, make or revoke
+ * tokens: nothing here is marked @AllowApiToken().
+ */
 @Controller('auth/tokens')
 export class ApiTokensController {
   constructor(

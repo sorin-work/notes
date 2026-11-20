@@ -8,7 +8,7 @@ import { QuickSwitcher } from './QuickSwitcher';
 
 function Where() {
   const location = useLocation();
-  return <output>{location.pathname + location.search}</output>;
+  return <output aria-label="Location">{location.pathname + location.search}</output>;
 }
 
 function renderSwitcher(route = '/notes') {
@@ -54,6 +54,7 @@ describe('QuickSwitcher', () => {
     expect(await screen.findByRole('option', { name: 'Weekly review' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('option', { name: 'Project Atlas' })).not.toBeInTheDocument();
     expect(calls[0]?.url).toBe('/api/notes/titles?limit=10');
+    expect(screen.getByText('2 notes')).toHaveAttribute('role', 'status');
 
     await userEvent.keyboard('{ArrowDown}');
     const groceries = screen.getByRole('option', { name: 'Groceries' });
@@ -61,24 +62,39 @@ describe('QuickSwitcher', () => {
     expect(input).toHaveAttribute('aria-activedescendant', groceries.id);
 
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByRole('status')).toHaveTextContent('/notes/n3?notebook=w');
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent('/notes/n3?notebook=w'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('opens the first match for the typed text when Enter comes before the answer', async () => {
     const matches = [recent[2], { id: 'n4', title: 'Group plan' }];
+    // The answer to the typed text is held back until the test lets it go,
+    // so Enter comes before it however fast or slow the machine is.
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
     const calls = mockFetch({
-      'GET /api/notes/titles': ({ url }) => ({ body: url.includes('q=gro') ? matches : recent }),
+      'GET /api/notes/titles': async ({ url }) => {
+        if (!url.includes('q=gro')) return { body: recent };
+        await held;
+        return { body: matches };
+      },
     });
     const onClose = renderSwitcher('/search?q=atlas');
 
     // The arrow key moves through the older list, which is not what Enter is meant for.
     await screen.findByRole('option', { name: 'Project Atlas' });
     await userEvent.type(screen.getByRole('combobox'), 'gro{ArrowDown}{Enter}');
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/notes/titles?q=gro&limit=10')).toBe(true));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/search\?q=atlas$/);
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n3$/);
-    expect(calls.some((call) => call.url === '/api/notes/titles?q=gro&limit=10')).toBe(true);
+    answer();
+    // The dialog is told to close in the same breath as the router is told to
+    // move, and the router shows the new address a moment later. Wait for the address.
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes\/n3$/));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('does not act on a list kept from last time until it has been refreshed', async () => {
@@ -103,11 +119,11 @@ describe('QuickSwitcher', () => {
     expect(screen.getByRole('option', { name: 'Project Atlas' })).toHaveAttribute('aria-selected', 'true');
 
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByRole('status')).toHaveTextContent(/^\/notes$/);
+    expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes$/);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
     refresh();
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n2$/));
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes\/n2$/));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
@@ -119,6 +135,6 @@ describe('QuickSwitcher', () => {
     expect(await screen.findByText('No note has “zzz” in its title.')).toBeInTheDocument();
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole('status')).toHaveTextContent('/notes');
+    expect(screen.getByLabelText('Location')).toHaveTextContent('/notes');
   });
 });

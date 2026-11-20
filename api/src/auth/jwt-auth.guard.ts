@@ -10,9 +10,9 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import type { Response } from 'express';
+import { ALLOW_API_TOKEN } from '../common/allow-api-token.decorator';
 import type { AuthenticatedRequest, AuthUser } from '../common/current-user.decorator';
 import { IS_PUBLIC } from '../common/public.decorator';
-import { SESSION_ONLY } from '../common/session-only.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiTokensService, isApiToken } from './api-tokens.service';
 import type { TokenPayload } from './auth.service';
@@ -31,7 +31,8 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  *
  * A bearer value that starts with "nt_" is a personal API token instead. It
  * is looked up by its hash, and everything a token may not do is refused
- * here, in one place, not controller by controller.
+ * here, in one place: any route that is not marked @AllowApiToken(), and
+ * anything but reading for a read-only token.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -92,11 +93,12 @@ export class JwtAuthGuard implements CanActivate {
       throw new HttpException('Too many requests with this API token', HttpStatus.TOO_MANY_REQUESTS);
     }
 
-    const sessionOnly = this.reflector.getAllAndOverride<boolean>(SESSION_ONLY, [
+    // Closed unless marked open: a route nobody thought about takes a login only.
+    const allowed = this.reflector.getAllAndOverride<boolean>(ALLOW_API_TOKEN, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (sessionOnly) {
+    if (!allowed) {
       throw new ForbiddenException('An API token cannot do this. Sign in instead.');
     }
     if (identity.readOnly && !READ_METHODS.has(http.getRequest<AuthenticatedRequest>().method)) {

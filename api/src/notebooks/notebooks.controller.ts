@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { CreateNotebookDto, UpdateNotebookDto } from './dto/notebook.dto';
 import { NotebooksService, NotebookView } from './notebooks.service';
 
+@AllowApiToken()
 @Controller('notebooks')
 export class NotebooksController {
   constructor(private readonly notebooks: NotebooksService) {}

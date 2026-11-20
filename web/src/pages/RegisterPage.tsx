@@ -29,7 +29,7 @@ export function RegisterPage() {
   const messages = error instanceof ApiError && error.messages.length > 1 ? error.messages : null;
 
   return (
-    <div className="auth-page">
+    <main className="auth-page">
       <form className="auth-card form" onSubmit={submit}>
         <h1>Create your account</h1>
         <label className="field">
@@ -83,6 +83,6 @@ export function RegisterPage() {
           Already have an account? <Link to="/login">Sign in</Link>
         </p>
       </form>
-    </div>
+    </main>
   );
 }

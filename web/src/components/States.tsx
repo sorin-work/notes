@@ -12,9 +12,9 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
 
 export function FullPageSpinner() {
   return (
-    <div className="full-page-center">
+    <main className="full-page-center">
       <Spinner />
-    </div>
+    </main>
   );
 }
 
@@ -35,6 +35,14 @@ export function ErrorMessage({ error, onRetry }: { error: unknown; onRetry?: () 
       )}
     </div>
   );
+}
+
+/**
+ * A ref for the heading of a message that takes the place of a form. The
+ * focus was in that form, and would otherwise be nowhere once it is gone.
+ */
+export function focusOnce(heading: HTMLElement | null): void {
+  heading?.focus();
 }
 
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {

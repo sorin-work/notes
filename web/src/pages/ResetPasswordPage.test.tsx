@@ -1,9 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
+import { expectNoAxeViolations } from '../test/axe';
 import { user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { ForgotPasswordPage } from './ForgotPasswordPage';
@@ -58,12 +59,11 @@ describe('ForgotPasswordPage', () => {
 });
 
 describe('ResetPasswordPage', () => {
-  it('sends the token from the link with the new password, then is signed in with the new login', async () => {
+  it('sends the token from the link with the new password, then signs this browser out', async () => {
     setToken('tok');
     const calls = mockFetch({
       'GET /api/auth/me': { body: user },
-      'GET /api/auth/tokens': { body: [] },
-      'POST /api/auth/password-reset/confirm': { body: { token: 'tok-new', user } },
+      'POST /api/auth/password-reset/confirm': { status: 204 },
     });
     renderAt('/reset-password#token=abc-123');
 
@@ -79,37 +79,16 @@ describe('ResetPasswordPage', () => {
     await userEvent.type(screen.getByLabelText('Repeat new password'), 'battery-staple');
     await userEvent.click(screen.getByRole('button', { name: 'Set the new password' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Password changed');
+    const done = await screen.findByRole('status');
+    expect(done).toHaveTextContent('Password changed');
+    // Says what happened to the tokens too: they are gone with the logins.
+    expect(done).toHaveTextContent('every API token of the account has been revoked');
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
       token: 'abc-123',
       password: 'battery-staple',
     });
-    // The old login died with the reset. The answer brought a new one.
-    expect(getToken()).toBe('tok-new');
-    expect(screen.getByRole('link', { name: 'Open your notes' })).toHaveAttribute('href', '/notes');
-    expect(screen.queryByRole('button', { name: 'Revoke all tokens' })).not.toBeInTheDocument();
-  });
-
-  it('shows the API tokens that outlived the reset, with one click to revoke them', async () => {
-    const calls = mockFetch({
-      'GET /api/auth/tokens': {
-        body: [{ id: 't1', name: 'cron job', readOnly: false, lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z' }],
-      },
-      'POST /api/auth/password-reset/confirm': { body: { token: 'tok-new', user } },
-      'DELETE /api/auth/tokens': { body: { revoked: 1 } },
-    });
-    renderAt('/reset-password#token=abc-123');
-
-    await userEvent.type(screen.getByLabelText('New password'), 'battery-staple');
-    await userEvent.type(screen.getByLabelText('Repeat new password'), 'battery-staple');
-    await userEvent.click(screen.getByRole('button', { name: 'Set the new password' }));
-
-    const notice = within(await screen.findByRole('group', { name: 'API tokens that still work' }));
-    expect(notice.getByText('cron job')).toBeInTheDocument();
-    await userEvent.click(notice.getByRole('button', { name: 'Revoke all tokens' }));
-
-    expect(await screen.findByText(/All API tokens are revoked/)).toBeInTheDocument();
-    expect(calls.some((call) => call.method === 'DELETE' && call.url === '/api/auth/tokens')).toBe(true);
+    expect(getToken()).toBeNull();
+    expect(screen.getByRole('link', { name: 'Sign in with the new password' })).toHaveAttribute('href', '/login');
   });
 
   it('says so when the link has been used or has run out', async () => {
@@ -140,5 +119,42 @@ describe('ResetPasswordPage', () => {
     mockFetch({});
     renderAt('/reset-password?token=abc-123');
     expect(screen.getByText('This link is not complete')).toBeInTheDocument();
+  });
+});
+
+describe('the password reset pages', () => {
+  /** The pages as they are in the app, with nothing of the test around them. */
+  function renderAlone(route: string) {
+    return renderWithProviders(
+      <AuthProvider>
+        <Routes>
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+        </Routes>
+      </AuthProvider>,
+      { route },
+    );
+  }
+
+  it('pass the axe checks, and a message takes the focus the form had', async () => {
+    mockFetch({ 'POST /api/auth/password-reset': { status: 204 } });
+    const forgot = renderAlone('/forgot-password');
+    expect(screen.getByLabelText('Email')).toHaveFocus();
+    await expectNoAxeViolations();
+
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Send the link' }));
+    expect(await screen.findByRole('heading', { name: 'Check your mail' })).toHaveFocus();
+    await expectNoAxeViolations();
+    forgot.unmount();
+
+    const reset = renderAlone('/reset-password#token=abc-123');
+    expect(screen.getByLabelText('New password')).toHaveFocus();
+    await expectNoAxeViolations();
+    reset.unmount();
+
+    renderAlone('/reset-password');
+    expect(screen.getByRole('heading', { name: 'This link is not complete' })).toHaveFocus();
+    await expectNoAxeViolations();
   });
 });

@@ -1,11 +1,13 @@
 import { Controller, Get, Post, StreamableFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { ExportService } from './export.service';
 import { ImportResult, ImportService } from './import.service';
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
+@AllowApiToken()
 @Controller()
 export class TransferController {
   constructor(

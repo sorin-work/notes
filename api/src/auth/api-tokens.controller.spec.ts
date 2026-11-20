@@ -1,11 +1,8 @@
-import { ForbiddenException, type Type } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
+import { ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { SESSION_ONLY } from '../common/session-only.decorator';
 import { ApiTokensController } from './api-tokens.controller';
 import { ApiTokensService } from './api-tokens.service';
-import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
 describe('ApiTokensController', () => {
@@ -53,31 +50,5 @@ describe('ApiTokensController', () => {
       ForbiddenException,
     );
     expect(tokens.create).not.toHaveBeenCalled();
-  });
-});
-
-describe('routes that need a login', () => {
-  const reflector = new Reflector();
-  const sessionOnly = (controller: Type<unknown>, handler: (...args: never[]) => unknown) =>
-    reflector.getAllAndOverride<boolean>(SESSION_ONLY, [handler, controller]);
-
-  it('covers every route for managing tokens', () => {
-    const { prototype } = ApiTokensController;
-    for (const handler of [prototype.list, prototype.create, prototype.revoke, prototype.revokeAll]) {
-      expect(sessionOnly(ApiTokensController, handler)).toBe(true);
-    }
-  });
-
-  it('covers the account routes, and leaves "who am I" open to tokens', () => {
-    const { prototype } = AuthController;
-    for (const handler of [
-      prototype.updateProfile,
-      prototype.deleteAccount,
-      prototype.changePassword,
-      prototype.logoutEverywhere,
-    ]) {
-      expect(sessionOnly(AuthController, handler)).toBe(true);
-    }
-    expect(sessionOnly(AuthController, prototype.me)).toBe(false);
   });
 });
