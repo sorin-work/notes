@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { capRows, diffLines, foldUnchanged, MAX_EDITS } from '../lib/diff';
+import { savedTitle } from '../lib/text';
 
 interface Props {
   version: { title: string; content: string };
@@ -16,13 +17,14 @@ export function VersionChanges({ version, current }: Props) {
     if (lines === null) return null;
     return capRows(lines.some((line) => line.type !== 'same') ? foldUnchanged(lines) : []);
   }, [version.content, current.content]);
+  // A version holds the title as the API stored it. The editor has what was typed.
+  const title = savedTitle(current.title);
 
   return (
     <div className="changes">
-      {version.title !== current.title && (
+      {version.title !== title && (
         <p className="changes-title">
-          The title changed from <del>“{version.title || 'Untitled'}”</del> to{' '}
-          <ins>“{current.title || 'Untitled'}”</ins>.
+          The title changed from <del>“{version.title}”</del> to <ins>“{title}”</ins>.
         </p>
       )}
       {diff === null && (

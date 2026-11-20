@@ -22,7 +22,7 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
 import { toggleTask } from '../lib/tasks';
-import { countWords, readingMinutes } from '../lib/text';
+import { countWords, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
 import { PinIcon } from './Icons';
@@ -428,9 +428,7 @@ function LoadedEditor({ note }: { note: Note }) {
       {dialog === 'delete' && (
         <ConfirmDialog
           title="Move to trash?"
-          message={
-            <p>“{title || 'Untitled'}” will be moved to the trash. You can restore it from there for 30 days.</p>
-          }
+          message={<p>“{savedTitle(title)}” will be moved to the trash. You can restore it from there for 30 days.</p>}
           confirmLabel="Move to trash"
           danger
           busy={trash.isPending}

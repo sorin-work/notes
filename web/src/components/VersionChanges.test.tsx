@@ -33,6 +33,20 @@ describe('VersionChanges', () => {
     expect(container.querySelector('.diff')).toBeNull();
   });
 
+  it('compares the title the way it is saved', () => {
+    const content = paragraphs.join('\n');
+    const { rerender } = render(
+      <VersionChanges version={{ title: 'Untitled', content }} current={{ title: '', content }} />,
+    );
+    expect(screen.queryByText(/The title changed/)).not.toBeInTheDocument();
+
+    rerender(<VersionChanges version={{ title: 'Atlas', content }} current={{ title: ' Atlas ', content }} />);
+    expect(screen.queryByText(/The title changed/)).not.toBeInTheDocument();
+
+    rerender(<VersionChanges version={{ title: 'Atlas', content }} current={{ title: '  ', content }} />);
+    expect(screen.getByText(/The title changed/)).toHaveTextContent('from “Atlas” to “Untitled”.');
+  });
+
   it('falls back to a message when more lines changed than it compares', () => {
     const long = (word: string) => Array.from({ length: 1_100 }, (_, index) => `${word} ${index}`).join('\n');
     const { container } = render(
