@@ -434,6 +434,115 @@ describe('renaming a note', () => {
   });
 });
 
+describe('editing in two places', () => {
+  type Auth = { Authorization: string };
+  const patch = (auth: Auth, id: string, body: object) =>
+    request(app.getHttpServer()).patch(`/api/notes/${id}`).set(auth).send(body);
+  const read = async (auth: Auth, id: string) =>
+    (await request(app.getHttpServer()).get(`/api/notes/${id}`).set(auth).expect(200)).body;
+  const create = async (auth: Auth, body: object) =>
+    (await request(app.getHttpServer()).post('/api/notes').set(auth).send(body).expect(201)).body;
+
+  it('refuses a save based on an old revision and hands back the note as it is', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const note = await create(auth, { title: 'Plan', content: 'One' });
+    expect(note.revision).toBe(0);
+
+    // Two tabs have the note open at revision 0. The first one to save gets through.
+    expect((await patch(auth, note.id, { content: 'From tab A', revision: 0 }).expect(200)).body.revision).toBe(1);
+    const refused = await patch(auth, note.id, { content: 'From tab B', tags: ['late'], revision: 0 }).expect(409);
+    expect(refused.body).toEqual({
+      statusCode: 409,
+      error: 'Conflict',
+      code: 'stale_revision',
+      message: expect.any(String),
+      note: expect.objectContaining({ id: note.id, content: 'From tab A', revision: 1, tags: [] }),
+    });
+    // Nothing of the refused request was applied, not even its tags.
+    expect(await read(auth, note.id)).toMatchObject({ content: 'From tab A', tags: [], revision: 1 });
+
+    // Pinning, tags and moving never conflict and never count as a revision.
+    const pinned = await patch(auth, note.id, { pinned: true, tags: ['later'], revision: 0 }).expect(200);
+    expect(pinned.body).toMatchObject({ pinned: true, tags: ['later'], content: 'From tab A', revision: 1 });
+    // Neither does saving the text the note already has.
+    expect((await patch(auth, note.id, { content: 'From tab A', revision: 1 }).expect(200)).body.revision).toBe(1);
+
+    // "Keep mine, put theirs in the history": based on the new revision, with a version forced.
+    const kept = await patch(auth, note.id, { content: 'From tab B', revision: 1, keepVersion: true }).expect(200);
+    expect(kept.body).toMatchObject({ content: 'From tab B', revision: 2 });
+    const versions = await request(server).get(`/api/notes/${note.id}/versions`).set(auth).expect(200);
+    const latest = await request(server).get(`/api/notes/${note.id}/versions/${versions.body[0].id}`).set(auth);
+    expect(latest.body.content).toBe('From tab A');
+
+    // A client that names no revision keeps working: the last write wins, and it still counts.
+    expect((await patch(auth, note.id, { title: 'Plan C' }).expect(200)).body).toMatchObject({
+      title: 'Plan C',
+      content: 'From tab B',
+      revision: 3,
+    });
+
+    for (const revision of [-1, 1.5, '3', 2147483648]) {
+      await patch(auth, note.id, { content: 'x', revision }).expect(400);
+    }
+  });
+
+  it('lets one of two saves that race from the same revision through, never both', async () => {
+    const { auth } = await signUp();
+    for (let round = 0; round < 5; round++) {
+      const note = await create(auth, { title: `Race ${round}`, content: 'Start' });
+      const answers = await Promise.all([
+        patch(auth, note.id, { content: 'First tab', revision: 0 }),
+        patch(auth, note.id, { content: 'Second tab', revision: 0 }),
+      ]);
+      expect(answers.map((answer) => answer.status).sort()).toEqual([200, 409]);
+      const [won] = answers.filter((answer) => answer.status === 200);
+      const [lost] = answers.filter((answer) => answer.status === 409);
+      expect(won.body.revision).toBe(1);
+      expect(lost.body.note).toMatchObject({ content: won.body.content, revision: 1 });
+      expect(await read(auth, note.id)).toMatchObject({ content: won.body.content, revision: 1 });
+    }
+  });
+
+  it('counts every change of the text, whoever makes it', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const target = await create(auth, { title: 'Atlas' });
+    const source = await create(auth, { title: 'Source', content: 'About [[Atlas]].' });
+
+    // Rewriting links after a rename is a change of the text of the other note.
+    await patch(auth, target.id, { title: 'Project Atlas', revision: 0 }).expect(200);
+    await request(server).post(`/api/notes/${target.id}/rename-links`).set(auth).send({ from: 'Atlas' }).expect(200);
+    expect(await read(auth, source.id)).toMatchObject({ content: 'About [[Project Atlas]].', revision: 1 });
+    // A tab that still has the old text of that note is told so.
+    await patch(auth, source.id, { content: 'About [[Atlas]] and more.', revision: 0 }).expect(409);
+
+    // Restoring a version too.
+    await patch(auth, source.id, { content: 'Rewritten', revision: 1 }).expect(200);
+    const versions = await request(server).get(`/api/notes/${source.id}/versions`).set(auth).expect(200);
+    const restored = await request(server)
+      .post(`/api/notes/${source.id}/versions/${versions.body.at(-1).id}/restore`)
+      .set(auth)
+      .expect(200);
+    expect(restored.body).toMatchObject({ content: 'About [[Atlas]].', revision: 3 });
+    await patch(auth, source.id, { content: 'Typed before the restore', revision: 2 }).expect(409);
+
+    // The trash does not touch the text.
+    await request(server).delete(`/api/notes/${source.id}`).set(auth).expect(204);
+    await request(server).post(`/api/trash/${source.id}/restore`).set(auth).expect(204);
+    expect((await read(auth, source.id)).revision).toBe(3);
+
+    // And so does a write that goes past the services: the database does the counting.
+    const prisma = app.get(PrismaService);
+    await prisma.note.update({ where: { id: source.id }, data: { pinned: true } });
+    expect((await read(auth, source.id)).revision).toBe(3);
+    await prisma.note.update({ where: { id: source.id }, data: { content: 'Changed by hand' } });
+    expect((await read(auth, source.id)).revision).toBe(4);
+    await prisma.$executeRaw`UPDATE notes SET title = 'By hand' WHERE id = ${source.id}::uuid`;
+    expect((await read(auth, source.id)).revision).toBe(5);
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
