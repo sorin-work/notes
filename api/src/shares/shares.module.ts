@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { noStore } from './no-store.middleware';
 import { ShareLinkThrottlerGuard } from './share-link-throttler.guard';
 import { PublicSharesController, SharesController } from './shares.controller';
 import { SharesService } from './shares.service';
@@ -10,4 +11,8 @@ import { SharesService } from './shares.service';
   controllers: [SharesController, PublicSharesController],
   providers: [SharesService, ShareLinkThrottlerGuard],
 })
-export class SharesModule {}
+export class SharesModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(noStore).forRoutes(PublicSharesController);
+  }
+}

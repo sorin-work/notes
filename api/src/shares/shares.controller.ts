@@ -10,11 +10,9 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import type { Response } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { bearerToken } from '../auth/jwt-auth.guard';
 import { AllowApiToken } from '../common/allow-api-token.decorator';
@@ -76,7 +74,8 @@ export class SharesController {
  * Nothing here may be kept by a browser or a proxy: a link that is revoked,
  * runs out or gets a password has to stop working at once, and a note
  * behind a password must not sit in a cache. So every answer, the errors
- * too, goes out with "Cache-Control: no-store".
+ * too, goes out with "Cache-Control: no-store". SharesModule sets it in a
+ * middleware, ahead of the guards.
  */
 @Controller('public/notes')
 export class PublicSharesController {
@@ -96,9 +95,7 @@ export class PublicSharesController {
   async view(
     @Param('token') token: string,
     @Headers('authorization') authorization: string | undefined,
-    @Res({ passthrough: true }) response: Response,
   ): Promise<SharedNote> {
-    response.setHeader('Cache-Control', 'no-store');
     return this.shares.view(token, { userId: await this.viewerId(authorization) });
   }
 
@@ -116,9 +113,7 @@ export class PublicSharesController {
     @Param('token') token: string,
     @Body() dto: UnlockShareDto,
     @Headers('authorization') authorization: string | undefined,
-    @Res({ passthrough: true }) response: Response,
   ): Promise<SharedNote> {
-    response.setHeader('Cache-Control', 'no-store');
     return this.shares.view(token, { userId: await this.viewerId(authorization), password: dto.password });
   }
 

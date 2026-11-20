@@ -1281,7 +1281,8 @@ describe('sharing', () => {
       .expect(403);
     expect(wrong.body).toMatchObject({ passwordRequired: true, message: 'That password is not right' });
     expect(wrong.headers['cache-control']).toBe('no-store');
-    await request(server).post(`/api/public/notes/${token}`).send({}).expect(400);
+    const empty = await request(server).post(`/api/public/notes/${token}`).send({}).expect(400);
+    expect(empty.headers['cache-control']).toBe('no-store');
 
     const opened = await request(server)
       .post(`/api/public/notes/${token}`)
