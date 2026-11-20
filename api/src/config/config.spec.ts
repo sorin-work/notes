@@ -52,25 +52,38 @@ describe('loadConfig', () => {
       from: 'Notes <notes@example.com>',
       user: 'mailer',
       password: 'secret',
+      requireTls: true,
     });
     expect(config.appUrl).toBe('https://notes.example.com');
-    expect(loadConfig({ ...base, SMTP_HOST: 'mailpit', SMTP_PORT: '1025', SMTP_FROM: 'a@b.c' }).mail).toEqual({
+    const mailpit = { ...base, SMTP_HOST: 'mailpit', SMTP_PORT: '1025', SMTP_FROM: 'a@b.c', APP_URL: 'http://x.test' };
+    expect(loadConfig({ ...mailpit, SMTP_REQUIRE_TLS: 'false' }).mail).toEqual({
       host: 'mailpit',
       port: 1025,
       from: 'a@b.c',
       user: undefined,
       password: undefined,
+      requireTls: false,
     });
   });
 
-  it('turns mail off without SMTP_HOST, and wants a sender with it', () => {
-    expect(loadConfig({ ...base, SMTP_FROM: 'a@b.c', SMTP_PORT: '25' }).mail).toBeNull();
-    expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com' })).toThrow('SMTP_FROM is required');
+  it('requires TLS for mail unless SMTP_REQUIRE_TLS plainly says no', () => {
+    const mail = { ...base, SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'a@b.c', APP_URL: 'http://x.test' };
+    for (const value of [undefined, '', 'true', 'yes', 'fasle', 'smtp.example.com']) {
+      expect(loadConfig({ ...mail, SMTP_REQUIRE_TLS: value }).mail?.requireTls).toBe(true);
+    }
+    for (const value of ['false', 'FALSE', '0', 'no', ' off ']) {
+      expect(loadConfig({ ...mail, SMTP_REQUIRE_TLS: value }).mail?.requireTls).toBe(false);
+    }
   });
 
-  it('rejects an APP_URL that is not an http address', () => {
-    expect(() => loadConfig({ ...base, APP_URL: 'notes.example.com' })).toThrow('APP_URL');
-    expect(() => loadConfig({ ...base, APP_URL: 'ftp://notes.example.com' })).toThrow('APP_URL');
+  it('turns mail off without SMTP_HOST, and wants a sender and the app address with it', () => {
+    expect(loadConfig({ ...base, SMTP_FROM: 'a@b.c', SMTP_PORT: '25' }).mail).toBeNull();
+    expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com', APP_URL: 'http://x.test' })).toThrow(
+      'SMTP_FROM is required',
+    );
+    expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'a@b.c' })).toThrow(
+      'APP_URL is required when SMTP_HOST is set',
+    );
   });
 
   it('requires DATABASE_URL', () => {

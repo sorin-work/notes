@@ -9,6 +9,12 @@ export interface MailConfig {
   from: string;
   user?: string;
   password?: string;
+  /**
+   * Refuse to send unless the connection is encrypted. On by default: with
+   * STARTTLS "when offered", whoever sits between the API and the mail
+   * server only has to hide the offer to read the login and the reset links.
+   */
+  requireTls: boolean;
 }
 
 export interface AppConfig {
@@ -57,6 +63,11 @@ export function logLevelsFrom(value: string | undefined): LogLevel[] {
   return LEVELS.slice(0, index + 1);
 }
 
+/** For switches that are on unless someone says no: a typo must not turn them off. */
+function saysNo(value: string | undefined): boolean {
+  return ['0', 'false', 'no', 'off'].includes((value ?? '').trim().toLowerCase());
+}
+
 function mailFrom(env: NodeJS.ProcessEnv): MailConfig | null {
   const host = env.SMTP_HOST?.trim();
   if (!host) return null;
@@ -70,12 +81,21 @@ function mailFrom(env: NodeJS.ProcessEnv): MailConfig | null {
     from,
     user: env.SMTP_USER || undefined,
     password: env.SMTP_PASSWORD || undefined,
+    requireTls: !saysNo(env.SMTP_REQUIRE_TLS),
   };
 }
 
-/** Links in mails must not depend on what a request claims its host is. */
-function appUrlFrom(value: string | undefined): string {
-  const raw = (value ?? '').trim() || 'http://localhost:5181';
+/**
+ * Links in mails must not depend on what a request claims its host is. Once
+ * mail is on there is no default either: a forgotten APP_URL would mail
+ * links to localhost without a word.
+ */
+function appUrlFrom(value: string | undefined, mailIsOn: boolean): string {
+  const given = (value ?? '').trim();
+  if (!given && mailIsOn) {
+    throw new ConfigError('APP_URL is required when SMTP_HOST is set: the links in mails start with it');
+  }
+  const raw = given || 'http://localhost:5181';
   let url: URL;
   try {
     url = new URL(raw);
@@ -98,6 +118,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigError('JWT_SECRET must be at least 32 characters long');
   }
 
+  const mail = mailFrom(env);
   return {
     port: toInt('PORT', env.PORT, 4401, 1),
     databaseUrl,
@@ -111,7 +132,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
     authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
-    mail: mailFrom(env),
-    appUrl: appUrlFrom(env.APP_URL),
+    mail,
+    appUrl: appUrlFrom(env.APP_URL, mail !== null),
   };
 }

@@ -20,8 +20,11 @@ export function createSmtpTransport(mail: MailConfig): MailTransport {
     host: mail.host,
     port: mail.port,
     // Port 465 speaks TLS from the first byte. Any other port starts in plain
-    // text and switches to TLS when the server offers STARTTLS.
+    // text and has to switch to TLS with STARTTLS before the login or a mail
+    // goes out. If the server does not offer that, nothing is sent, unless
+    // SMTP_REQUIRE_TLS=false allows it (mailpit in development has no TLS).
     secure: mail.port === 465,
+    requireTLS: mail.requireTls,
     auth: mail.user ? { user: mail.user, pass: mail.password ?? '' } : undefined,
     // Mails go out in the background, so a server that does not answer
     // should not keep a socket open for nodemailer's default of two minutes.
