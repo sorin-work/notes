@@ -5,7 +5,9 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import type { Note, Prisma } from '@prisma/client';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
@@ -52,10 +54,36 @@ export const MAX_PARSED_LENGTH = 1_000_000;
 export const MAX_PARSE_MS = 1_000;
 /** How many mention requests of one user run at a time. More answer 429. */
 export const MAX_REQUESTS_PER_USER = 2;
-/** How much note text the cache of parsed notes holds, in characters. */
-const CACHED_LENGTH = 20_000_000;
-/** How many answers ("this note mentions that title there") the cache holds. */
-const CACHED_ANSWERS = 5_000;
+/**
+ * How much memory the cache of parsed notes may take, and the cache of
+ * answers ("this note mentions that title there"), by an estimate of the
+ * heap their entries use. One app holds one of each.
+ */
+const CACHED_TREE_BYTES = 64 * 1024 * 1024;
+const CACHED_ANSWER_BYTES = 4 * 1024 * 1024;
+
+/** What mentionIn finds. "unavailable" and "busy" come from the pool: no worker could take the note in time. */
+type Found = (Place & { linked: string }) | null | 'unparseable' | 'unavailable' | 'busy';
+
+/** An estimate of the heap a parsed note takes: objects, their fields and the strings in them. */
+function treeSize(parsed: ParsedNote | null): number {
+  if (!parsed) return 64;
+  const strings = (list: string[]) => list.reduce((sum, text) => sum + 2 * text.length + 32, 0);
+  return (
+    256 + parsed.prose.length * 48 + strings(parsed.verbatim) + strings(parsed.formatting) + strings(parsed.labels)
+  );
+}
+
+/** An estimate of the heap one answer takes: the key, and a place of two numbers or a word. */
+function answerSize(key: string): number {
+  return 2 * key.length + 96;
+}
+
+/** The mention with the text it makes, which is not kept: it is the whole note. */
+function withLink(content: string, place: Place): Place & { linked: string } {
+  const { start, end } = place;
+  return { start, end, linked: `${content.slice(0, start)}[[${content.slice(start, end)}]]${content.slice(end)}` };
+}
 /** How many of them are held in memory at a time. A note can be a megabyte. */
 const BATCH = 25;
 /** How much of the line is shown on each side of a mention. */
@@ -116,7 +144,12 @@ export class MentionsService {
           capped = spent = true;
           break;
         }
-        const mention = await this.mentionIn(note, target.title);
+        const mention = await this.mentionIn(userId, note, target.title);
+        if (mention === 'unavailable' || mention === 'busy') {
+          throw new ServiceUnavailableException(
+            'Unlinked mentions are not available right now. Try again in a moment.',
+          );
+        }
         if (mention && mention !== 'unparseable' && mention.linked.length <= MAX_CONTENT_LENGTH) {
           mentions.push({
             id: note.id,
@@ -180,7 +213,16 @@ export class MentionsService {
     if (source.revision !== at.version) {
       throw changed();
     }
-    const mention = await this.mentionIn(source, target.title, at);
+    const mention = await this.mentionIn(userId, source, target.title, at);
+    if (mention === 'busy') {
+      throw new HttpException(
+        'Too many notes are being read for mentions. Try again in a moment.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (mention === 'unavailable') {
+      throw new BadRequestException('Mentions are not available right now. Try again in a moment.');
+    }
     if (mention === 'unparseable') {
       throw new BadRequestException('That note is too long or too intricate to look for mentions in');
     }
@@ -214,51 +256,79 @@ export class MentionsService {
    * it is edited.
    */
   private async mentionIn(
+    userId: string,
     note: { id: string; revision: number; content: string },
     title: string,
     at?: { offset: number; text: string },
-  ): Promise<(Place & { linked: string }) | null | 'unparseable'> {
-    const treeKey = `${note.id}:${note.revision}`;
+  ): Promise<Found> {
+    // The text is part of the key: an id can come back with other text after a note was deleted for good.
+    const treeKey = `${userId}:${note.id}:${note.revision}:${createHash('sha256').update(note.content).digest('base64')}`;
     const answerKey = at ? null : `${treeKey}:${normalizeTitle(title)}`;
     const known = answerKey === null ? undefined : this.answers.get(answerKey);
-    if (known !== undefined) return known;
+    if (known !== undefined) {
+      this.touch(this.answers, answerKey!);
+      return known === null || known === 'unparseable' ? known : withLink(note.content, known);
+    }
     const tree = this.trees.get(treeKey);
+    if (tree) this.touch(this.trees, treeKey);
     if (tree?.parsed === null) return 'unparseable';
 
     const answer = await this.pool.run({ text: note.content, title, at, parsed: tree?.parsed });
+    // Not the note's fault: nothing is kept, and the next request tries again.
+    if (answer === 'unavailable' || answer === 'busy') return answer;
     const parsed = answer === 'timeout' ? null : answer.parsed;
-    if (!tree || answer === 'timeout') this.keepTree(treeKey, parsed, note.content.length);
+    if (!tree || answer === 'timeout') this.keepTree(treeKey, parsed);
     const result = parsed && answer !== 'timeout' ? answer.mention : 'unparseable';
-    if (answerKey !== null) this.keepAnswer(answerKey, result);
+    if (answerKey !== null) {
+      this.keepAnswer(
+        answerKey,
+        result === null || result === 'unparseable' ? result : { start: result.start, end: result.end },
+      );
+    }
     return result;
   }
 
-  /** Parsed notes by note id and revision, oldest first, with the length of their text. */
-  private readonly trees = new Map<string, { parsed: ParsedNote | null; length: number }>();
-  private treeLength = 0;
-  private readonly answers = new Map<string, (Place & { linked: string }) | null | 'unparseable'>();
+  /**
+   * Parsed notes and answers, least recently used first, each with an
+   * estimate of the memory it takes. Both are bounded by that estimate.
+   */
+  private readonly trees = new Map<string, { parsed: ParsedNote | null; bytes: number }>();
+  private treeBytes = 0;
+  private readonly answers = new Map<string, Place | null | 'unparseable'>();
+  private answerBytes = 0;
   /** Mention requests running now, by user. */
   private readonly running = new Map<string, number>();
 
-  private keepTree(key: string, parsed: ParsedNote | null, length: number): void {
+  private touch<T>(cache: Map<string, T>, key: string): void {
+    const value = cache.get(key) as T;
+    cache.delete(key);
+    cache.set(key, value);
+  }
+
+  private keepTree(key: string, parsed: ParsedNote | null): void {
     const old = this.trees.get(key);
-    if (old) this.treeLength -= old.length;
-    // A verdict of "unparseable" costs next to nothing to keep.
-    const kept = parsed ? length : 1;
+    if (old) this.treeBytes -= old.bytes;
+    const bytes = 2 * key.length + treeSize(parsed);
     this.trees.delete(key);
-    this.trees.set(key, { parsed, length: kept });
-    this.treeLength += kept;
+    this.trees.set(key, { parsed, bytes });
+    this.treeBytes += bytes;
     for (const [oldest, entry] of this.trees) {
-      if (this.treeLength <= CACHED_LENGTH) break;
+      if (this.treeBytes <= CACHED_TREE_BYTES) break;
       this.trees.delete(oldest);
-      this.treeLength -= entry.length;
+      this.treeBytes -= entry.bytes;
     }
   }
 
-  private keepAnswer(key: string, answer: (Place & { linked: string }) | null | 'unparseable'): void {
+  private keepAnswer(key: string, answer: Place | null | 'unparseable'): void {
+    if (this.answers.has(key)) this.answerBytes -= answerSize(key);
     this.answers.delete(key);
     this.answers.set(key, answer);
-    if (this.answers.size > CACHED_ANSWERS) this.answers.delete(this.answers.keys().next().value!);
+    this.answerBytes += answerSize(key);
+    for (const oldest of this.answers.keys()) {
+      if (this.answerBytes <= CACHED_ANSWER_BYTES) break;
+      this.answers.delete(oldest);
+      this.answerBytes -= answerSize(oldest);
+    }
   }
 
   /** Runs `work` unless the user has MAX_REQUESTS_PER_USER mention requests running already. */
