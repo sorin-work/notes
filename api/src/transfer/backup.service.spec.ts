@@ -9,6 +9,9 @@ const note = (overrides: object = {}) => ({
   tags: ['Work Stuff'],
   pinned: false,
   favorite: true,
+  isTemplate: false,
+  dailyDate: null,
+  dailyReleased: false,
   revision: 3,
   createdAt: at,
   updatedAt: at,
@@ -39,6 +42,21 @@ describe('readBackup', () => {
     expect(readBackup(backup()).notes[0]).toMatchObject({ title: 'Plan', tags: ['work-stuff'], revision: 3 });
   });
 
+  it('reads the daily note choices, and takes what it does not know as the default', () => {
+    const read = readBackup(
+      backup({
+        notes: [note({ isTemplate: true })],
+        preferences: { dailyNotes: { notebookId: null, templateId: 'n1', dateFormat: 'something' } },
+      }),
+    );
+    expect(read.preferences).toEqual({ dailyNotes: { notebookId: null, templateId: 'n1', dateFormat: 'iso' } });
+    expect(readBackup(backup()).preferences.dailyNotes).toEqual({
+      notebookId: null,
+      templateId: null,
+      dateFormat: 'iso',
+    });
+  });
+
   it('holds the file to the rules of the app', () => {
     const cases: [object, RegExp][] = [
       [{ version: 2 }, /version 2 is not 1/],
@@ -54,6 +72,12 @@ describe('readBackup', () => {
         { notes: [note({ versions: [{ title: 'v', content: 1, createdAt: at }] })] },
         /versions\[0\]\.content is not text/,
       ],
+      [{ notes: [note({ dailyDate: '2026-02-30' })] }, /dailyDate is not a real day/],
+      [
+        { notes: [note({ dailyDate: '2026-02-03' }), note({ id: 'n2', dailyDate: '2026-02-03' })] },
+        /two daily notes for the same day/,
+      ],
+      [{ preferences: { dailyNotes: { templateId: 'n1' } } }, /templateId names nothing in the file/],
     ];
     for (const [change, message] of cases) {
       expect(() => readBackup(backup(change))).toThrow(message);

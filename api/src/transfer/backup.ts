@@ -34,6 +34,12 @@ export interface BackupNote {
   tags: string[];
   pinned: boolean;
   favorite: boolean;
+  /** A template, which new notes are made from. */
+  isTemplate: boolean;
+  /** The day this is the daily note of, as YYYY-MM-DD. */
+  dailyDate: string | null;
+  /** Set when the user said this note is not the note of its day. */
+  dailyReleased: boolean;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -56,10 +62,16 @@ export interface BackupShareLink {
   createdAt: string;
 }
 
+/** The choices kept with the account. Ids are those of the file. */
+export interface BackupPreferences {
+  dailyNotes: { notebookId: string | null; templateId: string | null; dateFormat: string };
+}
+
 export interface Backup {
   format: typeof BACKUP_FORMAT;
   version: typeof BACKUP_VERSION;
   exportedAt: string;
+  preferences: BackupPreferences;
   notebooks: BackupNotebook[];
   tags: BackupTag[];
   shareLinks: BackupShareLink[];

@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { LinksService } from '../links/links.service';
 import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { readPreferences } from '../auth/preferences';
+import { DATE_FORMATS } from '../common/day';
 import { normalizeTagNames } from '../tags/tag-name';
 import { MAX_VERSIONS_PER_NOTE } from '../versions/versions.service';
 import {
@@ -57,7 +59,8 @@ export class BackupService {
    * time, so neither the API nor the browser holds the whole file at once.
    */
   async *write(userId: string, now = new Date()): AsyncGenerator<string> {
-    const [notebooks, tags, shareLinks] = await Promise.all([
+    const [user, notebooks, tags, shareLinks] = await Promise.all([
+      this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { preferences: true } }),
       this.prisma.notebook.findMany({ where: { userId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }),
       this.prisma.tag.findMany({ where: { userId }, orderBy: { name: 'asc' } }),
       this.prisma.shareLink.findMany({
@@ -72,6 +75,7 @@ export class BackupService {
       format: BACKUP_FORMAT,
       version: BACKUP_VERSION,
       exportedAt: iso(now),
+      preferences: readPreferences(user.preferences),
       notebooks: notebooks.map((notebook): BackupNotebook => ({
         id: notebook.id,
         name: notebook.name,
@@ -111,6 +115,9 @@ export class BackupService {
           tags: note.tags.map((noteTag) => noteTag.tag.name),
           pinned: note.pinned,
           favorite: note.favorite,
+          isTemplate: note.isTemplate,
+          dailyDate: note.dailyDate ? note.dailyDate.toISOString().slice(0, 10) : null,
+          dailyReleased: note.dailyReleased,
           revision: note.revision,
           createdAt: iso(note.createdAt),
           updatedAt: iso(note.updatedAt),
@@ -211,6 +218,9 @@ export class BackupService {
               content: note.content,
               pinned: note.pinned,
               favorite: note.favorite,
+              isTemplate: note.isTemplate,
+              dailyDate: note.dailyDate === null ? null : new Date(`${note.dailyDate}T00:00:00Z`),
+              dailyReleased: note.dailyReleased,
               revision: note.revision,
               createdAt: new Date(note.createdAt),
               updatedAt: new Date(note.updatedAt),
@@ -235,6 +245,21 @@ export class BackupService {
             if (note.content) await this.links.sync(tx, noteIds.get(note.id) as string, note.content);
           }
         }
+
+        // The daily note choices, pointing at the new notebook and template.
+        const daily = backup.preferences.dailyNotes;
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            preferences: {
+              dailyNotes: {
+                notebookId: daily.notebookId === null ? null : (notebookIds.get(daily.notebookId) ?? null),
+                templateId: daily.templateId === null ? null : (noteIds.get(daily.templateId) ?? null),
+                dateFormat: daily.dateFormat,
+              },
+            },
+          },
+        });
 
         return {
           notes: backup.notes.length,
@@ -275,6 +300,13 @@ function date(value: unknown, where: string): string {
     invalid(where, 'is not a date and time in UTC');
   }
   if (Number.isNaN(new Date(value).getTime())) invalid(where, 'is not a real date');
+  return value;
+}
+
+function day(value: unknown, where: string): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid(where, 'is not a day as YYYY-MM-DD');
+  const read = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(read.getTime()) || read.toISOString().slice(0, 10) !== value) invalid(where, 'is not a real day');
   return value;
 }
 
@@ -335,6 +367,9 @@ export function readBackup(value: unknown): Backup {
     );
     if (typeof entry.pinned !== 'boolean') invalid(`${where}.pinned`, 'is not true or false');
     if (typeof entry.favorite !== 'boolean') invalid(`${where}.favorite`, 'is not true or false');
+    if (typeof entry.isTemplate !== 'boolean') invalid(`${where}.isTemplate`, 'is not true or false');
+    if (typeof entry.dailyReleased !== 'boolean') invalid(`${where}.dailyReleased`, 'is not true or false');
+    const dailyDate = entry.dailyDate === null ? null : day(entry.dailyDate, `${where}.dailyDate`);
     if (
       !Number.isInteger(entry.revision) ||
       (entry.revision as number) < 0 ||
@@ -361,6 +396,9 @@ export function readBackup(value: unknown): Backup {
       tags: normalizeTagNames(tagList),
       pinned: entry.pinned,
       favorite: entry.favorite,
+      isTemplate: entry.isTemplate,
+      dailyDate,
+      dailyReleased: entry.dailyReleased,
       revision: entry.revision as number,
       createdAt: date(entry.createdAt, `${where}.createdAt`),
       updatedAt: date(entry.updatedAt, `${where}.updatedAt`),
@@ -369,6 +407,19 @@ export function readBackup(value: unknown): Backup {
     };
   });
   if (new Set(notes.map((note) => note.id)).size !== notes.length) invalid('notes', 'has two with the same id');
+  const days = notes.flatMap((note) => (note.dailyDate ? [note.dailyDate] : []));
+  if (new Set(days).size !== days.length) invalid('notes', 'has two daily notes for the same day');
+
+  const preferences = isObject(value.preferences) ? value.preferences : {};
+  const daily = isObject(preferences.dailyNotes) ? preferences.dailyNotes : {};
+  const reference = (ref: unknown, where: string, known: (key: string) => boolean): string | null => {
+    if (ref === null || ref === undefined) return null;
+    const key = id(ref, where);
+    if (!known(key)) invalid(where, 'names nothing in the file');
+    return key;
+  };
+  const dateFormat = DATE_FORMATS.find((format) => format === daily.dateFormat) ?? 'iso';
+  const templateIds = new Set(notes.filter((note) => note.isTemplate).map((note) => note.id));
 
   const shareLinks = list(value.shareLinks, 'shareLinks', MAX_BACKUP_NOTES + MAX_BACKUP_NOTEBOOKS).map(
     (entry, index): BackupShareLink => {
@@ -389,6 +440,13 @@ export function readBackup(value: unknown): Backup {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: date(value.exportedAt, 'exportedAt'),
+    preferences: {
+      dailyNotes: {
+        notebookId: reference(daily.notebookId, 'preferences.dailyNotes.notebookId', (key) => byId.has(key)),
+        templateId: reference(daily.templateId, 'preferences.dailyNotes.templateId', (key) => templateIds.has(key)),
+        dateFormat,
+      },
+    },
     notebooks,
     tags,
     shareLinks,
