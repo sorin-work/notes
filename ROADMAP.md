@@ -23,7 +23,7 @@ couple of weekends, **L** several weeks of spare time.
 | 2   | Changes view in version history        | Shipped | frontend | S    | -          |
 | 3   | Quick switcher                         | Shipped | frontend | S    | -          |
 | 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
-| 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
+| 5   | Rename a note without breaking links   | Shipped | both     | M    | -          |
 | 6   | Accessibility pass                     | Next    | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Later   | both     | M    | -          |
@@ -60,27 +60,6 @@ when it says more match.
 - Undecided: whether to also accept `tag:foo` and `notebook:Work` typed into
   the box. Good for keyboard use, but names with spaces then need quoting
   rules.
-
-### 5. Rename a note without breaking links
-
-Links point at titles, so renaming "Atlas" to "Project Atlas" leaves every
-`[[Atlas]]` dangling (see "How links and versions work" in the README). When
-a rename orphans links, the editor should offer "Update N links".
-
-- `NotesService.update` already knows when the title changed, and
-  `LinksService.backlinks` finds the notes linking to the old title through
-  `NoteLink.targetKey`. New: a `renameLinks(markdown, from, to)` beside
-  `extractWikiLinks` in `links/wikilinks.ts` that skips code the same way and
-  keeps the `|alias` and `#heading` parts.
-- Each rewritten note needs `LinksService.sync`, and a version saved through
-  `VersionsService` so the rewrite can be undone.
-- Tricky: if another note still has the old title, the links are not dangling
-  and must be left alone. Bumping `updatedAt` on twenty notes would also
-  reshuffle every "last edited" list, so the rewrite should probably leave it.
-- Undecided: a separate `POST /notes/:id/rename-links` after the user
-  confirms, or a flag on the `PATCH`. I lean towards separate, because the
-  title autosaves on every pause and rewriting links halfway through typing a
-  new title would be wrong.
 
 ### 6. Accessibility pass
 
@@ -376,6 +355,26 @@ opening a stale row, the note that is already open is left out, and the key
 does nothing while another dialog is open. Still open: notebooks, tags and
 actions in the list. Notes that share a title look the same there, and the
 dialog has no button, so it needs a keyboard.
+
+### 5. Rename a note without breaking links
+
+After a rename, the editor shows how many notes still link to the old title
+and offers "Update N links". As planned, that is a separate
+`POST /notes/:id/rename-links`, the title `PATCH` rewrites nothing, and
+`renameLinks(markdown, from, to)` sits beside `extractWikiLinks` and reads
+notes through the same scanner. The request names the old title, which the
+editor remembers from when the note was opened, so a title that saved in
+several steps still works. A `GET` on the same path gives the count for the
+offer. The rewrite runs in one transaction, saves a version of each note
+first and leaves `updatedAt` alone. Nothing is offered or rewritten while a
+note still has the old title. Beyond the design: nothing is rewritten when
+the new title cannot be written as a link (`[`, `]`, `|`, `#` or a backtick
+in it), a note that was edited since it was read is skipped and not
+overwritten, and so is a note that would grow past the size limit. Still
+open: the offer lives in the editor where the rename happened and is gone
+after leaving the note, notes in the trash and a note's links to itself are
+not rewritten, and a link with inline code between its brackets stays as it
+is.
 
 ### 7. Scheduled backups
 
