@@ -62,7 +62,7 @@ describe('QuickSwitcher', () => {
     expect(input).toHaveAttribute('aria-activedescendant', groceries.id);
 
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByLabelText('Location')).toHaveTextContent('/notes/n3?notebook=w');
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent('/notes/n3?notebook=w'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
