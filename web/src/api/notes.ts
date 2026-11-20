@@ -33,4 +33,12 @@ export const noteTitles = (q: string, limit = 8) =>
 export const resolveTitle = (title: string) =>
   api<{ id: string; title: string }>(withQuery('/notes/resolve', { title }));
 
+/** How many notes still link to `from`, a title the note had before it was renamed, and now lead nowhere. */
+export const orphanedLinkCount = (id: string, from: string) =>
+  api<{ count: number }>(withQuery(`/notes/${id}/rename-links`, { from }));
+
+/** Points those links at the title the note has now. */
+export const renameLinks = (id: string, from: string) =>
+  api<{ updated: number; title: string }>(`/notes/${id}/rename-links`, json('POST', { from }));
+
 export const exportNote = (id: string, title: string) => download(`/notes/${id}/export`, `${title}.md`);

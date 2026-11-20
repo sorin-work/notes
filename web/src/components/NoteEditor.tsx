@@ -9,7 +9,9 @@ import {
   exportNote,
   getNote,
   noteTitles,
+  orphanedLinkCount,
   outgoingLinks,
+  renameLinks,
   resolveTitle,
   trashNote,
   updateNote,
@@ -142,6 +144,37 @@ function LoadedEditor({ note }: { note: Note }) {
       void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
       refreshLists();
       navigate({ pathname: '/notes', search: location.search });
+    },
+  });
+
+  // Links point at titles, so a rename leaves the links to the old title
+  // leading nowhere. `linkedTitle` is the title they point at: the one the
+  // note was opened with, until the links are updated. The title autosaves
+  // while it is typed, so the title before the last save would not do.
+  const [linkedTitle, setLinkedTitle] = useState(note.title);
+  const [declinedFor, setDeclinedFor] = useState<string | null>(null);
+  const renamed = !readOnly && normalizeTitle(note.title) !== normalizeTitle(linkedTitle);
+  const orphaned = useQuery({
+    queryKey: ['rename-links', note.id, linkedTitle, note.title],
+    queryFn: () => orphanedLinkCount(note.id, linkedTitle),
+    enabled: renamed,
+    // Keeps the offer steady while the new title is typed and saved bit by bit.
+    placeholderData: (previous, query) => (query?.queryKey[2] === linkedTitle ? previous : undefined),
+  });
+  const orphanedCount = renamed && declinedFor !== note.title ? (orphaned.data?.count ?? 0) : 0;
+
+  const updateLinks = useMutation({
+    mutationFn: async () => {
+      // The links get the title the server has, so it needs the one on screen first.
+      await autosave.flush();
+      if (autosave.hasPending()) throw new Error('The note could not be saved, so the links were left as they are.');
+      return renameLinks(note.id, linkedTitle);
+    },
+    onSuccess: (result) => {
+      setLinkedTitle(result.title);
+      for (const key of ['note', 'notes', 'links', 'backlinks', 'versions', 'search', 'rename-links']) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
     },
   });
 
@@ -360,6 +393,26 @@ function LoadedEditor({ note }: { note: Note }) {
         disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
+      {orphanedCount > 0 && (
+        <div className="banner banner-info" role="status">
+          <span>
+            {orphanedCount === 1 ? '1 note still links' : `${orphanedCount} notes still link`} to “{linkedTitle}”, the
+            title this note had before.
+          </span>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={updateLinks.isPending}
+            onClick={() => updateLinks.mutate()}
+          >
+            {updateLinks.isPending ? 'Updating…' : `Update ${orphanedCount} ${orphanedCount === 1 ? 'link' : 'links'}`}
+          </button>
+          <button type="button" className="button" onClick={() => setDeclinedFor(note.title)}>
+            Not now
+          </button>
+          {updateLinks.error && <ErrorMessage error={updateLinks.error} />}
+        </div>
+      )}
 
       <div className="editor-panes">
         {mode !== 'preview' && (
