@@ -6,7 +6,7 @@ import { NotebooksService } from '../notebooks/notebooks.service';
 import type { NoteFilterQuery } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
-import { HIGHLIGHT_END, HIGHLIGHT_START, toPrefixQuery } from './search-query';
+import { HIGHLIGHT_END, HIGHLIGHT_START, parseSearch } from './search-query';
 
 export interface SearchHit {
   id: string;
@@ -48,12 +48,17 @@ export class SearchService {
 
   /** Notes matching `q`, narrowed to a notebook or a tag when `options` names one. */
   async search(userId: string, q: string, options: NoteFilterQuery): Promise<Page<SearchHit>> {
-    const tsquery = toPrefixQuery(q);
-    if (!tsquery) {
+    const terms = parseSearch(q);
+    if (!terms) {
       return { items: [], total: 0, page: options.page, pageSize: options.pageSize };
     }
 
     // Everything that comes from the request goes in as a bound parameter, never as SQL text.
+    // The loose words are a tsquery built from letters and digits only. A quoted phrase is
+    // handed over as it was typed, for phraseto_tsquery to split the way the notes were split.
+    const queries = terms.phrases.map((phrase) => Prisma.sql`phraseto_tsquery('english', ${phrase})`);
+    if (terms.prefix) queries.unshift(Prisma.sql`to_tsquery('english', ${terms.prefix})`);
+
     const conditions = [
       Prisma.sql`n.user_id = ${userId}::uuid`,
       Prisma.sql`n.deleted_at IS NULL`,
@@ -74,7 +79,7 @@ export class SearchService {
     }
 
     const match = Prisma.sql`
-      FROM notes n, to_tsquery('english', ${tsquery}) query
+      FROM notes n, (SELECT ${Prisma.join(queries, ' && ')} AS query) search
       WHERE ${Prisma.join(conditions, ' AND ')}`;
 
     const [rows, counted] = await Promise.all([

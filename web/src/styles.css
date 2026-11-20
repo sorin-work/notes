@@ -13,6 +13,7 @@
   --danger-soft: #fbe9e8;
   --danger-text: #ffffff;
   --success: #1f7a4d;
+  --success-soft: #e3f3ea;
   --mark: #fff1a8;
   --missing: #b0561b;
   --favourite: #ae7e00;
@@ -40,6 +41,7 @@
   --danger-soft: #3d2423;
   --danger-text: #1f1211;
   --success: #6fcf97;
+  --success-soft: #1d3528;
   --mark: #5c5216;
   --missing: #e3a26b;
   --favourite: #e2a400;
@@ -63,6 +65,7 @@
     --danger-soft: #3d2423;
     --danger-text: #1f1211;
     --success: #6fcf97;
+    --success-soft: #1d3528;
     --mark: #5c5216;
     --missing: #e3a26b;
     --favourite: #e2a400;
@@ -930,6 +933,10 @@ mark {
   margin: 0 0.4rem 0 -1.2rem;
 }
 
+.markdown input[type='checkbox']:enabled {
+  cursor: pointer;
+}
+
 .wikilink {
   text-decoration: none;
   border-bottom: 1px solid currentColor;
@@ -1318,6 +1325,82 @@ ul.error-box {
   padding-bottom: 0.75rem;
   margin-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
+}
+
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.changes p {
+  margin: 0 0 0.75rem;
+}
+
+.changes-legend {
+  font-size: 0.88rem;
+}
+
+.changes-title del,
+.changes-title ins {
+  padding: 0.05em 0.25em;
+  border-radius: 4px;
+  text-decoration: none;
+}
+
+.diff {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.diff-line {
+  display: flex;
+}
+
+.diff-sign {
+  flex: none;
+  width: 1.6rem;
+  text-align: center;
+  white-space: pre;
+  color: var(--muted);
+}
+
+/* Copying lines out of a diff should give the text only. */
+.diff-sign,
+.diff-label {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.diff-text {
+  min-width: 0;
+  padding-right: 0.5rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-added,
+.changes-title ins {
+  background: var(--success-soft);
+}
+
+.diff-removed,
+.changes-title del {
+  background: var(--danger-soft);
+}
+
+.diff-skipped {
+  padding: 0.15rem 0.6rem;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 0.8rem;
 }
 
 /* Auth and shared pages */

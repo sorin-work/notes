@@ -76,13 +76,26 @@ describe('SearchService', () => {
     prisma.$queryRaw.mockResolvedValue([]);
     const filters = Object.assign(new NoteFilterQuery(), { notebookId: 'nb-1', tag: "x'); DROP TABLE notes; --" });
 
-    await expect(service.search('user-1', '"weekly sync"', filters)).resolves.toMatchObject({ items: [], total: 0 });
+    const result = service.search('user-1', 'atlas "weekly sync" "3.5 mm"', filters);
+    await expect(result).resolves.toMatchObject({ items: [], total: 0 });
 
     expect(notebooks.idsWithChildren).toHaveBeenCalledWith('user-1', 'nb-1');
     const match = matchClause(prisma);
-    expect(match.values).toEqual(['(weekly <-> sync)', 'user-1', 'nb-1', 'nb-2', 'user-1', "x');-drop-table-notes;"]);
+    expect(match.values).toEqual([
+      'atlas:*',
+      'weekly sync',
+      '3.5 mm',
+      'user-1',
+      'nb-1',
+      'nb-2',
+      'user-1',
+      "x');-drop-table-notes;",
+    ]);
+    expect(match.sql).toContain(
+      "to_tsquery('english', ?) && phraseto_tsquery('english', ?) && phraseto_tsquery('english', ?)",
+    );
     expect(match.sql).toContain('n.notebook_id IN (?::uuid,?::uuid)');
-    expect(match.sql).not.toMatch(/drop|weekly|nb-1/i);
+    expect(match.sql).not.toMatch(/drop|weekly|atlas|nb-1/i);
   });
 
   it('looks for notes outside any notebook when asked for "none"', async () => {

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { listNotebooks } from '../api/notebooks';
@@ -20,7 +21,8 @@ import { useAutosave } from '../hooks/useAutosave';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
-import { countWords, readingMinutes } from '../lib/text';
+import { toggleTask } from '../lib/tasks';
+import { countWords, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
 import { PinIcon } from './Icons';
@@ -205,6 +207,19 @@ function LoadedEditor({ note }: { note: Note }) {
     });
   };
 
+  const onToggleTask = (line: number, checked: boolean) => {
+    const next = toggleTask(content, line, checked);
+    if (next === content) return;
+    // Replacing the text moves the caret in the source to the end. The text
+    // is as long as it was, so the selection goes back where it was. That has
+    // to happen before the next click reads it, so the new text is written
+    // right here and not on the next frame.
+    const textarea = textareaRef.current;
+    const selection = textarea && ([textarea.selectionStart, textarea.selectionEnd] as const);
+    flushSync(() => change({ content: next }));
+    if (textarea && selection) textarea.setSelectionRange(...selection);
+  };
+
   const onContentChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     change({ content: event.target.value });
     updateLinkState(event.target.value, event.target.selectionStart);
@@ -377,7 +392,12 @@ function LoadedEditor({ note }: { note: Note }) {
         )}
         {mode !== 'edit' && (
           <div className="editor-preview" aria-label="Preview" ref={previewRef} tabIndex={-1}>
-            <MarkdownPreview content={content} onWikiLink={openWikiLink} missingTitles={missingTitles} />
+            <MarkdownPreview
+              content={content}
+              onWikiLink={openWikiLink}
+              missingTitles={missingTitles}
+              onToggleTask={readOnly ? undefined : onToggleTask}
+            />
           </div>
         )}
       </div>
@@ -397,6 +417,7 @@ function LoadedEditor({ note }: { note: Note }) {
       {dialog === 'history' && (
         <VersionHistoryDialog
           noteId={note.id}
+          current={{ title, content }}
           onClose={() => setDialog(null)}
           onRestored={(restored) => {
             setTitle(restored.title);
@@ -411,9 +432,7 @@ function LoadedEditor({ note }: { note: Note }) {
       {dialog === 'delete' && (
         <ConfirmDialog
           title="Move to trash?"
-          message={
-            <p>“{title || 'Untitled'}” will be moved to the trash. You can restore it from there for 30 days.</p>
-          }
+          message={<p>“{savedTitle(title)}” will be moved to the trash. You can restore it from there for 30 days.</p>}
           confirmLabel="Move to trash"
           danger
           busy={trash.isPending}
