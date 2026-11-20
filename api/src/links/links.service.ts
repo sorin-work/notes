@@ -249,9 +249,29 @@ export class LinksService {
     return note;
   }
 
-  private async resolveKeys(userId: string, keys: string[]): Promise<Map<string, string>> {
+  /**
+   * For each normalised title that some note outside the trash has, the id
+   * of that note: the most recently edited one when several share a title.
+   *
+   * With `among`, only the notes in those notebooks or with those ids are
+   * looked at, so that a note outside them cannot win over one inside.
+   */
+  async resolveKeys(
+    userId: string,
+    keys: string[],
+    among?: { notebookIds: string[] } | { noteIds: string[] },
+  ): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     if (keys.length === 0) return result;
+    let within = Prisma.empty;
+    if (among) {
+      const ids = 'notebookIds' in among ? among.notebookIds : among.noteIds;
+      if (ids.length === 0) return result;
+      within =
+        'notebookIds' in among
+          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[])`
+          : Prisma.sql`AND id = ANY(${ids}::uuid[])`;
+    }
     // Titles are matched case-insensitively. Prisma cannot express
     // lower(title) IN (...), so this compares in SQL directly.
     const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
@@ -259,7 +279,7 @@ export class LinksService {
       FROM (
         SELECT id, ${titleKey('title')} AS key, updated_at
         FROM notes
-        WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+        WHERE user_id = ${userId}::uuid AND deleted_at IS NULL ${within}
       ) titled
       WHERE key = ANY(${keys})
       ORDER BY key, updated_at DESC`;

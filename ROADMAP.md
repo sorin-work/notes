@@ -28,7 +28,7 @@ couple of weekends, **L** several weeks of spare time.
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Shipped | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
-| 10  | Share link options                     | Later   | both     | M    | -          |
+| 10  | Share link options                     | Shipped | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
@@ -66,26 +66,6 @@ and to attach the odd PDF.
   text, which drops the images of an Obsidian vault.
 - Needs size limits per file and per account, and a list of allowed types.
   SVG is a script risk if it is served inline.
-
-### 10. Share link options
-
-A share link is all or nothing: one note, public until I stop sharing.
-
-- Expiry and password: `expiresAt` and `passwordHash` on `ShareLink`, checked
-  in `SharesService.view`, with the options in `ShareDialog`. A password
-  means `GET /public/notes/:token` needs a way to receive it and
-  `SharedNotePage` needs a prompt.
-- Share a notebook: one link with an index page and the notes inside.
-  `ShareLink.noteId` is required and unique today, so this is either a
-  nullable `notebookId` beside it or a second model.
-- Links between shared notes: `SharedNotePage` shows `[[links]]` as plain
-  text because `MarkdownPreview` gets no `onWikiLink` there. When the target
-  is shared as well (always true inside a shared notebook) it could link to
-  that share.
-- The public endpoint is not rate limited (`ThrottlerGuard` is only on the
-  routes that take a password) and every fetch bumps `viewCount`, my own
-  included. Throttle it, and skip the count when the request carries the
-  owner's token.
 
 ### 12. More import sources and export formats
 
@@ -306,11 +286,13 @@ A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
 `sleep` rather than cron. It reads the age of the newest dump from the file
 names when it starts, so a restart does not add one, and then looks at the
 clock every minute. Beyond the design, the same script restores
-(`backup restore <file>`), loading the dump into a new database that replaces
-the old one only when the load worked. The README has the commands, and CI
-runs `scripts/check-backup.sh` after the end-to-end tests: the loop and the
-pruning against clocks that are wrong, three dumps while keeping two, a
-restore into a scratch database and a row count of every table. Still open:
+(`backup restore <file>`), loading the dump into a new database that takes
+the place of the old one in a single transaction, and only when the load
+worked. The README has the commands, and CI runs `scripts/check-backup.sh`
+after the end-to-end tests: the loop and the pruning against clocks that are
+wrong, three dumps while keeping two, a restore into a scratch database and
+over one that holds something else, and a row count of every table. Still
+open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
@@ -341,6 +323,36 @@ write wins. Still open: the two texts are not merged, the question shows no
 diff (History does, after "keep mine, put theirs in the history"), a tab that
 only has a note open is not told about a change before it saves, and a kept
 draft does not outlive its tab.
+
+### 10. Share link options
+
+A share link can run out and can ask for a password: `expiresAt` and
+`passwordHash` on `ShareLink`, set in the share dialog and checked in
+`SharesService.view`. A link that has run out answers exactly like one that
+never existed, and the dialog tells the owner. A link with a password answers
+`403` so that the shared page can ask, and takes the password in the body of
+a `POST`, never in the address. The public endpoint is throttled, with a
+roomy limit for reading and a strict one for password attempts per client,
+and each link takes only so many wrong passwords a minute from everyone
+together, which a persistent guesser can use to keep readers out but never
+the signed-in owner. A request with the owner's login is no longer counted
+as a view, and nothing these routes answer may be cached.
+
+The second step shares a notebook with one link. `ShareLink` got a
+`notebookId` beside `noteId`, with a check in the database that exactly one
+is set. The link shows a list of the notes in the notebook and in the
+notebooks inside it, and each note on a page of its own. Which notes belong
+is asked with every request, so a note added later is there and one moved
+out or deleted is gone at once. The options are the same, and the right
+password comes back with a proof that opens the other notes for an hour, so
+it is typed once. A `[[link]]` leads on to a note of the same shared
+notebook, looked up among those notes first, or else to a note whose own link
+has no password and has not run out. Every other link is sent as its plain
+words, so that no title from outside the shared notes gets out. Notes and
+notebooks say when a shared notebook makes them public, and moving one into
+a shared notebook asks first. Still open:
+a link shows that it has a password, a notebook link has no search, and the
+shared pages are not styled for printing.
 
 ### 11. Account settings and sessions
 
@@ -415,8 +427,10 @@ move takes along what is inside the notebook and is refused when that would
 end below the fourth level. Deleting a notebook deletes the notebooks inside
 it and moves the notes of all of them to the trash. `idsWithChildren` kept its
 name and is one recursive query for "this notebook and everything inside it",
-used by the note list, the search and the graph. No migration was needed,
-`parentId` was there already, so one-level data is untouched.
+used by the note list, the search, the graph and the links that share a
+notebook, which so cover every level inside it. `sharedThrough` looks as far
+up as notebooks nest. No migration was needed, `parentId` was there already,
+so one-level data is untouched.
 
 The importer keeps folders as notebooks four levels deep and joins what is
 deeper into the fourth ("D - E"), the way it used to join everything below the
@@ -446,17 +460,22 @@ the note itself connects nothing. It combines with the notebook and tag
 selects. Under the backlinks, `UnlinkedMentions` lists the notes that write
 the title of the open note without linking to it (`GET /notes/:id/mentions`).
 The full-text index names the candidates with a phrase query, and
-`findMention` beside `extractWikiLinks` then reads each one. A Markdown parser
-(`@lezer/markdown`, in `prose.ts`) says which stretches are plain text, and a
-mention has to lie inside one of them as whole words, with the same title key
-as `NoteLink.targetKey`. Titles under three characters get no mentions, and
-neither do titles that cannot be written as a link, titles that another note
-has too, and "Untitled". The list is paged, only the 200 newest candidates are
-read, and each note comes with the line and the position of the mention it
-shows and the revision of the note. "Link" (`POST
-/notes/:id/mentions/:sourceId/link`) takes those three and wraps that mention
-through `writeNoteText`, tied to that revision, so a note that has changed
-since is left alone. It saves the old text as a version, syncs the links and
+`findMention` beside `extractWikiLinks` then reads each one. The parser the
+preview renders with (micromark with GFM, through `mdast-util-from-markdown`,
+in `prose.ts`) says which stretches are plain text, with nothing inside a link
+or image label counted, and a mention has to lie inside one of them as whole
+words, with the same title key as `NoteLink.targetKey`. Titles under three
+characters get no mentions, and neither do titles that cannot be written as a
+link, titles that another note has too, and "Untitled". The list is paged,
+only the 200 newest candidates are read, and each note comes with the line and
+the position of the mention it shows and the revision of the note. "Link"
+(`POST /notes/:id/mentions/:sourceId/link`) takes those three and wraps that
+mention through `writeNoteText`, tied to that revision, so a note that has
+changed since is left alone. Before it writes, it parses the new text again
+and refuses unless the only change is one more `[[link]]` at that place. The
+list offers only what "Link" would take, with the same function, and parses at
+most 1,000,000 characters or one second per request, skipping notes over
+100,000 characters. It saves the old text as a version, syncs the links and
 leaves `updatedAt` alone.
 
 The graph is a page of its own. `GET /links/graph` returns nodes and resolved
@@ -480,9 +499,9 @@ page is loaded on demand, so d3-force is not in the main bundle, and
 
 Still open: a title of only very common words finds nothing, because the index
 drops those words. Common titles ("Ideas") are as noisy as predicted, and
-there is no way to dismiss a mention. Only the first mention in a note is
-offered at a time. In the graph, dots cannot be moved by hand, links have no
-arrowheads, and above 300 notes only the filters show the rest. The dots are
-not tab stops, and two fingers on a touch screen do not zoom: the buttons do.
-The layout still runs on the main thread, for about a third of a second at 300
-notes.
+there is no way to dismiss a mention. Only the first mention in a note that
+can be linked is offered at a time. In the graph, dots cannot be moved by
+hand, links have no arrowheads, and above 300 notes only the filters show the
+rest. The dots are not tab stops, and two fingers on a touch screen do not
+zoom: the buttons do. The layout still runs on the main thread, for about a
+third of a second at 300 notes.

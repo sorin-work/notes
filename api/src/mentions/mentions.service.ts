@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import type { Note, Prisma } from '@prisma/client';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
-import { findMention, isMentionable, linkMention, normalizeTitle } from '../links/wikilinks';
+import { parseable } from '../links/prose';
+import { isMentionable, linkableMention, mayMention, normalizeTitle } from '../links/wikilinks';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
 import { writeNoteText } from '../notes/note-text';
 import { DEFAULT_TITLE } from '../notes/notes.service';
@@ -30,6 +31,16 @@ export interface MentionPage extends Page<Mention> {
 
 /** The newest notes the index offers are read and checked, and no more than this. */
 export const MAX_CANDIDATES = 200;
+/**
+ * How much text one request parses in all, in characters, and for how long.
+ * The parser takes about a second for 100,000 characters of some notes, and
+ * nothing else runs on the server meanwhile. A note that does not write the
+ * title is passed over without being parsed, and does not count. When
+ * either budget is spent the rest is left out and the list says it is
+ * capped.
+ */
+export const MAX_PARSED_LENGTH = 1_000_000;
+export const MAX_PARSE_MS = 1_000;
 /** How many of them are held in memory at a time. A note can be a megabyte. */
 const BATCH = 25;
 /** How much of the line is shown on each side of a mention. */
@@ -53,7 +64,8 @@ export class MentionsService {
    * the candidates, newest first. Each one is then read, because the index
    * cannot tell a mention from one inside code or a link, and matches word
    * stems where a title has to match as written. For each note the first
-   * mention is given: the place "Link" would put the brackets.
+   * mention that "Link" would accept is given, found with the same function
+   * "Link" uses, so every mention listed can be linked.
    */
   async list(userId: string, noteId: string, page: PaginationQuery): Promise<MentionPage> {
     const target = await this.findNote(userId, noteId);
@@ -62,9 +74,12 @@ export class MentionsService {
     }
 
     const candidates = await this.candidateIds(userId, target, MAX_CANDIDATES + 1);
-    const capped = candidates.length > MAX_CANDIDATES;
+    let capped = candidates.length > MAX_CANDIDATES;
+    let budget = MAX_PARSED_LENGTH;
+    const deadline = Date.now() + MAX_PARSE_MS;
+    let spent = false;
     const mentions: Mention[] = [];
-    for (let from = 0; from < Math.min(candidates.length, MAX_CANDIDATES); from += BATCH) {
+    for (let from = 0; from < Math.min(candidates.length, MAX_CANDIDATES) && !spent; from += BATCH) {
       const ids = candidates.slice(from, Math.min(from + BATCH, MAX_CANDIDATES));
       const notes = await this.prisma.note.findMany({
         where: { id: { in: ids }, userId, deletedAt: null },
@@ -74,8 +89,15 @@ export class MentionsService {
       const byId = new Map(notes.map((note) => [note.id, note]));
       for (const id of ids) {
         const note = byId.get(id);
-        const mention = note && findMention(note.content, target.title);
-        if (note && mention) {
+        // A quick look at the raw text first: most candidates of the index only share the word stems.
+        if (!note || !mayMention(note.content, target.title)) continue;
+        budget -= note.content.length;
+        if (budget < 0 || Date.now() > deadline) {
+          capped = spent = true;
+          break;
+        }
+        const mention = linkableMention(note.content, target.title);
+        if (mention && mention.linked.length <= MAX_CONTENT_LENGTH) {
           mentions.push({
             id: note.id,
             title: note.title,
@@ -133,7 +155,10 @@ export class MentionsService {
       if (source.revision !== at.version) {
         throw changed();
       }
-      const linked = linkMention(source.content, target.title, at);
+      if (!parseable(source.content)) {
+        throw new BadRequestException('That note is too long or too deeply nested to look for mentions in');
+      }
+      const linked = linkableMention(source.content, target.title, at)?.linked ?? null;
       if (linked === null) {
         throw new ConflictException(`That note does not mention "${target.title}" there`);
       }
@@ -215,12 +240,13 @@ export function lineAround(
   start: number,
   end: number,
 ): { before: string; match: string; after: string } {
-  const lineStart = content.lastIndexOf('\n', start - 1) + 1;
-  const lineEnd = content.indexOf('\n', end);
+  // A lone \r ends a line as well.
+  const lineStart = Math.max(content.lastIndexOf('\n', start - 1), content.lastIndexOf('\r', start - 1)) + 1;
+  const lineEnd = content.slice(end).search(/[\r\n]/);
   let before = plain(content.slice(lineStart, start))
     .replace(/^\s*(?:[-+]|\d+[.)])?\s*(?:\[[ xX]\]\s*)?/, '')
     .trimStart();
-  let after = plain(content.slice(end, lineEnd === -1 ? content.length : lineEnd)).trimEnd();
+  let after = plain(content.slice(end, lineEnd === -1 ? content.length : end + lineEnd)).trimEnd();
   if (before.length > SNIPPET_LENGTH) before = `…${before.slice(-SNIPPET_LENGTH).replace(/^\S*\s/, '')}`;
   if (after.length > SNIPPET_LENGTH) after = `${after.slice(0, SNIPPET_LENGTH).replace(/\s\S*$/, '')}…`;
   return { before, match: content.slice(start, end), after };

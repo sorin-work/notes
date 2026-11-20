@@ -15,10 +15,11 @@ const PAGE_SIZE = 10;
 export function UnlinkedMentions({ noteId }: { noteId: string }) {
   const location = useLocation();
   const queryClient = useQueryClient();
-  // The key sits under 'backlinks': the editor refreshes those after every
-  // save, and a new title or a new link changes this list just the same.
+  // The key is not under 'backlinks', which every save refreshes: reading
+  // the mentions costs the server more. The editor refreshes it when the
+  // title changes, and "Link" does.
   const found = useInfiniteQuery({
-    queryKey: ['backlinks', noteId, 'mentions'],
+    queryKey: ['mentions', noteId],
     queryFn: ({ pageParam }) => mentions(noteId, pageParam, PAGE_SIZE),
     initialPageParam: 1,
     getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
@@ -34,7 +35,7 @@ export function UnlinkedMentions({ noteId }: { noteId: string }) {
       // to that.
       queryClient.removeQueries({ queryKey: ['note', mention.id] });
       // This note has a backlink more and a mention less. The other one has a new link and its old text in the history.
-      for (const key of [['backlinks'], ['notes'], ['links', mention.id], ['versions', mention.id]]) {
+      for (const key of [['mentions'], ['backlinks'], ['notes'], ['links', mention.id], ['versions', mention.id]]) {
         void queryClient.invalidateQueries({ queryKey: key });
       }
     },

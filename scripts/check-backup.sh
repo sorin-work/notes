@@ -3,13 +3,17 @@
 # image, against a database nothing else is writing to. CI points it at the
 # end-to-end test database once the tests are done.
 #
-#   1. check-backup-loop.sh: the daily loop, the pruning and a restore that
-#      fails half way, with stand-ins for the database tools.
+#   1. check-backup-loop.sh: the daily loop, the pruning and the order of
+#      the steps in a restore, with stand-ins for the database tools.
 #   2. Three real dumps with BACKUP_KEEP=2 leave the two newest, and leave
 #      files that are not dumps alone.
 #   3. The newest dump restores into a scratch database.
 #   4. Every table has the same number of rows in both, and the application
 #      tables are not all empty.
+#   5. The same dump restores over that database once it holds something
+#      else, and nothing of the swap is left on the server.
+#   6. A damaged dump, and a database with a client connected to it, leave
+#      the database as it was.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -18,8 +22,10 @@ work=$(mktemp -d)
 
 cleanup() {
   rm -rf "$work"
-  dropdb --if-exists "$scratch" >/dev/null 2>&1 || true
-  dropdb --if-exists "${scratch}_restoring" >/dev/null 2>&1 || true
+  [ -z "${holder:-}" ] || kill "$holder" 2>/dev/null || true
+  for name in "$scratch" "${scratch}_restoring" "${scratch}_replaced"; do
+    dropdb --if-exists --force "$name" >/dev/null 2>&1 || true
+  done
 }
 trap cleanup EXIT
 
@@ -76,5 +82,50 @@ diff "$work/source.txt" "$work/restored.txt" || fail "row counts differ between 
 # whether there was anything to lose.
 total=$(awk '$1 !~ /\._prisma_migrations$/ { rows += $2 } END { print rows + 0 }' "$work/source.txt")
 [ "$total" -gt 0 ] || fail "the application tables of $PGDATABASE are empty, so this proves nothing"
+
+sql() {
+  psql -AtXq -v ON_ERROR_STOP=1 -d "$1" -c "$2"
+}
+
+# Databases the swap would leave behind if it went wrong.
+leftovers() {
+  sql postgres "select datname from pg_database where datname in ('${scratch}_restoring', '${scratch}_replaced')"
+}
+
+echo "== restore over a database that holds something else"
+sql "$scratch" "create table left_from_before (id int); insert into left_from_before values (1), (2), (3); delete from note_tags; delete from note_links"
+PGDATABASE="$scratch" sh "$here/backup.sh" restore "$newest"
+row_counts "$scratch" >"$work/replaced.txt"
+diff "$work/source.txt" "$work/replaced.txt" || fail "after restoring over an existing database its tables differ from $PGDATABASE (-)"
+[ -z "$(leftovers)" ] || fail "left on the server after the swap: $(leftovers)"
+
+echo "== a damaged dump leaves the database alone"
+sql "$scratch" "create table marker (id int); insert into marker values (7)"
+head -c 2000 "$BACKUP_DIR/$newest" >"$work/damaged.dump"
+if PGDATABASE="$scratch" sh "$here/backup.sh" restore "$work/damaged.dump" >"$work/damaged.log" 2>&1; then
+  fail "a damaged dump was restored"
+fi
+grep -q "$scratch was left as it was" "$work/damaged.log" || fail "the message does not say the database is untouched: $(cat "$work/damaged.log")"
+[ "$(sql "$scratch" "select id from marker")" = 7 ] || fail "the database was changed by a restore that failed"
+[ -z "$(leftovers)" ] || fail "left on the server after a failed restore: $(leftovers)"
+
+echo "== a database somebody is connected to is not replaced, and the message names them"
+PGAPPNAME=someone-else psql -qX -d "$scratch" -c "select pg_sleep(20)" >/dev/null 2>&1 &
+holder=$!
+tries=0
+until [ "$(sql postgres "select count(*) from pg_stat_activity where datname = '$scratch' and application_name = 'someone-else'")" = 1 ]; do
+  tries=$((tries + 1))
+  [ "$tries" -lt 50 ] || fail "the second client did not connect"
+  sleep 0.1
+done
+if PGDATABASE="$scratch" sh "$here/backup.sh" restore "$newest" >"$work/busy.log" 2>&1; then
+  fail "the database was replaced under a connected client"
+fi
+grep -q "Connected now: someone-else (1)\." "$work/busy.log" || fail "the message does not name the client: $(cat "$work/busy.log")"
+[ "$(sql "$scratch" "select id from marker")" = 7 ] || fail "the database was changed although a client was connected"
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+holder=''
+[ -z "$(leftovers)" ] || fail "left on the server after a refused swap: $(leftovers)"
 
 echo "OK: $(wc -l <"$work/source.txt") tables came back from $newest, $total rows in the application tables"

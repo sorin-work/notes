@@ -6,7 +6,17 @@ const USER = 'user-1';
 const now = new Date('2026-02-01T10:00:00Z');
 
 function notebook(id: string, overrides: Partial<{ name: string; parentId: string | null }> = {}) {
-  return { id, userId: USER, name: id, parentId: null, createdAt: now, updatedAt: now, ...overrides };
+  return {
+    id,
+    userId: USER,
+    name: id,
+    parentId: null,
+    createdAt: now,
+    updatedAt: now,
+    share: null as { expiresAt: Date | null } | null,
+    parent: null as { id: string; name: string; share: { expiresAt: Date | null } | null } | null,
+    ...overrides,
+  };
 }
 
 /** What the service reads to know the shape of the tree: every notebook with its parent. */
@@ -28,14 +38,71 @@ describe('NotebooksService', () => {
       prisma.notebook.findMany.mockResolvedValue([{ ...notebook('work'), _count: { notes: 3 } }]);
       const result = await service.list(USER);
       expect(result).toEqual([
-        { id: 'work', name: 'work', parentId: null, createdAt: now, updatedAt: now, noteCount: 3 },
+        {
+          id: 'work',
+          name: 'work',
+          parentId: null,
+          createdAt: now,
+          updatedAt: now,
+          noteCount: 3,
+          shared: false,
+          sharedThrough: null,
+        },
       ]);
       expect(prisma.notebook.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: USER },
-          include: { _count: { select: { notes: { where: { deletedAt: null } } } } },
+          include: expect.objectContaining({ _count: { select: { notes: { where: { deletedAt: null } } } } }),
         }),
       );
+    });
+
+    it('says which shared notebook makes a notebook public: its own link, or that of the one it is inside', async () => {
+      const shared = { expiresAt: null };
+      const runOut = { expiresAt: new Date(Date.now() - 1000) };
+      prisma.notebook.findMany.mockResolvedValue([
+        { ...notebook('recipes', { name: 'Recipes' }), share: shared, _count: { notes: 1 } },
+        {
+          ...notebook('bread', { name: 'Bread', parentId: 'recipes' }),
+          parent: { id: 'recipes', name: 'Recipes', share: shared },
+          _count: { notes: 1 },
+        },
+        { ...notebook('old', { name: 'Old' }), share: runOut, _count: { notes: 0 } },
+        { ...notebook('work', { name: 'Work' }), _count: { notes: 0 } },
+      ]);
+      const result = await service.list(USER);
+      expect(result.map(({ id, shared, sharedThrough }) => [id, shared, sharedThrough])).toEqual([
+        ['recipes', true, { id: 'recipes', name: 'Recipes' }],
+        ['bread', false, { id: 'recipes', name: 'Recipes' }],
+        // A link that has run out lets nobody in.
+        ['old', true, null],
+        ['work', false, null],
+      ]);
+    });
+
+    it('finds the shared notebook three levels up, and the nearest one when there are two', async () => {
+      const shared = { expiresAt: null };
+      const recipes = { id: 'recipes', name: 'Recipes', share: shared, parent: null };
+      const bread = { id: 'bread', name: 'Bread', share: null, parent: recipes };
+      const rye = { id: 'rye', name: 'Rye', share: shared, parent: bread };
+      prisma.notebook.findMany.mockResolvedValue([
+        { ...notebook('old-rye', { name: 'Old rye', parentId: 'rye' }), parent: rye, _count: { notes: 0 } },
+        { ...notebook('sour', { name: 'Sour', parentId: 'bread' }), parent: bread, _count: { notes: 0 } },
+        {
+          ...notebook('starter', { name: 'Starter', parentId: 'sour' }),
+          parent: { id: 'sour', name: 'Sour', share: null, parent: bread },
+          _count: { notes: 0 },
+        },
+      ]);
+      const result = await service.list(USER);
+      expect(result.map(({ id, sharedThrough }) => [id, sharedThrough?.id ?? null])).toEqual([
+        ['old-rye', 'rye'],
+        ['sour', 'recipes'],
+        ['starter', 'recipes'],
+      ]);
+      // The parents are read as far up as notebooks nest.
+      const include = prisma.notebook.findMany.mock.calls[0][0].include;
+      expect(include.parent.select.parent.select.parent.select).toMatchObject({ id: true, share: expect.anything() });
     });
   });
 
@@ -43,9 +110,11 @@ describe('NotebooksService', () => {
     it('creates a top-level notebook', async () => {
       prisma.notebook.findMany.mockResolvedValue([]);
       prisma.notebook.findFirst.mockResolvedValue(null);
-      prisma.notebook.create.mockResolvedValue(notebook('new', { name: 'Ideas' }));
+      prisma.notebook.create.mockResolvedValue({ ...notebook('new', { name: 'Ideas' }), _count: { notes: 0 } });
       const result = await service.create(USER, { name: 'Ideas' });
-      expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, name: 'Ideas', parentId: null } });
+      expect(prisma.notebook.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { userId: USER, name: 'Ideas', parentId: null } }),
+      );
       expect(result).toMatchObject({ name: 'Ideas', noteCount: 0 });
       expect(result).not.toHaveProperty('userId');
     });
@@ -53,9 +122,11 @@ describe('NotebooksService', () => {
     it('nests a notebook inside another, down to the fourth level', async () => {
       prisma.notebook.findMany.mockResolvedValue(shape(['a', null], ['b', 'a'], ['c', 'b']));
       prisma.notebook.findFirst.mockResolvedValue(null);
-      prisma.notebook.create.mockResolvedValue(notebook('d', { parentId: 'c' }));
+      prisma.notebook.create.mockResolvedValue({ ...notebook('d', { parentId: 'c' }), _count: { notes: 0 } });
       await service.create(USER, { name: 'Deep', parentId: 'c' });
-      expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, name: 'Deep', parentId: 'c' } });
+      expect(prisma.notebook.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { userId: USER, name: 'Deep', parentId: 'c' } }),
+      );
     });
 
     it('does not nest deeper than that', async () => {
@@ -89,7 +160,7 @@ describe('NotebooksService', () => {
     it('checks and creates inside one transaction, after taking the lock on the tree', async () => {
       prisma.notebook.findMany.mockResolvedValue([]);
       prisma.notebook.findFirst.mockResolvedValue(null);
-      prisma.notebook.create.mockResolvedValue(notebook('new'));
+      prisma.notebook.create.mockResolvedValue({ ...notebook('new'), _count: { notes: 0 } });
       await service.create(USER, { name: 'new' });
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);

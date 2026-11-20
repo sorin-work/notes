@@ -11,15 +11,26 @@ import { dropStashes } from '../lib/draftStash';
 import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { isInside, MAX_NOTEBOOK_DEPTH, type NotebookNode, notebookTree, totalNotes } from '../lib/notebooks';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
-import { PencilIcon, TrashIcon } from './Icons';
+import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
 import { TreeToggle } from './TreeToggle';
+import { ShareDialog } from './ShareDialog';
 
 type NotebookAction =
   | { kind: 'create'; parentId: string | null }
   | { kind: 'edit'; notebook: Notebook }
+  | { kind: 'share'; notebook: Notebook }
   | { kind: 'delete'; notebook: Notebook };
+
+/** Why anyone with a link can read the notes of a notebook, or null when nobody can. */
+function publicBecause(notebook: Notebook): string | null {
+  const through = notebook.sharedThrough;
+  if (!through) return null;
+  return through.id === notebook.id
+    ? 'Shared with a link: anyone who has it can read the notes in here'
+    : `Public through the shared notebook “${through.name}”`;
+}
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
@@ -95,7 +106,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           ) : (
             <span className="tree-toggle" aria-hidden="true" />
           )}
-          {filterLink(`?notebook=${node.id}`, activeNotebook === node.id, node.name, totalNotes(node))}
+          {filterLink(
+            `?notebook=${node.id}`,
+            activeNotebook === node.id,
+            node.name,
+            totalNotes(node),
+            '',
+            publicBecause(node),
+          )}
           <NotebookMenu
             notebook={node}
             canNest={node.depth < MAX_NOTEBOOK_DEPTH}
@@ -107,7 +125,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     );
   };
 
-  const filterLink = (search: string, active: boolean, label: string, count?: number, className = '') => (
+  const filterLink = (
+    search: string,
+    active: boolean,
+    label: string,
+    count?: number,
+    className = '',
+    /** Why the notebook is public, when it is. */
+    publicTitle: string | null = null,
+  ) => (
     <Link
       to={`/notes${search}`}
       className={`nav-item ${className} ${active ? 'active' : ''}`.trim()}
@@ -115,6 +141,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       onClick={onNavigate}
     >
       <span className="nav-label">{label}</span>
+      {publicTitle && (
+        <span className="public-mark" title={publicTitle}>
+          public
+        </span>
+      )}
       {count !== undefined && count > 0 && <span className="count">{count}</span>}
     </Link>
   );
@@ -245,6 +276,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           }}
         />
       )}
+      {action?.kind === 'share' && <ShareDialog notebookId={action.notebook.id} onClose={() => setAction(null)} />}
       {action?.kind === 'delete' && (
         <ConfirmDialog
           title={`Delete “${action.notebook.name}”?`}
@@ -274,7 +306,7 @@ function NotebookMenu({
 }: {
   notebook: Notebook;
   canNest?: boolean;
-  onAction(kind: 'create' | 'edit' | 'delete'): void;
+  onAction(kind: 'create' | 'edit' | 'share' | 'delete'): void;
 }) {
   return (
     <span className="nav-actions">
@@ -297,6 +329,15 @@ function NotebookMenu({
         onClick={() => onAction('edit')}
       >
         <PencilIcon />
+      </button>
+      <button
+        type="button"
+        className="icon-button small"
+        aria-label={`Share ${notebook.name}`}
+        title="Share with a link"
+        onClick={() => onAction('share')}
+      >
+        <LinkIcon />
       </button>
       <button
         type="button"

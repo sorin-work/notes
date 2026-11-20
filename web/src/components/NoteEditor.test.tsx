@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { Link, Route, Routes, useParams } from 'react-router';
@@ -7,7 +7,7 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
-import { note, user } from '../test/fixtures';
+import { note, notebook, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
 import { Notices } from './Notices';
@@ -46,6 +46,53 @@ describe('NoteEditor', () => {
     expect(screen.getByRole('heading', { name: 'Fresh heading' })).toBeInTheDocument();
   });
 
+  it('asks before a move into a shared notebook, and says afterwards that the note is public', async () => {
+    const recipes = { id: 'nb-recipes', name: 'Recipes' };
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notebooks': {
+          body: [
+            notebook({ id: 'nb-recipes', name: 'Recipes', shared: true, sharedThrough: recipes }),
+            notebook({ id: 'nb-work', name: 'Work' }),
+          ],
+        },
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+          const { notebookId } = body as { notebookId: string | null };
+          return { body: { ...note(), notebookId, sharedThrough: notebookId === 'nb-recipes' ? recipes : null } };
+        },
+      }),
+    );
+    renderEditor();
+    // The notebook of a note is picked from a list that opens under its button.
+    const pick = async (name: string) => {
+      await userEvent.click(await screen.findByRole('button', { name: /^Notebook:/ }));
+      await userEvent.click(
+        within(screen.getByRole('group', { name: 'Notebook, pick one' })).getByRole('button', { name }),
+      );
+    };
+    const patches = () => calls.filter((call) => call.method === 'PATCH');
+
+    // A notebook nobody can read: no question.
+    await pick('Work');
+    await waitFor(() => expect(patches()).toHaveLength(1));
+
+    await pick('Recipes');
+    expect(await screen.findByRole('dialog', { name: 'Make this note public?' })).toHaveTextContent(
+      'can be read by anyone who has that link',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(patches()).toHaveLength(1);
+    expect(screen.queryByText(/can read this note/)).not.toBeInTheDocument();
+
+    await pick('Recipes');
+    await userEvent.click(await screen.findByRole('button', { name: 'Move it' }));
+    await waitFor(() => expect(patches()).toHaveLength(2));
+    expect(patches()[1]?.body).toEqual({ notebookId: 'nb-recipes' });
+    expect(
+      await screen.findByText('Anyone with the link to the shared notebook “Recipes” can read this note.'),
+    ).toBeInTheDocument();
+  });
+
   it('autosaves edits to the title and content', async () => {
     const calls = mockFetch(baseRoutes());
     renderEditor();
@@ -61,6 +108,28 @@ describe('NoteEditor', () => {
     // A save names the revision the text was based on.
     expect(patches[0]?.body).toEqual({ title: 'Atlas v2', content: 'Links to [[Atlas data model]].', revision: 3 });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
+  });
+
+  it('asks for the unlinked mentions again after a save only when the title changed', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1/mentions': { body: { items: [], total: 0, page: 1, pageSize: 10, capped: false } },
+      }),
+    );
+    renderEditor();
+    const count = (path: string) => calls.filter((call) => call.method === 'GET' && call.url.includes(path)).length;
+    const saves = () => calls.filter((call) => call.method === 'PATCH').length;
+    await waitFor(() => expect(count('/mentions')).toBe(1));
+
+    await userEvent.type(screen.getByLabelText('Note content'), ' More.');
+    await waitFor(() => expect(saves()).toBe(1), { timeout: 2000 });
+    // The backlinks are asked for again after the save, the mentions are not.
+    await waitFor(() => expect(count('/backlinks')).toBe(2));
+    expect(count('/mentions')).toBe(1);
+
+    await userEvent.type(screen.getByLabelText('Title'), ' v2');
+    await waitFor(() => expect(saves()).toBe(2), { timeout: 2000 });
+    await waitFor(() => expect(count('/mentions')).toBe(2));
   });
 
   it('pins the note straight away', async () => {

@@ -3,6 +3,7 @@ import { FormEvent, useId, useState } from 'react';
 import { createNotebook, updateNotebook } from '../api/notebooks';
 import type { Notebook } from '../api/types';
 import { MAX_NOTEBOOK_DEPTH, possibleParents } from '../lib/notebooks';
+import { newlyPublicThrough } from '../lib/sharing';
 import { Modal } from './Modal';
 import { INDENT } from './NotebookSelect';
 import { ErrorMessage } from './States';
@@ -24,6 +25,10 @@ export function NotebookDialog({ notebooks, notebook, parentId = null, onClose, 
   // Not itself, nothing inside it, and nowhere that would take it below the last level. The API checks the same.
   const parents = possibleParents(notebooks, notebook ?? null);
   const hintId = useId();
+  // Moving a notebook into a shared one makes its notes public, so that takes a second click.
+  const [confirming, setConfirming] = useState(false);
+  const madePublicBy =
+    notebook && parent !== notebook.parentId ? newlyPublicThrough(notebooks, parent, notebook.sharedThrough) : null;
 
   const save = useMutation({
     mutationFn: () =>
@@ -37,7 +42,12 @@ export function NotebookDialog({ notebooks, notebook, parentId = null, onClose, 
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (name.trim()) save.mutate();
+    if (!name.trim()) return;
+    if (madePublicBy && !confirming) {
+      setConfirming(true);
+      return;
+    }
+    save.mutate();
   };
 
   return (
@@ -53,7 +63,10 @@ export function NotebookDialog({ notebooks, notebook, parentId = null, onClose, 
             <select
               value={parent ?? ''}
               aria-describedby={hintId}
-              onChange={(event) => setParent(event.target.value || null)}
+              onChange={(event) => {
+                setParent(event.target.value || null);
+                setConfirming(false);
+              }}
             >
               <option value="">Top level</option>
               {parents.map((item) => (
@@ -69,13 +82,19 @@ export function NotebookDialog({ notebooks, notebook, parentId = null, onClose, 
             Notebooks nest {MAX_NOTEBOOK_DEPTH} levels deep. What is inside a notebook moves with it.
           </small>
         </div>
+        {confirming && madePublicBy && (
+          <p className="field-error" role="alert">
+            “{madePublicBy.name}” is shared with a link. Moved there, the notes in “{notebook?.name}” can be read by
+            anyone who has that link.
+          </p>
+        )}
         {save.error && <ErrorMessage error={save.error} />}
         <div className="form-actions">
           <button type="button" className="button" onClick={onClose}>
             Cancel
           </button>
           <button type="submit" className="button button-primary" disabled={save.isPending || !name.trim()}>
-            {notebook ? 'Save' : 'Create'}
+            {confirming ? 'Move it and make it public' : notebook ? 'Save' : 'Create'}
           </button>
         </div>
       </form>

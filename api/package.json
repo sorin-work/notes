@@ -24,7 +24,6 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@lezer/markdown": "^1.8.1",
     "@nestjs/common": "^11.2.8",
     "@nestjs/core": "^11.2.8",
     "@nestjs/jwt": "^11.0.2",
@@ -36,6 +35,9 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "jszip": "^3.10.2",
+    "mdast-util-from-markdown": "^2.1.0",
+    "mdast-util-gfm": "^3.1.0",
+    "micromark-extension-gfm": "^3.0.0",
     "nodemailer": "^10.6.1",
     "prisma": "^6.19.3",
     "reflect-metadata": "^0.2.2",
@@ -47,6 +49,7 @@
     "@nestjs/testing": "^11.2.8",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
+    "@types/mdast": "^4.0.4",
     "@types/multer": "^2.3.0",
     "@types/node": "^22.20.5",
     "@types/nodemailer": "^8.0.2",
@@ -69,7 +72,16 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.ts$": "ts-jest"
+      "^.+\\.ts$": "ts-jest",
+      "^.+\\.js$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true
+          },
+          "isolatedModules": true
+        }
+      ]
     },
     "setupFiles": [
       "reflect-metadata"
@@ -81,6 +93,9 @@
       "!seed/demo-data.ts"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(mdast-util-[^/]+|micromark|micromark-[^/]+|unist-util-[^/]+|decode-named-character-reference|character-entities|devlop|ccount|escape-string-regexp|longest-streak|markdown-table|zwitch|dequal)/)"
+    ]
   }
 }
