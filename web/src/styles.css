@@ -313,6 +313,11 @@ mark {
   display: none;
 }
 
+/* The shade behind the menu on narrow screens. Without this it would be a third column here. */
+.scrim {
+  display: none;
+}
+
 .main {
   min-width: 0;
   height: 100%;
@@ -1519,6 +1524,7 @@ ul.error-box {
   }
 
   .scrim {
+    display: block;
     position: fixed;
     inset: 0;
     background: rgb(0 0 0 / 30%);
