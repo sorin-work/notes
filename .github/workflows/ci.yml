@@ -49,6 +49,16 @@ jobs:
       - run: npm run test:e2e
       - run: npm run build
 
+      # Dumps the database the end-to-end tests filled, restores the dump
+      # into a scratch database and compares the row counts. Uses the image
+      # the backup service runs in, since pg_dump has to match the server.
+      - name: Check that a backup restores
+        run: >-
+          docker run --rm --network host
+          -e PGHOST=localhost -e PGUSER=notes -e PGPASSWORD=notes -e PGDATABASE=notes_test
+          -v "${{ github.workspace }}/scripts:/scripts:ro"
+          postgres:17-alpine sh /scripts/check-backup.sh
+
   web:
     runs-on: ubuntu-latest
     defaults:
