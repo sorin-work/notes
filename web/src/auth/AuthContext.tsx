@@ -12,6 +12,10 @@ interface AuthContextValue {
   login(email: string, password: string): Promise<void>;
   register(name: string, email: string, password: string): Promise<void>;
   logout(): void;
+  /** Shows a changed name or email without asking the API again. */
+  updateUser(user: User): void;
+  /** Swaps in the token the API hands out when it has ended the old one. */
+  renewSession(result: AuthResult): void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -64,6 +68,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login: async (email, password) => signedIn(await authApi.login(email, password)),
       register: async (name, email, password) => signedIn(await authApi.register(name, email, password)),
       logout,
+      updateUser: setUser,
+      renewSession: signedIn,
     }),
     [status, user, signedIn, logout],
   );
