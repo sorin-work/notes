@@ -1,8 +1,10 @@
 import { Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { NoteView } from '../notes/note-view';
 import { VersionsService, VersionSummary, VersionView } from './versions.service';
 
+@AllowApiToken()
 @Controller('notes/:noteId/versions')
 export class VersionsController {
   constructor(private readonly versions: VersionsService) {}

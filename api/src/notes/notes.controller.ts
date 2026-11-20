@@ -13,6 +13,7 @@ import {
   Query,
   StreamableFile,
 } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
@@ -21,6 +22,7 @@ import { CreateNoteDto, ListNotesQuery, RenameLinksDto, ResolveQuery, TitleQuery
 import type { NoteSummary, NoteView } from './note-view';
 import { NotesService, RenamedLinks } from './notes.service';
 
+@AllowApiToken()
 @Controller('notes')
 export class NotesController {
   constructor(

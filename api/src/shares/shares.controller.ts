@@ -1,8 +1,10 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
 import { SharedNote, SharesService, ShareView } from './shares.service';
 
+@AllowApiToken()
 @Controller('notes/:noteId/share')
 export class SharesController {
   constructor(private readonly shares: SharesService) {}
