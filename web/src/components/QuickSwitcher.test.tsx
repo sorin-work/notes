@@ -62,24 +62,39 @@ describe('QuickSwitcher', () => {
     expect(input).toHaveAttribute('aria-activedescendant', groceries.id);
 
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByLabelText('Location')).toHaveTextContent('/notes/n3?notebook=w');
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent('/notes/n3?notebook=w'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('opens the first match for the typed text when Enter comes before the answer', async () => {
     const matches = [recent[2], { id: 'n4', title: 'Group plan' }];
+    // The answer to the typed text is held back until the test lets it go,
+    // so Enter comes before it however fast or slow the machine is.
+    let answer = () => {};
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
     const calls = mockFetch({
-      'GET /api/notes/titles': ({ url }) => ({ body: url.includes('q=gro') ? matches : recent }),
+      'GET /api/notes/titles': async ({ url }) => {
+        if (!url.includes('q=gro')) return { body: recent };
+        await held;
+        return { body: matches };
+      },
     });
     const onClose = renderSwitcher('/search?q=atlas');
 
     // The arrow key moves through the older list, which is not what Enter is meant for.
     await screen.findByRole('option', { name: 'Project Atlas' });
     await userEvent.type(screen.getByRole('combobox'), 'gro{ArrowDown}{Enter}');
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/notes/titles?q=gro&limit=10')).toBe(true));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/search\?q=atlas$/);
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes\/n3$/);
-    expect(calls.some((call) => call.url === '/api/notes/titles?q=gro&limit=10')).toBe(true);
+    answer();
+    // The dialog is told to close in the same breath as the router is told to
+    // move, and the router shows the new address a moment later. Wait for the address.
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes\/n3$/));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('does not act on a list kept from last time until it has been refreshed', async () => {
