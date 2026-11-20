@@ -82,6 +82,7 @@ model Notebook {
   parent   Notebook?  @relation("NotebookChildren", fields: [parentId], references: [id], onDelete: Cascade)
   children Notebook[] @relation("NotebookChildren")
   notes    Note[]
+  share    ShareLink?
 
   @@index([userId])
   @@index([parentId])
@@ -189,14 +190,23 @@ model NoteVersion {
   @@map("note_versions")
 }
 
+/// A public, read-only link to one note or to one notebook with everything
+/// in it. Exactly one of noteId and notebookId is set, which a check
+/// constraint in the migration enforces: Prisma cannot express it here.
 model ShareLink {
-  id        String   @id @default(uuid()) @db.Uuid
-  noteId    String   @unique @map("note_id") @db.Uuid
-  token     String   @unique
-  viewCount Int      @default(0) @map("view_count")
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String    @id @default(uuid()) @db.Uuid
+  noteId       String?   @unique @map("note_id") @db.Uuid
+  notebookId   String?   @unique @map("notebook_id") @db.Uuid
+  token        String    @unique
+  viewCount    Int       @default(0) @map("view_count")
+  /// From this moment on the link answers like one that does not exist.
+  expiresAt    DateTime? @map("expires_at")
+  /// Set when readers have to give a password. Hashed like account passwords.
+  passwordHash String?   @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
-  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  note     Note?     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  notebook Notebook? @relation(fields: [notebookId], references: [id], onDelete: Cascade)
 
   @@map("share_links")
 }
