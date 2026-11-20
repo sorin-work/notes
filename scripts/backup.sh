@@ -12,7 +12,9 @@
 #
 # The time in the name is the only time that counts, for the age of a dump
 # and for the order they are pruned in. Modification times are not looked
-# at: on a network share they come from another machine's clock.
+# at: on a network share they come from another machine's clock. Dumps
+# dated in the future are never removed and do not count towards
+# $BACKUP_KEEP. Every run names them in a warning.
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
@@ -70,14 +72,51 @@ dump_time() {
   date -u -d "$(echo "$1" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null || true
 }
 
-# Removes the oldest dumps until $keep are left. The dump that was just
-# written ($1) is never one of them: after the clock was set back it sorts
-# below older dumps, and it is still the one worth keeping.
+# Dumps whose name says they were made after the moment $1 (seconds since
+# 1970). Only a clock that was wrong, then or now, explains those. A name
+# that holds no real date is listed with them: its age cannot be told.
+future_dumps() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -z "$made" ] || [ "$made" -gt "$1" ]; then
+      echo "$candidate"
+    fi
+  done
+}
+
+# The other dumps, newest first.
+present_dumps() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -n "$made" ] && [ "$made" -le "$1" ]; then
+      echo "$candidate"
+    fi
+  done
+}
+
+# Said on every run for as long as such files are there, since nothing else
+# will ever remove them.
+warn_about_future_dumps() {
+  ahead=$(future_dumps "$1" | tr '\n' ' ')
+  if [ -n "$ahead" ]; then
+    log "warning: dated in the future, so never removed and not counted towards the $keep to keep: $ahead"
+    log "warning: check the clock, and delete them by hand if they are not wanted"
+  fi
+}
+
+# Removes the oldest dumps until $keep are left. Two kinds are never removed:
+#
+#   - Dumps dated in the future. They sort first, so counting them would let
+#     a few stale files use up the quota while every new dump pushes out
+#     yesterday's. They do not count towards $keep either.
+#   - The dump that was just written ($1), whatever the clock makes of it.
 prune() {
-  dumps | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
+  now=$(date +%s)
+  present_dumps "$now" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
     rm -f "$dir/$old"
     log "removed $old"
   done
+  warn_about_future_dumps "$now"
 }
 
 # pg_dump writes to a hidden .partial file that is renamed when it is
@@ -145,6 +184,7 @@ run() {
   log "dumping $PGDATABASE to $dir every ${interval}s, keeping the newest $keep"
 
   now=$(date +%s)
+  warn_about_future_dumps "$now"
   last=$(newest_dump_time "$now")
   if [ -z "$last" ] && [ -n "$(dumps | head -n 1)" ]; then
     log "every dump in $dir is dated in the future, counting the newest as made now"
