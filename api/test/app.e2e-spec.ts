@@ -699,9 +699,11 @@ describe('api tokens', () => {
       'PasswordResetController.status',
       'PublicSharesController.unlock',
       'PublicSharesController.view',
+      'PublicSharesController.viewNote',
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AuthController',
+      'NotebookSharesController',
       'NotebooksController',
       'NotesController',
       'SearchController',
@@ -1159,7 +1161,7 @@ describe('sharing', () => {
     expect(prompt.body).toEqual({
       statusCode: 403,
       error: 'Forbidden',
-      message: 'This note is protected by a password',
+      message: 'This link is protected by a password',
       passwordRequired: true,
     });
     expect(prompt.headers['cache-control']).toBe('no-store');
@@ -1253,6 +1255,195 @@ describe('sharing', () => {
     expect(await views()).toBe(3);
     await request(server).post(`/api/public/notes/${token}`).send({ password: 'open sesame' }).expect(200);
     expect(await views()).toBe(4);
+  });
+});
+
+describe('sharing a notebook', () => {
+  /** Recipes with Soup in it, Bread inside Recipes with Rye in it, and a note in no notebook. */
+  const kitchen = async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const make = async (path: string, body: object) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+    const recipes = await make('/api/notebooks', { name: 'Recipes' });
+    const bread = await make('/api/notebooks', { name: 'Bread', parentId: recipes.id });
+    const soup = await make('/api/notes', { title: 'Soup', content: 'Leeks.', notebookId: recipes.id });
+    const plan = await make('/api/notes', { title: 'Private plan', content: 'Nobody reads this.' });
+    const rye = await make('/api/notes', {
+      title: 'Rye',
+      content: 'Goes with [[soup]]. See [[Private plan|the plan]], [[Private plan]] and [[Missing note]].',
+      notebookId: bread.id,
+    });
+    const share = await request(server).post(`/api/notebooks/${recipes.id}/share`).set(auth).expect(200);
+    return {
+      server,
+      auth,
+      recipes: recipes.id as string,
+      bread: bread.id as string,
+      soup: soup.id as string,
+      rye: rye.id as string,
+      plan: plan.id as string,
+      sharePath: `/api/notebooks/${recipes.id}/share`,
+      link: `/api/public/notes/${share.body.token as string}`,
+      token: share.body.token as string,
+    };
+  };
+
+  it('shows the notes of the notebook and of the notebooks inside it, and nothing from outside', async () => {
+    const { server, auth, recipes, soup, rye, plan, link, token } = await kitchen();
+
+    const index = await request(server).get(link).expect(200);
+    expect(index.headers['cache-control']).toBe('no-store');
+    expect(index.body).toMatchObject({ kind: 'notebook', name: 'Recipes' });
+    expect(
+      index.body.notes.map((note: { id: string; title: string; notebook: string | null }) => [
+        note.title,
+        note.notebook,
+        note.id,
+      ]),
+    ).toEqual([
+      ['Soup', null, soup],
+      ['Rye', 'Bread', rye],
+    ]);
+    expect(JSON.stringify(index.body)).not.toContain('Private plan');
+
+    const never = await request(server).get(`${link}/6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e`).expect(404);
+    const outside = await request(server).get(`${link}/${plan}`).expect(404);
+    expect(outside.body).toEqual(never.body);
+
+    // A note added to the notebook later is covered without touching the link.
+    const pizza = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Pizza', notebookId: recipes })
+      .expect(201);
+    await request(server).get(`${link}/${pizza.body.id}`).expect(200);
+    expect((await request(server).get(link).expect(200)).body.notes).toHaveLength(3);
+
+    // The same link again, and the owner sees one link per notebook.
+    const again = await request(server).post(`/api/notebooks/${recipes}/share`).set(auth).expect(200);
+    expect(again.body.token).toBe(token);
+  });
+
+  it('follows [[links]] inside the notebook and gives away no title from outside it', async () => {
+    const { server, soup, rye, link, token } = await kitchen();
+
+    const shared = await request(server).get(`${link}/${rye}`).expect(200);
+
+    expect(shared.body).toMatchObject({
+      kind: 'note',
+      title: 'Rye',
+      // The link into the notebook stays. The private note is down to the words the page shows, the
+      // note that does not exist looks no different, and the title behind the alias is gone.
+      content: 'Goes with [[soup]]. See the plan, Private plan and Missing note.',
+      links: { soup: `/s/${token}/${soup}` },
+    });
+    expect(Object.keys(shared.body.links)).toEqual(['soup']);
+    expect(shared.body.content.match(/Private plan/g)).toHaveLength(1);
+  });
+
+  it('stops serving a note the moment it is moved out or put in the trash', async () => {
+    const { server, auth, soup, rye, link } = await kitchen();
+    const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
+    await request(server).get(`${link}/${soup}`).expect(200);
+
+    await request(server).patch(`/api/notes/${soup}`).set(auth).send({ notebookId: null }).expect(200);
+    const moved = await request(server).get(`${link}/${soup}`).expect(404);
+    expect(moved.body).toEqual(never.body);
+    // And the note that linked to it has a plain word where the link was.
+    const rest = await request(server).get(`${link}/${rye}`).expect(200);
+    expect(rest.body).toMatchObject({ content: expect.stringContaining('Goes with soup.'), links: {} });
+
+    await request(server).delete(`/api/notes/${rye}`).set(auth).expect(204);
+    await request(server).get(`${link}/${rye}`).expect(404);
+    expect((await request(server).get(link).expect(200)).body.notes).toEqual([]);
+  });
+
+  it('takes the same password and expiry as a link to a note, and one password serves the whole notebook', async () => {
+    const { server, auth, soup, rye, sharePath, link } = await kitchen();
+    const prisma = app.get(PrismaService);
+
+    await request(server).patch(sharePath).set(auth).send({ password: 'open sesame' }).expect(200);
+    expect((await request(server).get(link).expect(403)).body).toMatchObject({ passwordRequired: true });
+    await request(server).get(`${link}/${soup}`).expect(403);
+    await request(server).post(link).send({ password: 'open says me' }).expect(403);
+
+    const opened = await request(server).post(link).send({ password: 'open sesame' }).expect(200);
+    expect(opened.body).toMatchObject({ kind: 'notebook', name: 'Recipes' });
+    const proof = { 'X-Share-Access': opened.body.access as string };
+
+    // The proof of the password, not the password, goes with every note after that.
+    expect((await request(server).get(`${link}/${soup}`).set(proof).expect(200)).body.title).toBe('Soup');
+    expect((await request(server).get(`${link}/${rye}`).set(proof).expect(200)).body.title).toBe('Rye');
+    await request(server).get(link).set(proof).expect(200);
+    await request(server).get(`${link}/${soup}`).set({ 'X-Share-Access': 'made-up' }).expect(403);
+
+    // A new password ends what the old one opened.
+    await request(server).patch(sharePath).set(auth).send({ password: 'another one' }).expect(200);
+    await request(server).get(`${link}/${soup}`).set(proof).expect(403);
+
+    await prisma.shareLink.updateMany({
+      where: { notebookId: { not: null }, token: link.split('/').pop() },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
+    expect((await request(server).get(link).expect(404)).body).toEqual(never.body);
+    expect((await request(server).get(`${link}/${soup}`).set(proof).expect(404)).body).toEqual(never.body);
+    expect((await request(server).get(sharePath).set(auth).expect(200)).body.share).toMatchObject({ expired: true });
+  });
+
+  it('ends with the notebook, and a link has to be for a note or for a notebook', async () => {
+    const { server, auth, recipes, soup, link, sharePath } = await kitchen();
+    const prisma = app.get(PrismaService);
+    const stranger = await signUp();
+
+    await request(server).post(sharePath).set(stranger.auth).expect(404);
+    await request(server).get(sharePath).set(stranger.auth).expect(404);
+
+    await expect(prisma.shareLink.create({ data: { token: `neither-${Date.now()}` } })).rejects.toThrow();
+    await expect(
+      prisma.shareLink.create({ data: { token: `both-${Date.now()}`, noteId: soup, notebookId: recipes } }),
+    ).rejects.toThrow();
+
+    await request(server).delete(`/api/notebooks/${recipes}`).set(auth).expect(200);
+    await request(server).get(link).expect(404);
+    await request(server).get(`${link}/${soup}`).expect(404);
+  });
+});
+
+describe('links between shared notes', () => {
+  it('lead to the other note only while that note has a live link of its own', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const { auth } = await signUp();
+    const starter = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Starter', content: 'Flour and water.' });
+    const bread = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Bread', content: 'Feed the [[Starter|starter culture]] first.' });
+    const shared = await request(server).post(`/api/notes/${bread.body.id}/share`).set(auth).expect(200);
+    const link = `/api/public/notes/${shared.body.token as string}`;
+
+    // The other note is private: its title is not in what readers get, only the words written for it.
+    const alone = await request(server).get(link).expect(200);
+    expect(alone.body).toMatchObject({ kind: 'note', content: 'Feed the starter culture first.', links: {} });
+    expect(JSON.stringify(alone.body)).not.toContain('Starter');
+
+    const other = await request(server).post(`/api/notes/${starter.body.id}/share`).set(auth).expect(200);
+    const both = await request(server).get(link).expect(200);
+    expect(both.body).toMatchObject({
+      content: 'Feed the [[Starter|starter culture]] first.',
+      links: { starter: `/s/${other.body.token as string}` },
+    });
+
+    await prisma.shareLink.update({
+      where: { noteId: starter.body.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    expect((await request(server).get(link).expect(200)).body).toMatchObject({ links: {} });
   });
 });
 
