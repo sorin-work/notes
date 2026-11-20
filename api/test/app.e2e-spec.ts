@@ -701,6 +701,7 @@ describe('api tokens', () => {
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AuthController',
+      'MentionsController',
       'NotebooksController',
       'NotesController',
       'SearchController',
