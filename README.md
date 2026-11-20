@@ -20,6 +20,12 @@ Markdown import/export.
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
   own view.
+- **Templates**: "Template" in a note's toolbar turns it into a template.
+  Templates have a list of their own and stay out of the other lists, the
+  search, the quick switcher, link suggestions and backlinks. "New from
+  template" under the new-note button starts a note from one, with
+  `{{date}}`, `{{time}}` and `{{title}}` filled in. "Duplicate" makes a plain
+  copy of any note.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
@@ -98,8 +104,9 @@ Then open http://localhost:5181 and sign in with the demo account:
 - **Password:** `demo-password`
 
 The demo account is created on first start with notebooks, about twenty
-linked notes, tags, a few earlier versions, two notes in the trash and two
-shared notes. Set `SEED_DEMO=false` to start with an empty database.
+linked notes, tags, a template, a few earlier versions, two notes in the
+trash and two shared notes. Set `SEED_DEMO=false` to start with an empty
+database.
 
 | Service | Port (host)           | Notes                                       |
 | ------- | --------------------- | ------------------------------------------- |
@@ -340,7 +347,7 @@ web/
     auth/               auth context and route guards
     components/         editor, preview, sidebar, dialogs
     hooks/              autosave, theme and small state helpers
-    lib/                wiki links, task lists, line diff, dates, text helpers
+    lib/                wiki links, task lists, templates, line diff, dates, text
     pages/              one component per route
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
@@ -409,6 +416,19 @@ not go ahead if that fails. A save that names no revision, as from a tab that
 was loaded before this existed or from a script, is never refused: the last
 write wins, as it always did.
 
+A note made from a template gets the template's text and tags. Three
+placeholders are filled in, and no others: `{{date}}` (as `2026-11-20`),
+`{{time}}` (as `19:30`) and `{{title}}`, the title of the new note. Date and
+time are those of the browser's clock, because the server does not know what
+day it is where you are. Anything else in double braces is left as written.
+The note is named after the template, less a closing "template": a note from
+"Weekly review template" is a "Weekly review". Its `[[links]]` are real
+links from then on, while the links written in a template do not count as
+backlinks. A link to a template's title still leads to the template. Neither
+a note from a template nor a duplicate takes the pin, the star, the share
+link or the history of the original. Turning a note into a template is no
+edit: it changes neither "last edited" nor the revision.
+
 ## API overview
 
 All endpoints are under `/api` and, apart from sign-up, login, the health
@@ -423,6 +443,11 @@ carries the note as it is now:
 The check only applies when `title` or `content` is sent, and a request
 without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
+
+`POST /notes` with `"templateId"` makes the note from that template, and
+`"placeholders": {"date": "...", "time": "..."}` gives the text to fill in.
+The API only puts in what it is sent and never works out a date by itself.
+`PATCH /notes/:id` with `"isTemplate"` turns a note into a template or back.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
@@ -459,6 +484,7 @@ sign-in page knows to hide the link.
 | `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
+| `GET /notes?templates=true`, `POST /notes/:id/duplicate`       | Templates, and a copy of a note           |
 | `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
 | `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
 | `GET /notes/:id/rename-links?from=`, `POST .../rename-links`   | Count, then update, links to an old title |
