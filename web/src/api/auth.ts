@@ -29,6 +29,9 @@ export const passwordResetEnabled = () =>
 /** The answer is the same whether or not the address has an account. */
 export const requestPasswordReset = (email: string) => api<void>('/auth/password-reset', json('POST', { email }));
 
-/** `token` comes from the link in the mail. Ends every session of the account. */
+/**
+ * `token` comes from the link in the mail. Ends every session of the
+ * account, and answers with a new one for the browser that did it.
+ */
 export const resetPassword = (token: string, password: string) =>
-  api<void>('/auth/password-reset/confirm', json('POST', { token, password }));
+  api<AuthResult>('/auth/password-reset/confirm', json('POST', { token, password }));

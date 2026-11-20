@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { resetPassword } from '../api/auth';
 import { useAuth } from '../auth/AuthContext';
+import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
 import { ErrorMessage } from '../components/States';
 
 function tokenIn(hash: string): string {
@@ -16,7 +17,7 @@ function tokenIn(hash: string): string {
  * string does.
  */
 export function ResetPasswordPage() {
-  const { logout } = useAuth();
+  const { renewSession } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   // Read once and kept in memory. The effect below takes it out of the address bar.
@@ -32,8 +33,10 @@ export function ResetPasswordPage() {
   const [mismatch, setMismatch] = useState(false);
   const reset = useMutation({
     mutationFn: () => resetPassword(token, password),
-    // The reset ended every session, so one in this browser is over too.
-    onSuccess: logout,
+    // The reset ended every login, one in this browser included. The answer
+    // holds a new one, which is also what lets the page below list the API
+    // tokens and revoke them.
+    onSuccess: renewSession,
   });
 
   const submit = (event: FormEvent) => {
@@ -47,9 +50,10 @@ export function ResetPasswordPage() {
       <div className="auth-page">
         <div className="auth-card form" role="status">
           <h1>Password changed</h1>
-          <p>Every browser and device has been signed out. Sign in with the new password.</p>
+          <p>Every other browser and device has been signed out. This one is signed in with the new password.</p>
+          <ApiTokensStillWorking />
           <p>
-            <Link to="/login">Sign in</Link>
+            <Link to="/notes">Open your notes</Link>
           </p>
         </div>
       </div>

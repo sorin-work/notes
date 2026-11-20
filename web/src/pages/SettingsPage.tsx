@@ -6,6 +6,7 @@ import { createApiToken, listApiTokens, revokeApiToken } from '../api/tokens';
 import { exportAll, importFiles } from '../api/transfer';
 import type { ApiToken, CreatedApiToken, Tag, User } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { ErrorMessage } from '../components/States';
 import { Theme, useTheme } from '../hooks/useTheme';
@@ -160,7 +161,10 @@ function PasswordForm() {
       {mismatch && <p className="field-error">The new passwords do not match.</p>}
       {change.error && <ErrorMessage error={change.error} />}
       {change.isSuccess && (
-        <p className="success">Password changed. Every other browser and device has been signed out.</p>
+        <>
+          <p className="success">Password changed. Every other browser and device has been signed out.</p>
+          <ApiTokensStillWorking />
+        </>
       )}
       <div className="form-actions start">
         <button type="submit" className="button button-primary" disabled={change.isPending}>
@@ -461,18 +465,20 @@ function ApiTokensSection() {
   const tokens = useQuery({ queryKey: ['api-tokens'], queryFn: listApiTokens });
   const [name, setName] = useState('');
   const [readOnly, setReadOnly] = useState(false);
+  const [password, setPassword] = useState('');
   const [created, setCreated] = useState<CreatedApiToken | null>(null);
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState<ApiToken | null>(null);
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['api-tokens'] });
   const create = useMutation({
-    mutationFn: () => createApiToken(name, readOnly),
+    mutationFn: () => createApiToken(name, readOnly, password),
     onSuccess: (token) => {
       setCreated(token);
       setCopied(false);
       setName('');
       setReadOnly(false);
+      setPassword('');
       refresh();
     },
   });
@@ -501,7 +507,8 @@ function ApiTokensSection() {
       <p className="muted">
         For scripts. A request that sends a token as <code>Authorization: Bearer nt_…</code> is treated as yours. A
         token can read and change notes, or only read them if it is read-only. It cannot change the account or manage
-        tokens. Tokens do not expire and “Sign out everywhere” leaves them alone, so revoke the ones you no longer use.
+        tokens. Tokens do not expire, and signing out everywhere or changing the password leaves them alone, so revoke
+        the ones you no longer use. Making one takes your password, because it outlives every login.
       </p>
       {tokens.error && <ErrorMessage error={tokens.error} />}
       {tokens.data?.length === 0 && <p className="muted">No tokens yet.</p>}
@@ -564,6 +571,16 @@ function ApiTokensSection() {
         <label className="radio">
           <input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.target.checked)} />
           Read-only
+        </label>
+        <label className="field">
+          <span>Password, to create the token</span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
         </label>
         {create.error && <ErrorMessage error={create.error} />}
         <div className="form-actions start">
