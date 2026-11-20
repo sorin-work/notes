@@ -33,7 +33,7 @@ couple of weekends, **L** several weeks of spare time.
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
-| 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
+| 15  | Deeper notebook nesting                | Shipped | both     | M    | -          |
 | 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
 | 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
 | 18  | Graph view and unlinked mentions       | Shipped | both     | M    | -          |
@@ -132,23 +132,6 @@ connection for everything. Depends on item 8.
   the stored notes as well as the in-memory cache.
 
 ## Maybe
-
-### 15. Deeper notebook nesting
-
-Notebooks nest one level. Importing a vault with deeper folders flattens them
-("A/B/C" becomes "B - C" inside "A"), which is the main reason I would want
-more.
-
-- The one-level rule is spread out: `assertCanBeParent`, `update` and
-  `idsWithChildren` in `NotebooksService`, `notebookTree` and `totalNotes` in
-  `web/src/lib/notebooks.ts`, the two-level markup in `Sidebar` and
-  `NotebookSelect`, `notebookPath` in the importer and the folder building in
-  `ExportService.exportAll`.
-- Any depth means a recursive query for "this notebook and everything below
-  it", a cycle check when moving a notebook, and a collapsible tree in the
-  sidebar.
-- Undecided: whether it is worth it at all when tags and links exist. A cap
-  of three or four levels would keep the sidebar manageable.
 
 ### 16. Templates and daily notes
 
@@ -416,6 +399,43 @@ click. Any site can send a visitor there, so it saves nothing by itself, the
 title stays out of the note's text, and only a plain web address is taken.
 `API_DOCS=false` turns the document off. Still open: the document describes
 requests but not answers.
+
+### 15. Deeper notebook nesting
+
+Notebooks nest four levels deep. I took the cap over any depth: it keeps the
+sidebar readable, and four levels hold the vaults I have seen. The number is
+`MAX_NOTEBOOK_DEPTH` in `NotebooksService`, which enforces it, and the same
+constant in `web/src/lib/notebooks.ts` decides what the app offers.
+
+Creating, moving and deleting a notebook each run in one transaction that
+first locks the account's row (`lockTree`) and then reads the tree. The checks
+for depth and for loops therefore see what they are about to change, and two
+moves made at the same moment cannot put two notebooks inside each other. A
+move takes along what is inside the notebook and is refused when that would
+end below the fourth level. Deleting a notebook deletes the notebooks inside
+it and moves the notes of all of them to the trash. `idsWithChildren` kept its
+name and is one recursive query for "this notebook and everything inside it",
+used by the note list, the search and the graph. No migration was needed,
+`parentId` was there already, so one-level data is untouched.
+
+The importer keeps folders as notebooks four levels deep and joins what is
+deeper into the fourth ("D - E"), the way it used to join everything below the
+first. The exporter writes nested folders. A folder claims its name before the
+files next to it, so a notebook and a note that want the same name in the zip
+both get in.
+
+In the sidebar the notebooks are a nested list with a fold button in front of
+every notebook that has others inside, and the folded ones are remembered in
+the browser. The notebook of a note is picked from a list that folds the same
+way (`NotebookSelect`), with its own memory. Both are plain nested lists of
+links and buttons, so Tab, Enter and Space work them. The notebook dialog only
+offers places where the notebook fits with what it holds.
+
+Still open: the filter selects above the lists and the "Inside" select of the
+notebook dialog are ordinary selects that show the whole tree indented and do
+not fold. The arrow keys do not move through the tree. A notebook cannot be
+dragged to another place, and the lock makes two changes to the notebooks of
+one account wait for each other, which nobody will notice.
 
 ### 18. Graph view and unlinked mentions
 

@@ -13,9 +13,12 @@ Markdown import/export.
 - **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
   the same as typing the `x`. Boxes are read-only on shared pages, in version
   history and for notes in the trash.
-- **Notebooks**, nested one level deep (e.g. _Work -> Meetings_). Selecting a
-  top-level notebook shows the notes in the notebooks inside it too. Deleting
-  a notebook moves its notes to the trash.
+- **Notebooks**, nested up to four levels deep (e.g. _Work -> Meetings ->
+  One-to-ones_). Selecting a notebook shows the notes in every notebook inside
+  it too. In the sidebar they are a tree that folds, and what is folded is
+  remembered in the browser. Moving a notebook takes what is inside it along.
+  Deleting one deletes the notebooks inside it and moves the notes of all of
+  them to the trash.
 - **Tags** typed under the title (`#book club` becomes `book-club`). Tags can
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
@@ -57,8 +60,11 @@ Markdown import/export.
   with a view count. Stopping sharing kills the link; notes in the trash are
   never served.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
-  become folders, tags and dates go in YAML front matter) or a single note as
-  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+  become folders, nested like the notebooks, and tags and dates go in YAML
+  front matter) or a single note as `.md`. Import `.md`/`.txt` files or zips,
+  such as an Obsidian vault. Folders become notebooks at the depth they have.
+  Below the fourth level they are joined into one: `A/B/C/D/E` becomes the
+  notebook "D - E" inside A, B and C.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
@@ -376,7 +382,7 @@ api/
   prisma/               schema and migrations
   src/
     auth/               sign-up, login, JWT guard, account changes
-    notebooks/          notebooks and their one level of nesting
+    notebooks/          notebooks and their nesting, four levels deep
     notes/              notes, filters and sorting, note export
     tags/               tag names, renaming and merging
     links/              [[wiki link]] parsing, link storage, backlinks and the graph
