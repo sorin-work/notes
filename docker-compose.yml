@@ -34,6 +34,12 @@ services:
       SMTP_FROM: ${SMTP_FROM:-Notes <notes@localhost>}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Mail needs TLS unless this says false. mailpit has no TLS, so the
+      # default is "false" for as long as SMTP_HOST is left alone. With an
+      # SMTP_HOST of your own the default turns into that host name, which
+      # is not "false": a real server gets TLS without anyone having to
+      # remember this line.
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-${SMTP_HOST-false}}
       # Where the links in those mails point.
       APP_URL: ${APP_URL:-http://localhost:${WEB_PORT:-5181}}
     depends_on:
