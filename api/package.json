@@ -4,6 +4,9 @@
   "private": true,
   "description": "REST API for the notes app",
   "license": "MIT",
+  "scarfSettings": {
+    "enabled": false
+  },
   "scripts": {
     "build": "nest build",
     "start": "node dist/main",
