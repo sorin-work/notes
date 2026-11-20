@@ -1469,6 +1469,36 @@ describe('sharing a notebook', () => {
     expect(after.body.links).toEqual({ soup: `/s/${token}/${soup}` });
   });
 
+  it('tells the owner what is public through a shared notebook, and through which', async () => {
+    const { server, auth, recipes, bread, soup, rye, plan } = await kitchen();
+    const through = { id: recipes, name: 'Recipes' };
+
+    for (const id of [soup, rye]) {
+      expect((await request(server).get(`/api/notes/${id}`).set(auth).expect(200)).body).toMatchObject({
+        shared: false,
+        sharedThrough: through,
+      });
+    }
+    expect((await request(server).get(`/api/notes/${plan}`).set(auth).expect(200)).body.sharedThrough).toBeNull();
+    const notebooks = (await request(server).get('/api/notebooks').set(auth).expect(200)).body as {
+      id: string;
+      shared: boolean;
+      sharedThrough: object | null;
+    }[];
+    expect(notebooks.find((notebook) => notebook.id === recipes)).toMatchObject({
+      shared: true,
+      sharedThrough: through,
+    });
+    expect(notebooks.find((notebook) => notebook.id === bread)).toMatchObject({
+      shared: false,
+      sharedThrough: through,
+    });
+
+    // Moved in, the private note is public too, and says so.
+    const moved = await request(server).patch(`/api/notes/${plan}`).set(auth).send({ notebookId: bread }).expect(200);
+    expect(moved.body.sharedThrough).toEqual(through);
+  });
+
   it('stops serving a note the moment it is moved out or put in the trash', async () => {
     const { server, auth, soup, rye, link } = await kitchen();
     const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
