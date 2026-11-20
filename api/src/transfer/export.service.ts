@@ -66,6 +66,13 @@ export function toMarkdownFile(note: ExportableNote): string {
   return serializeFrontMatter(data) + body;
 }
 
+/**
+ * How long reading an account for the export may take. Prisma ends a
+ * transaction after five seconds unless told otherwise, which a large
+ * account can need for its notes alone.
+ */
+export const EXPORT_READ_TIMEOUT_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class ExportService {
   private readonly logger = new Logger(ExportService.name);
@@ -112,7 +119,11 @@ export class ExportService {
             select: { id: true, fileName: true },
           }),
         ] as const,
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        timeout: EXPORT_READ_TIMEOUT_MS,
+        maxWait: 10_000,
+      },
     );
 
     const zip = new JSZip();

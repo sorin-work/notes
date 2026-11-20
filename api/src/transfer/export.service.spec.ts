@@ -2,7 +2,7 @@ import JSZip from 'jszip';
 import type { AttachmentsService } from '../attachments/attachments.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import type { Readable } from 'node:stream';
-import { ExportService, toMarkdownFile } from './export.service';
+import { EXPORT_READ_TIMEOUT_MS, ExportService, toMarkdownFile } from './export.service';
 
 async function collect(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -108,7 +108,13 @@ describe('ExportService', () => {
     prisma.note.findMany.mockResolvedValue([note('Plan')]);
     await files();
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'RepeatableRead' });
+    // Not Prisma's five seconds: a large account takes longer to read.
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({
+      isolationLevel: 'RepeatableRead',
+      timeout: EXPORT_READ_TIMEOUT_MS,
+      maxWait: 10_000,
+    });
+    expect(EXPORT_READ_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 
   it('keeps apart notebooks whose names come out the same, and a notebook from a note file of its name', async () => {
