@@ -26,6 +26,10 @@ Markdown import/export.
   template" under the new-note button starts a note from one, with
   `{{date}}`, `{{time}}` and `{{title}}` filled in. "Duplicate" makes a plain
   copy of any note.
+- **Daily note**: "Today" in the sidebar opens the note of the day and starts
+  it when there is none. Settings say which notebook it goes into, which
+  template it starts from and how the date is written in its title, and
+  those choices follow the account to every device.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
@@ -488,6 +492,22 @@ a note from a template nor a duplicate takes the pin, the star, the share
 link or the history of the original. Turning a note into a template is no
 edit: it changes neither "last edited" nor the revision.
 
+"Today" asks for the daily note of a day. The day is the one the browser's
+clock shows, and the server never works out a date. An account has one daily
+note per day: clicking twice, or in two tabs at the same moment, opens the
+same note, which the database guarantees with a unique index. The note is
+found by its day and not by its title, so it stays the note of that day when
+it is renamed or when the date format is changed. A note written by hand
+under the title of the day, in any of the three formats, is taken for the
+note of that day the first time "Today" finds it. A daily note in the trash
+makes room: "Today" starts a new one, and the old one comes back from the
+trash as an ordinary note. The three formats are `2026-11-20`,
+`20 November 2026` and `November 20, 2026`. In the template of a daily note
+`{{title}}` is the day as the title has it, and `{{date}}` is always
+`2026-11-20`. The notebook, the template and the format are preferences kept
+with the account. Theme and editor mode are not: they belong to a screen and
+stay in the browser.
+
 ## API overview
 
 The API describes itself. With the stack running, http://localhost:5181/api/docs
@@ -520,6 +540,13 @@ a save replaces is kept as a version whatever the usual interval.
 `"placeholders": {"date": "...", "time": "..."}` gives the text to fill in.
 The API only puts in what it is sent and never works out a date by itself.
 `PATCH /notes/:id` with `"isTemplate"` turns a note into a template or back.
+
+`POST /notes/daily` with `{"date": "2026-11-20", "title": "20 November 2026"}`
+answers with the daily note of that day and makes it when there is none.
+`title` has to be that date in one of the three formats, and `placeholders`
+can come along for the template. `GET /auth/me` has the account's
+`preferences`, and `PATCH /auth/preferences` changes the ones that are sent:
+`{"dailyNotes": {"notebookId": null, "templateId": "...", "dateFormat": "long"}}`.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
@@ -562,8 +589,9 @@ token is shown once, when it is made, and only its SHA-256 hash is stored. It ac
 
 - A read-only token gets a `403` on everything that is not a `GET`.
 - No token can touch the account: listing, making or revoking tokens,
-  changing the name, email or password, deleting the account and signing out
-  everywhere all answer `403`. `GET /auth/me` works. Sign in for the rest.
+  changing the name, email, password or preferences, deleting the account and
+  signing out everywhere all answer `403`. `GET /auth/me` works. Sign in for
+  the rest.
   In the code a route takes a token only when it is marked
   `@AllowApiToken()`, so a route added later is closed to tokens until
   someone opens it.
