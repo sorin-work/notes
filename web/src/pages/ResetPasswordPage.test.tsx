@@ -1,6 +1,6 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router';
+import { Route, Routes, useLocation } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
@@ -9,9 +9,16 @@ import { mockFetch, renderWithProviders } from '../test/render';
 import { ForgotPasswordPage } from './ForgotPasswordPage';
 import { ResetPasswordPage } from './ResetPasswordPage';
 
+/** Shows what is in the address bar, to see the token leave it. */
+function AddressBar() {
+  const location = useLocation();
+  return <span aria-label="address">{location.pathname + location.search + location.hash}</span>;
+}
+
 function renderAt(route: string) {
   return renderWithProviders(
     <AuthProvider>
+      <AddressBar />
       <Routes>
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -57,8 +64,10 @@ describe('ResetPasswordPage', () => {
       'GET /api/auth/me': { body: user },
       'POST /api/auth/password-reset/confirm': { status: 204 },
     });
-    renderAt('/reset-password?token=abc-123');
+    renderAt('/reset-password#token=abc-123');
 
+    // The token is read from the fragment and then taken out of the address bar.
+    await waitFor(() => expect(screen.getByLabelText('address')).toHaveTextContent(/^\/reset-password$/));
     await userEvent.type(screen.getByLabelText('New password'), 'battery-staple');
     await userEvent.type(screen.getByLabelText('Repeat new password'), 'battery-stable');
     await userEvent.click(screen.getByRole('button', { name: 'Set the new password' }));
@@ -85,7 +94,7 @@ describe('ResetPasswordPage', () => {
         body: { message: 'This link does not work any more. Ask for a new one.', statusCode: 400 },
       },
     });
-    renderAt('/reset-password?token=old');
+    renderAt('/reset-password#token=old');
 
     await userEvent.type(screen.getByLabelText('New password'), 'battery-staple');
     await userEvent.type(screen.getByLabelText('Repeat new password'), 'battery-staple');
@@ -100,5 +109,11 @@ describe('ResetPasswordPage', () => {
     renderAt('/reset-password');
     expect(screen.getByText('This link is not complete')).toBeInTheDocument();
     expect(screen.queryByLabelText('New password')).not.toBeInTheDocument();
+  });
+
+  it('does not take a token from the query string, where a server would log it', () => {
+    mockFetch({});
+    renderAt('/reset-password?token=abc-123');
+    expect(screen.getByText('This link is not complete')).toBeInTheDocument();
   });
 });

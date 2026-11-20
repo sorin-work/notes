@@ -1,15 +1,32 @@
 import { useMutation } from '@tanstack/react-query';
-import { FormEvent, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { FormEvent, useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { resetPassword } from '../api/auth';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage } from '../components/States';
 
-/** Where the link in a password reset mail leads: /reset-password?token=... */
+function tokenIn(hash: string): string {
+  return new URLSearchParams(hash.replace(/^#/, '')).get('token') ?? '';
+}
+
+/**
+ * Where the link in a password reset mail leads: /reset-password#token=...
+ * The token is in the fragment because a fragment is never sent to the
+ * server, so it does not end up in nginx's access log the way a query
+ * string does.
+ */
 export function ResetPasswordPage() {
   const { logout } = useAuth();
-  const [params] = useSearchParams();
-  const token = params.get('token') ?? '';
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Read once and kept in memory. The effect below takes it out of the address bar.
+  const [token] = useState(() => tokenIn(location.hash));
+
+  useEffect(() => {
+    if (location.hash) {
+      navigate({ pathname: location.pathname, search: location.search }, { replace: true });
+    }
+  }, [location.hash, location.pathname, location.search, navigate]);
   const [password, setPassword] = useState('');
   const [repeat, setRepeat] = useState('');
   const [mismatch, setMismatch] = useState(false);
