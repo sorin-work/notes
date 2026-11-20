@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { Outlet, useMatch } from 'react-router';
 import { useOnline } from '../hooks/useOnline';
 import { Notices } from './Notices';
+import { PendingChanges } from './PendingChanges';
 import { QuickSwitcher } from './QuickSwitcher';
 import { Sidebar } from './Sidebar';
 import { OfflineBanner } from './States';
@@ -84,6 +85,7 @@ export function Layout() {
       {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
       <main className="main" id="main" tabIndex={-1}>
         {!online && <OfflineBanner />}
+        <PendingChanges />
         <Outlet />
       </main>
       {switcherOpen && <QuickSwitcher onClose={closeSwitcher} />}
