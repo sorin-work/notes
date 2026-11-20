@@ -157,5 +157,6 @@ export class RenameLinksDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(MAX_TITLE_LENGTH)
+  @NotContains(NUL, { message: 'from must not contain a null character' })
   from: string;
 }

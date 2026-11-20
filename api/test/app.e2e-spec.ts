@@ -388,6 +388,9 @@ describe('renaming a note', () => {
 
     await renameLinks(auth, target.id, {}).expect(400);
     await renameLinks(auth, target.id, { from: '   ' }).expect(400);
+    // The database cannot take a null character. That is a bad request, not a server error.
+    await renameLinks(auth, target.id, { from: 'At\0las' }).expect(400);
+    await request(server).get(`/api/notes/${target.id}/rename-links?from=At%00las`).set(auth).expect(400);
     await renameLinks(auth, target.id, { from: 'Atlas', to: 'Elsewhere' }).expect(400);
     await renameLinks(auth, 'not-a-uuid', { from: 'Atlas' }).expect(400);
     await request(server).delete(`/api/notes/${target.id}`).set(auth).expect(204);
