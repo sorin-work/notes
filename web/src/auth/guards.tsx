@@ -7,6 +7,16 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const { status } = useAuth();
   const location = useLocation();
   if (status === 'loading') return <FullPageSpinner />;
+  if (status === 'offline') {
+    return (
+      <main className="full-page-center">
+        <p className="muted">
+          You are offline, and this device has kept no notes of yours to show. Notes opens as soon as there is a
+          connection.
+        </p>
+      </main>
+    );
+  }
   if (status === 'signed-out') {
     return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }

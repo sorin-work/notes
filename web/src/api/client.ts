@@ -53,6 +53,19 @@ export function onTokenRemovedElsewhere(handler: () => void): () => void {
   return () => window.removeEventListener('storage', listener);
 }
 
+/**
+ * Calls `handler` with the new token when another tab of this browser
+ * changes it: signs out (null), renews it, or signs in, maybe as someone
+ * else. Returns a function that stops listening.
+ */
+export function onTokenChangedElsewhere(handler: (token: string | null) => void): () => void {
+  const listener = (event: StorageEvent) => {
+    if (event.key === TOKEN_KEY || event.key === null) handler(getToken());
+  };
+  window.addEventListener('storage', listener);
+  return () => window.removeEventListener('storage', listener);
+}
+
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 export function withQuery(path: string, query?: Query): string {

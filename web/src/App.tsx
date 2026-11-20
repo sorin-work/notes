@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
 import { Layout } from './components/Layout';
+import { UpdateBanner } from './components/UpdateBanner';
 import { CapturePage } from './pages/CapturePage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
@@ -14,6 +15,15 @@ import { SharedNotePage } from './pages/SharedNotePage';
 import { TrashPage } from './pages/TrashPage';
 
 export function App() {
+  return (
+    <>
+      <UpdateBanner />
+      <AppRoutes />
+    </>
+  );
+}
+
+function AppRoutes() {
   return (
     <Routes>
       <Route

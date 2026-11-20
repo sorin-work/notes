@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
@@ -7,6 +8,7 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
@@ -689,6 +691,19 @@ describe('NoteEditor', () => {
       );
     }
 
+    it('puts the draft aside when the tab has to reload into a new version without saving it', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': { status: 500, body: { message: 'Down' } },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed before the reload.' } });
+      putUnsavedWorkAside();
+      expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed before the reload.', revision: 3 });
+    });
+
     it('keeps the draft in the tab, says so, and offers it when the note is opened again', async () => {
       let online = false;
       let saved = note();
@@ -941,6 +956,18 @@ describe('NoteEditor', () => {
     expect(screen.getByLabelText('Note content')).toHaveAttribute('readonly');
     expect(screen.getByRole('checkbox')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('says plainly that a note never opened here cannot be shown offline', async () => {
+    const calls = mockFetch(baseRoutes());
+    onlineManager.setOnline(false);
+    try {
+      renderEditor();
+      expect(await screen.findByText(/has not been opened on this device before/)).toBeInTheDocument();
+      expect(calls).toEqual([]);
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 
   it('explains when the note does not exist', async () => {
