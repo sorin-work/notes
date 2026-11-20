@@ -205,7 +205,7 @@ npm run dev
 | `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                         |
 | `SEED_DEMO`            | `false`    | Create the demo account on start-up                        |
 | `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good             |
-| `AUTH_THROTTLE_LIMIT`  | `10`       | Per-minute limit per client on routes that take a password |
+| `AUTH_THROTTLE_LIMIT`  | `10`       | Per-minute limit on the routes that take a password        |
 
 ## Tests and checks
 
@@ -306,7 +306,10 @@ account's token version, and the API compares it with the database on every
 request, so those two end all sessions at once. `PATCH /auth/password`
 answers with a new token for the browser that made the change. Changing the
 email and deleting the account ask for the password again; a wrong one is a
-`403`, not a `401`, because the session itself is still good.
+`403`, not a `401`, because the session itself is still good. The three
+routes that check the password count their requests twice against
+`AUTH_THROTTLE_LIMIT`: per client address on each route, and per account
+across all three, so a stolen login gets ten guesses a minute in total.
 
 | Method & path                                                  | What it does                              |
 | -------------------------------------------------------------- | ----------------------------------------- |
