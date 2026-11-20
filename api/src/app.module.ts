@@ -1,3 +1,4 @@
+import { AccessModule } from './access/access.module';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, DiscoveryModule } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
@@ -22,6 +23,7 @@ import { VersionsModule } from './versions/versions.module';
     // For docs.ts, which walks the controllers to describe the API.
     DiscoveryModule,
     PrismaModule,
+    AccessModule,
     AuthModule,
     NotebooksModule,
     NotesModule,

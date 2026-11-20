@@ -41,7 +41,11 @@ export class LinksService {
   }
 
   /** The notes whose [[links]] point at this note's title. A template that links here is not one of them. */
-  async backlinks(userId: string, noteId: string): Promise<Backlink[]> {
+  /**
+   * `notebookIds` keeps the notes linking here to those notebooks: what a
+   * member of a shared notebook may see. Without it, all of the owner's notes.
+   */
+  async backlinks(userId: string, noteId: string, notebookIds?: string[]): Promise<Backlink[]> {
     const note = await this.prisma.note.findFirst({ where: { id: noteId, userId }, select: { title: true } });
     if (!note) {
       throw new NotFoundException('Note not found');
@@ -50,6 +54,7 @@ export class LinksService {
     const sources = await this.prisma.note.findMany({
       where: {
         ...workingNotes(userId),
+        ...(notebookIds ? { notebookId: { in: notebookIds } } : {}),
         id: { not: noteId },
         outgoingLinks: { some: { targetKey: key } },
       },
@@ -64,8 +69,12 @@ export class LinksService {
     }));
   }
 
-  /** The links written in a note, with the note each one currently resolves to. */
-  async outgoing(userId: string, noteId: string): Promise<OutgoingLink[]> {
+  /**
+   * The links written in a note, with the note each one currently resolves to.
+   * With `notebookIds`, a link resolves only to a note in those notebooks, as
+   * for a member of a shared notebook: any other title reads as missing.
+   */
+  async outgoing(userId: string, noteId: string, notebookIds?: string[]): Promise<OutgoingLink[]> {
     const note = await this.prisma.note.findFirst({
       where: { id: noteId, userId },
       select: { outgoingLinks: { select: { targetTitle: true, targetKey: true } } },
@@ -76,6 +85,7 @@ export class LinksService {
     const targets = await this.resolveKeys(
       userId,
       note.outgoingLinks.map((link) => link.targetKey),
+      notebookIds ? { notebookIds } : undefined,
     );
     return note.outgoingLinks.map((link) => ({ title: link.targetTitle, noteId: targets.get(link.targetKey) ?? null }));
   }
@@ -107,8 +117,9 @@ export class LinksService {
    * template of the same title, and among those left the most recently
    * edited one wins.
    */
-  async resolve(userId: string, title: string): Promise<{ id: string; title: string }> {
-    const target = (await this.resolveKeys(userId, [normalizeTitle(title)])).get(normalizeTitle(title));
+  async resolve(userId: string, title: string, notebookIds?: string[]): Promise<{ id: string; title: string }> {
+    const among = notebookIds ? { notebookIds } : undefined;
+    const target = (await this.resolveKeys(userId, [normalizeTitle(title)], among)).get(normalizeTitle(title));
     if (!target) {
       throw new NotFoundException(`No note is called "${title.trim()}"`);
     }

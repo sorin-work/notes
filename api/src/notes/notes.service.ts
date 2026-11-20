@@ -411,11 +411,15 @@ export class NotesService {
   }
 
   /** Titles starting with (or else containing) `q`, for [[link]] completion. */
-  async titles(userId: string, q = '', limit = 10): Promise<{ id: string; title: string }[]> {
+  /** With `notebookIds`, only the titles of notes in those notebooks: for a member of a shared notebook. */
+  async titles(userId: string, q = '', limit = 10, notebookIds?: string[]): Promise<{ id: string; title: string }[]> {
     const take = Math.min(Math.max(limit, 1), 25);
     const term = q.trim();
     const select = { id: true, title: true } as const;
-    const base: Prisma.NoteWhereInput = workingNotes(userId);
+    const base: Prisma.NoteWhereInput = {
+      ...workingNotes(userId),
+      ...(notebookIds ? { notebookId: { in: notebookIds } } : {}),
+    };
     if (!term) {
       return this.prisma.note.findMany({ where: base, orderBy: { updatedAt: 'desc' }, take, select });
     }

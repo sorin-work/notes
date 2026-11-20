@@ -243,6 +243,11 @@ export class TitleQuery {
   @IsOptional()
   @Type(() => Number)
   limit?: number;
+
+  /** Titles in this notebook shared with you, instead of your own: for links in a note of that notebook. */
+  @IsOptional()
+  @IsUUID()
+  notebookId?: string;
 }
 
 export class ResolveQuery {
@@ -251,6 +256,11 @@ export class ResolveQuery {
   @MaxLength(MAX_TITLE_LENGTH)
   @NotContains(NUL, { message: 'title must not contain a null character' })
   title: string;
+
+  /** Look in this notebook shared with you, instead of among your own notes. */
+  @IsOptional()
+  @IsUUID()
+  notebookId?: string;
 }
 
 export class RenameLinksDto {

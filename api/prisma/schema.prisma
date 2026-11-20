@@ -25,6 +25,8 @@ model User {
   tags           Tag[]
   passwordResets PasswordReset[]
   apiTokens      ApiToken[]
+  memberships    NotebookMember[]
+  invitesSent    NotebookInvite[]
 
   @@map("users")
 }
@@ -78,15 +80,62 @@ model Notebook {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent   Notebook?  @relation("NotebookChildren", fields: [parentId], references: [id], onDelete: Cascade)
-  children Notebook[] @relation("NotebookChildren")
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   Notebook?        @relation("NotebookChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children Notebook[]       @relation("NotebookChildren")
   notes    Note[]
   share    ShareLink?
+  members  NotebookMember[]
+  invites  NotebookInvite[]
 
   @@index([userId])
   @@index([parentId])
   @@map("notebooks")
+}
+
+/// What a member of a shared notebook may do: read its notes, or also edit them.
+enum MemberRole {
+  read
+  edit
+
+  @@map("member_role")
+}
+
+/// Another account that has the notebook, and the notebooks inside it, shared with it.
+model NotebookMember {
+  notebookId String     @map("notebook_id") @db.Uuid
+  userId     String     @map("user_id") @db.Uuid
+  role       MemberRole
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  notebook Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([notebookId, userId])
+  @@index([userId])
+  @@map("notebook_members")
+}
+
+/// An invitation to a notebook, sent to an address. Accepted in the app by the
+/// account with that address, or through the link in the mail.
+model NotebookInvite {
+  id          String     @id @default(uuid()) @db.Uuid
+  notebookId  String     @map("notebook_id") @db.Uuid
+  /// Lower case, as accounts are looked up.
+  email       String
+  role        MemberRole
+  /// SHA-256 of the token in the mailed link, in hex. The token itself is never stored.
+  tokenHash   String     @unique @map("token_hash")
+  invitedById String     @map("invited_by_id") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at")
+  expiresAt   DateTime   @map("expires_at")
+
+  notebook  Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  invitedBy User     @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@unique([notebookId, email])
+  @@index([email])
+  @@map("notebook_invites")
 }
 
 model Note {

@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { Access } from '../access/access.service';
 import { excerpt } from '../common/text';
 
 export const noteInclude = {
@@ -65,6 +66,11 @@ export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   revision: number;
   /** A template is kept out of the lists and the search, and new notes are made from it. */
   isTemplate: boolean;
+  /**
+   * What the one asking may do with it: `owner`, or `edit` or `read` for a
+   * member of the shared notebook it is in.
+   */
+  access: Access;
   /** The day, as YYYY-MM-DD, when this is the daily note of that day. */
   dailyDate: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
@@ -96,6 +102,7 @@ export function toView(note: NoteWithRelations): NoteView {
     content: note.content,
     revision: note.revision,
     isTemplate: note.isTemplate,
+    access: 'owner',
     dailyDate: note.dailyDate ? note.dailyDate.toISOString().slice(0, 10) : null,
     notebookId: note.notebookId,
     notebook: note.notebook && { id: note.notebook.id, name: note.notebook.name, parentId: note.notebook.parentId },
