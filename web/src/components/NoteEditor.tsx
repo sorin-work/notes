@@ -19,6 +19,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
+import { toggleTask } from '../lib/tasks';
 import { countWords, readingMinutes } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
@@ -189,6 +190,17 @@ function LoadedEditor({ note }: { note: Note }) {
       textarea.focus();
       textarea.setSelectionRange(position, position);
     });
+  };
+
+  const onToggleTask = (line: number) => {
+    const next = toggleTask(content, line);
+    if (next === content) return;
+    // Replacing the text moves the caret in the source to the end. The text
+    // is as long as it was, so the selection can go back where it was.
+    const textarea = textareaRef.current;
+    const selection = textarea && ([textarea.selectionStart, textarea.selectionEnd] as const);
+    change({ content: next });
+    if (textarea && selection) requestAnimationFrame(() => textarea.setSelectionRange(...selection));
   };
 
   const onContentChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
@@ -367,7 +379,12 @@ function LoadedEditor({ note }: { note: Note }) {
         )}
         {mode !== 'edit' && (
           <div className="editor-preview" aria-label="Preview">
-            <MarkdownPreview content={content} onWikiLink={openWikiLink} missingTitles={missingTitles} />
+            <MarkdownPreview
+              content={content}
+              onWikiLink={openWikiLink}
+              missingTitles={missingTitles}
+              onToggleTask={readOnly ? undefined : onToggleTask}
+            />
           </div>
         )}
       </div>
