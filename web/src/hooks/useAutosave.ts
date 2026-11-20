@@ -19,6 +19,20 @@ export interface ConflictHandling<T> {
 }
 
 /**
+ * What to do with a value that is still unsaved when the component goes
+ * away. The last save is tried after the component is gone, so nothing on
+ * screen can report how it went.
+ */
+export interface Farewell<T> {
+  /** Called at once with the unsaved value, before the save is tried, to put it somewhere safe. */
+  keep: (value: T) => void;
+  /** Called when that save went through, so what `keep` put aside is no longer needed. */
+  saved: () => void;
+  /** Called when it did not: the value only exists where `keep` put it. */
+  failed: () => void;
+}
+
+/**
  * Saves the latest value a moment after the last change. Saves run one at a
  * time, and whatever is still pending is saved when the component unmounts,
  * so switching notes quickly does not lose the last keystrokes.
@@ -27,12 +41,18 @@ export interface ConflictHandling<T> {
  * that runs into a conflict is not: the value is kept, later changes replace
  * it without being sent, and it stays that way until `retry` or `discard`.
  */
-export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800, conflicts?: ConflictHandling<T>) {
+export function useAutosave<T>(
+  save: (value: T) => Promise<unknown>,
+  delay = 800,
+  conflicts?: ConflictHandling<T>,
+  farewell?: Farewell<T>,
+) {
   const [status, setStatus] = useState<SaveStatus>('saved');
   /** The error of the save that ran into a conflict, until it is resolved. */
   const [conflict, setConflict] = useState<unknown>(null);
   const saveRef = useRef(save);
   const conflictsRef = useRef(conflicts);
+  const farewellRef = useRef(farewell);
   const pending = useRef<{ value: T } | null>(null);
   const unresolved = useRef<{ error: unknown } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -42,7 +62,8 @@ export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800
   useEffect(() => {
     saveRef.current = save;
     conflictsRef.current = conflicts;
-  }, [save, conflicts]);
+    farewellRef.current = farewell;
+  }, [save, conflicts, farewell]);
 
   const show = useCallback((next: SaveStatus, error: unknown = null) => {
     if (!mounted.current) return;
@@ -129,7 +150,15 @@ export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800
     mounted.current = true;
     return () => {
       mounted.current = false;
-      void leave();
+      const unsaved = pending.current;
+      const farewell = farewellRef.current;
+      // Put aside first: the save below may fail, or never answer at all.
+      if (unsaved) farewell?.keep(unsaved.value);
+      void leave().then(() => {
+        if (!unsaved) return;
+        if (pending.current) farewell?.failed();
+        else farewell?.saved();
+      });
     };
   }, [leave]);
 
