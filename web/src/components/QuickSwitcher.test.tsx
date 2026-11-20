@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useCallback, useState } from 'react';
 import { useLocation } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { mockFetch, renderWithProviders } from '../test/render';
@@ -20,6 +21,21 @@ function renderSwitcher(route = '/notes') {
     { route },
   );
   return onClose;
+}
+
+/** The switcher with a button to open it again, the way Layout keeps it around. */
+function Reopenable() {
+  const [open, setOpen] = useState(true);
+  const close = useCallback(() => setOpen(false), []);
+  return (
+    <>
+      <Where />
+      <button type="button" onClick={() => setOpen(true)}>
+        Open again
+      </button>
+      {open && <QuickSwitcher onClose={close} />}
+    </>
+  );
 }
 
 const recent = [
@@ -49,18 +65,50 @@ describe('QuickSwitcher', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('opens the first match for the typed text, even when Enter comes before the answer', async () => {
+  it('opens the first match for the typed text when Enter comes before the answer', async () => {
+    const matches = [recent[2], { id: 'n4', title: 'Group plan' }];
     const calls = mockFetch({
-      'GET /api/notes/titles': ({ url }) => ({ body: url.includes('q=gro') ? [recent[2]] : recent }),
+      'GET /api/notes/titles': ({ url }) => ({ body: url.includes('q=gro') ? matches : recent }),
     });
     const onClose = renderSwitcher('/search?q=atlas');
 
+    // The arrow key moves through the older list, which is not what Enter is meant for.
     await screen.findByRole('option', { name: 'Project Atlas' });
-    await userEvent.type(screen.getByRole('combobox'), 'gro{Enter}');
+    await userEvent.type(screen.getByRole('combobox'), 'gro{ArrowDown}{Enter}');
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n3$/);
     expect(calls.some((call) => call.url === '/api/notes/titles?q=gro&limit=10')).toBe(true);
+  });
+
+  it('does not act on a list kept from last time until it has been refreshed', async () => {
+    let fresh: (() => void) | null = null;
+    const refreshed = new Promise<void>((resolve) => {
+      fresh = resolve;
+    });
+    let opened = 0;
+    mockFetch({
+      'GET /api/notes/titles': async () => {
+        if (++opened === 1) return { body: recent };
+        // By the second time the note that was first has been deleted.
+        await refreshed;
+        return { body: recent.slice(1) };
+      },
+    });
+    renderWithProviders(<Reopenable />, { route: '/notes' });
+
+    await screen.findByRole('option', { name: 'Project Atlas' });
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: 'Open again' }));
+    expect(screen.getByRole('option', { name: 'Project Atlas' })).toHaveAttribute('aria-selected', 'true');
+
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByRole('status')).toHaveTextContent(/^\/notes$/);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fresh?.();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n2$/));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('says when no title matches, and Enter then does nothing', async () => {
