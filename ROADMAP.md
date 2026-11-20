@@ -379,12 +379,13 @@ Two ways to get more out of the links that are already stored.
 
 ### 3. Quick switcher
 
-`Ctrl+K` / `Cmd+K` opens a dialog built on `Modal` that lists the notes
-edited last and, once I type, the titles from `GET /notes/titles?q=`, which is
-used as it was. Arrow keys and Enter pick a note, and the cursor lands in its
-text. The arrow key handling moved out of `NoteEditor` into `useActiveOption`
-and is shared with the `[[` suggestions. Beyond the design: Enter pressed
-before the list has caught up with the typing waits for the answer instead of
+`Ctrl+K` (`Cmd+K` on a Mac, where `Ctrl+K` deletes to the end of the line)
+opens a dialog built on `Modal` that lists the notes edited last and, once I
+type, the titles from `GET /notes/titles?q=`, which is used as it was. Arrow
+keys and Enter pick a note, and the cursor lands in its text, or on the
+preview in preview mode. The arrow key handling moved out of `NoteEditor` into
+`useActiveOption` and is shared with the `[[` suggestions. Beyond the design:
+Enter pressed before the list is up to date waits for the answer instead of
 opening a stale row, the note that is already open is left out, and the key
 does nothing while another dialog is open. Still open: notebooks, tags and
 actions in the list. Notes that share a title look the same there, and the
