@@ -27,6 +27,15 @@ services:
       TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-30}
       # Creates demo@example.com / demo-password with sample notes.
       SEED_DEMO: ${SEED_DEMO:-true}
+      # Password reset mails. Unless told otherwise they go to the mailpit
+      # service below. An empty SMTP_HOST switches mail off.
+      SMTP_HOST: ${SMTP_HOST-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_FROM: ${SMTP_FROM:-Notes <notes@localhost>}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Where the links in those mails point.
+      APP_URL: ${APP_URL:-http://localhost:${WEB_PORT:-5181}}
     depends_on:
       db:
         condition: service_healthy
@@ -51,6 +60,20 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  # Catches the mail the API sends and shows it at http://localhost:8041.
+  # Nothing is delivered. The SMTP port stays inside the compose network, and
+  # the web page is bound to this machine only: whoever can read it can open
+  # every password reset link.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8041}:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # Optional, start it with: docker compose --profile backup up -d
   # Dumps the database once a day into BACKUP_DIR and keeps the newest
