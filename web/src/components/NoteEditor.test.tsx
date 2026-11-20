@@ -18,8 +18,8 @@ function baseRoutes(overrides = {}) {
   };
 }
 
-function renderEditor(state?: unknown) {
-  localStorage.setItem('notes.editorMode', 'split');
+function renderEditor(state?: unknown, mode = 'split') {
+  localStorage.setItem('notes.editorMode', mode);
   return renderWithProviders(
     <Routes>
       <Route path="/notes/:noteId" element={<NoteEditor noteId="n1" />} />
@@ -98,6 +98,13 @@ describe('NoteEditor', () => {
     mockFetch(baseRoutes());
     renderEditor({ focusEditor: true });
     expect(await screen.findByLabelText('Note content')).toHaveFocus();
+  });
+
+  it('gives the preview the focus instead when the text is not showing', async () => {
+    mockFetch(baseRoutes());
+    renderEditor({ focusEditor: true }, 'preview');
+    expect(await screen.findByLabelText('Preview')).toHaveFocus();
+    expect(screen.queryByLabelText('Note content')).not.toBeInTheDocument();
   });
 
   it('shows notes in the trash as read-only', async () => {
