@@ -3,16 +3,19 @@
   --surface: #ffffff;
   --surface-2: #f0f0ed;
   --border: #e2e2dd;
+  --control-border: #898986;
   --text: #1f2328;
-  --muted: #6a6f76;
-  --accent: #4f6bed;
+  --muted: #60646b;
+  --accent: #4760d5;
   --accent-soft: #e8ecfd;
   --accent-text: #ffffff;
-  --danger: #c93c37;
+  --danger: #c13a35;
   --danger-soft: #fbe9e8;
+  --danger-text: #ffffff;
   --success: #1f7a4d;
   --mark: #fff1a8;
   --missing: #b0561b;
+  --favourite: #ae7e00;
   --shadow: 0 8px 30px rgb(0 0 0 / 12%);
   --radius: 8px;
   --sidebar-width: 250px;
@@ -27,16 +30,19 @@
   --surface: #1f2024;
   --surface-2: #2a2b30;
   --border: #34363c;
+  --control-border: #747579;
   --text: #e6e6e3;
-  --muted: #9a9ea6;
-  --accent: #7d93ff;
+  --muted: #9c9fa7;
+  --accent: #7f95ff;
   --accent-soft: #2b3155;
   --accent-text: #11131f;
   --danger: #f07a73;
   --danger-soft: #3d2423;
+  --danger-text: #1f1211;
   --success: #6fcf97;
   --mark: #5c5216;
   --missing: #e3a26b;
+  --favourite: #e2a400;
   --shadow: 0 8px 30px rgb(0 0 0 / 45%);
   color-scheme: dark;
 }
@@ -47,16 +53,19 @@
     --surface: #1f2024;
     --surface-2: #2a2b30;
     --border: #34363c;
+    --control-border: #747579;
     --text: #e6e6e3;
-    --muted: #9a9ea6;
-    --accent: #7d93ff;
+    --muted: #9c9fa7;
+    --accent: #7f95ff;
     --accent-soft: #2b3155;
     --accent-text: #11131f;
     --danger: #f07a73;
     --danger-soft: #3d2423;
+    --danger-text: #1f1211;
     --success: #6fcf97;
     --mark: #5c5216;
     --missing: #e3a26b;
+    --favourite: #e2a400;
     --shadow: 0 8px 30px rgb(0 0 0 / 45%);
     color-scheme: dark;
   }
@@ -115,7 +124,7 @@ input,
 select,
 textarea {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   padding: 0.45rem 0.6rem;
 }
@@ -204,7 +213,7 @@ mark {
 .button-danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--danger-text);
 }
 
 .button-danger:hover:not(:disabled) {
@@ -563,7 +572,7 @@ mark {
 }
 
 .flag.favourite {
-  color: #e2a400;
+  color: var(--favourite);
 }
 
 .note-item-excerpt {
@@ -674,8 +683,10 @@ mark {
   width: 100%;
 }
 
+/* No box around the title, but the focus still has to show. */
 .title-input:focus-visible {
   outline: none;
+  box-shadow: 0 2px 0 var(--accent);
 }
 
 .tag-input {
