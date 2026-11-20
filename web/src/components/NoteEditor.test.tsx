@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useParams } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import type { Note } from '../api/types';
+import type { Note, NoteChanges } from '../api/types';
 import { note } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
@@ -53,7 +53,8 @@ describe('NoteEditor', () => {
     await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true), { timeout: 2000 });
     const patches = calls.filter((call) => call.method === 'PATCH');
     expect(patches).toHaveLength(1);
-    expect(patches[0]?.body).toEqual({ title: 'Atlas v2', content: 'Links to [[Atlas data model]].' });
+    // A save names the revision the text was based on.
+    expect(patches[0]?.body).toEqual({ title: 'Atlas v2', content: 'Links to [[Atlas data model]].', revision: 3 });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
   });
 
@@ -117,7 +118,7 @@ describe('NoteEditor', () => {
 
     await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true), { timeout: 2000 });
     expect(calls.filter((call) => call.method === 'PATCH').map((call) => call.body)).toEqual([
-      { title: 'Project Atlas', content: ticked },
+      { title: 'Project Atlas', content: ticked, revision: 3 },
     ]);
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([4, 14]);
   });
@@ -346,6 +347,209 @@ describe('NoteEditor', () => {
       );
       // Two notes, two autosaves and a rewrite: more than the usual test takes.
     }, 15_000);
+  });
+
+  describe('when the note was changed somewhere else', () => {
+    const theirText = 'What the other tab saved.';
+
+    /**
+     * A server on which another tab has saved the note as revision 4, while
+     * the editor opens it from a copy at revision 3. It answers a save the
+     * way the API does: 409 with the current note when the revision is old.
+     */
+    function conflictRoutes(overrides = {}) {
+      let current = note({ content: theirText, revision: 4, updatedAt: '2026-01-02T11:00:00Z' });
+      return baseRoutes({
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+          const { revision, keepVersion: _keepVersion, ...changes } = body as NoteChanges;
+          if (!('title' in changes) && !('content' in changes)) return { body: { ...current, ...changes } };
+          if (revision !== undefined && revision !== current.revision) {
+            const message = 'This note was changed somewhere else since it was opened.';
+            return {
+              status: 409,
+              body: { statusCode: 409, error: 'Conflict', code: 'stale_revision', message, note: current },
+            };
+          }
+          current = { ...current, ...changes, revision: current.revision + 1 };
+          return { body: current };
+        },
+        ...overrides,
+      });
+    }
+
+    const patches = (calls: { method: string; body: unknown }[]) =>
+      calls.filter((call) => call.method === 'PATCH').map((call) => call.body);
+
+    /** Types into the note and waits for the question that the refused save brings up. */
+    async function typeIntoConflict(text = 'What I typed here.') {
+      const textarea = await screen.findByLabelText('Note content');
+      fireEvent.change(textarea, { target: { value: text } });
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      return { textarea, dialog };
+    }
+
+    it.each([
+      ['Keep mine, put theirs in the history', { keepVersion: true }],
+      ['Keep mine', {}],
+    ])('saves my text on the new revision with "%s"', async (choice, extra) => {
+      const calls = mockFetch(conflictRoutes());
+      renderEditor();
+      const { textarea } = await typeIntoConflict();
+      expect(screen.getByRole('status')).toHaveTextContent('Not saved. This note was changed somewhere else.');
+
+      await userEvent.click(screen.getByRole('button', { name: choice }));
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(textarea).toHaveValue('What I typed here.');
+      expect(patches(calls)).toEqual([
+        { title: 'Project Atlas', content: 'What I typed here.', revision: 3 },
+        { title: 'Project Atlas', content: 'What I typed here.', revision: 4, ...extra },
+      ]);
+
+      // Later saves go on from the revision that save produced, without the extra.
+      fireEvent.change(textarea, { target: { value: 'And one more line.' } });
+      await waitFor(() => expect(patches(calls)).toHaveLength(3), { timeout: 2000 });
+      expect(patches(calls)[2]).toEqual({ title: 'Project Atlas', content: 'And one more line.', revision: 5 });
+    });
+
+    it('puts their text into the editor with "Take theirs" and sends nothing', async () => {
+      const calls = mockFetch(conflictRoutes());
+      renderEditor();
+      const { textarea } = await typeIntoConflict();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Take theirs' }));
+      expect(textarea).toHaveValue(theirText);
+      expect(screen.getByRole('status')).toHaveTextContent(/^Saved/);
+      expect(patches(calls)).toHaveLength(1);
+
+      fireEvent.change(textarea, { target: { value: `${theirText} And mine.` } });
+      await waitFor(() => expect(patches(calls)).toHaveLength(2), { timeout: 2000 });
+      expect(patches(calls)[1]).toEqual({ title: 'Project Atlas', content: `${theirText} And mine.`, revision: 4 });
+    });
+
+    it('decides nothing when the question is closed, and keeps my text until I choose', async () => {
+      const calls = mockFetch(conflictRoutes());
+      renderEditor();
+      const { textarea } = await typeIntoConflict();
+
+      await userEvent.keyboard('{Escape}');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(textarea).toHaveValue('What I typed here.');
+      expect(screen.getByRole('alert')).toHaveTextContent('what you typed here is not saved');
+      // Closing the tab now makes the browser ask first.
+      const closing = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(closing);
+      expect(closing.defaultPrevented).toBe(true);
+
+      // Typing on is kept but not sent, and neither is a save by hand: it brings the question back.
+      fireEvent.change(textarea, { target: { value: 'What I typed here. And more.' } });
+      await userEvent.keyboard('{Control>}s{/Control}');
+      expect(await screen.findByRole('dialog', { name: 'This note was changed somewhere else' })).toBeInTheDocument();
+      expect(patches(calls)).toHaveLength(1);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
+      await waitFor(() => expect(patches(calls)).toHaveLength(2));
+      expect(patches(calls)[1]).toEqual({
+        title: 'Project Atlas',
+        content: 'What I typed here. And more.',
+        revision: 4,
+      });
+    });
+
+    it('saves my text and keeps theirs in the history when the note is left with the question open', async () => {
+      const calls = mockFetch(conflictRoutes());
+      const { unmount } = renderEditor();
+      await typeIntoConflict();
+      await userEvent.keyboard('{Escape}');
+
+      unmount();
+      await waitFor(() => expect(patches(calls)).toHaveLength(2));
+      expect(patches(calls)[1]).toEqual({
+        title: 'Project Atlas',
+        content: 'What I typed here.',
+        revision: 4,
+        keepVersion: true,
+      });
+    });
+
+    it('takes a refused save for saved when the server already has exactly that text', async () => {
+      // The answer to an earlier save got lost, so the same text is sent again from the old revision.
+      const calls = mockFetch(conflictRoutes());
+      renderEditor();
+      const textarea = await screen.findByLabelText('Note content');
+      fireEvent.change(textarea, { target: { value: theirText } });
+
+      await waitFor(() => expect(patches(calls)).toHaveLength(1), { timeout: 2000 });
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      fireEvent.change(textarea, { target: { value: 'Next edit.' } });
+      await waitFor(() => expect(patches(calls)).toHaveLength(2), { timeout: 2000 });
+      expect(patches(calls)[1]).toMatchObject({ content: 'Next edit.', revision: 4 });
+    });
+
+    it('never conflicts on a pin, and does not take the revision of its answer for the text', async () => {
+      // The answer to the pin carries revision 4, but the text in the editor is still the one of revision 3.
+      const calls = mockFetch(conflictRoutes());
+      renderEditor();
+      await userEvent.click(await screen.findByRole('button', { name: 'Pin' }));
+      await waitFor(() => expect(patches(calls)).toEqual([{ pinned: true }]));
+      expect(await screen.findByRole('button', { name: 'Unpin' })).toBeInTheDocument();
+
+      await typeIntoConflict();
+      expect(patches(calls)[1]).toMatchObject({ content: 'What I typed here.', revision: 3 });
+    });
+  });
+
+  it('saves what is typed before a version is restored, and goes on from the restored revision', async () => {
+    const version = { id: 'v1', title: 'Project Atlas', characters: 9, createdAt: '2026-01-01T10:00:00Z' };
+    const calls = mockFetch(
+      baseRoutes({
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => ({
+          body: { ...note(), ...(body as object), revision: 4 },
+        }),
+        'GET /api/notes/n1/versions': { body: [version] },
+        'GET /api/notes/n1/versions/v1': { body: { ...version, content: 'Old text.' } },
+        'POST /api/notes/n1/versions/v1/restore': { body: note({ content: 'Old text.', revision: 5 }) },
+      }),
+    );
+    renderEditor();
+    const textarea = await screen.findByLabelText('Note content');
+    fireEvent.change(textarea, { target: { value: 'Typed a moment ago.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore this version' }));
+
+    await waitFor(() => expect(textarea).toHaveValue('Old text.'));
+    // The draft went to the server first, where the restore keeps it as a version.
+    const sent = calls.filter((call) => call.method !== 'GET').map((call) => `${call.method} ${call.url}`);
+    expect(sent).toEqual(['PATCH /api/notes/n1', 'POST /api/notes/n1/versions/v1/restore']);
+    expect(calls.find((call) => call.method === 'PATCH')?.body).toMatchObject({ content: 'Typed a moment ago.' });
+
+    fireEvent.change(textarea, { target: { value: 'Old text. Plus this.' } });
+    await waitFor(() => expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(2), { timeout: 2000 });
+    expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 5 });
+  });
+
+  it('does not restore a version while what is typed cannot be saved', async () => {
+    const version = { id: 'v1', title: 'Project Atlas', characters: 9, createdAt: '2026-01-01T10:00:00Z' };
+    const calls = mockFetch(
+      baseRoutes({
+        'PATCH /api/notes/n1': { status: 500, body: { message: 'Internal server error' } },
+        'GET /api/notes/n1/versions': { body: [version] },
+        'GET /api/notes/n1/versions/v1': { body: { ...version, content: 'Old text.' } },
+      }),
+    );
+    renderEditor();
+    const textarea = await screen.findByLabelText('Note content');
+    fireEvent.change(textarea, { target: { value: 'Typed a moment ago.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore this version' }));
+
+    expect(
+      await screen.findByText(/Your latest changes are not saved yet, so nothing was restored/),
+    ).toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    expect(textarea).toHaveValue('Typed a moment ago.');
   });
 
   it('shows notes in the trash as read-only', async () => {
