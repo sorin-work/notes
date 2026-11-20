@@ -184,6 +184,38 @@ export class SharesService {
   }
 
   /**
+   * Fresh signed addresses of a shared note's own files, for a page that has
+   * been open longer than they work. The same checks as reading the note,
+   * password or proof of it included, and not counted as a view. `noteId`
+   * is for a note of a shared notebook, null for a link to one note.
+   */
+  async attachmentUrls(
+    token: string,
+    noteId: string | null,
+    viewer: ShareViewer = {},
+    now = new Date(),
+  ): Promise<Record<string, string>> {
+    const open = await this.open(token, viewer, now);
+    const where = this.noteWhere(open, noteId);
+    const note = await this.prisma.note.findFirst({
+      where,
+      select: { attachments: { select: { id: true, userId: true } } },
+    });
+    if (!note) throw new NotFoundException(GONE);
+    return this.attachments.urls(note.attachments, now.getTime());
+  }
+
+  /** Which note a reader asks for: the link's own, or one of its notebook's. Null when the link has no such note. */
+  private noteWhere(open: OpenShare, noteId: string | null) {
+    if (noteId === null) {
+      if (!open.share.noteId) throw new NotFoundException(GONE);
+      return { id: open.share.noteId, userId: open.ownerId, deletedAt: null };
+    }
+    if (!open.notebookIds) throw new NotFoundException(GONE);
+    return { id: noteId, notebookId: { in: open.notebookIds }, userId: open.ownerId, ...WORKING_NOTE };
+  }
+
+  /**
    * The checks every reader goes through, in an order that matters. "Gone"
    * comes first, so a link that has run out looks like any dead link and
    * not like a prompt, password or not. Then the password, or proof of it.

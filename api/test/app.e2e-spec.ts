@@ -707,6 +707,8 @@ describe('api tokens', () => {
       'PasswordResetController.confirm',
       'PasswordResetController.request',
       'PasswordResetController.status',
+      'PublicSharesController.attachments',
+      'PublicSharesController.noteAttachments',
       'PublicSharesController.unlock',
       'PublicSharesController.view',
       'PublicSharesController.viewNote',
@@ -2130,12 +2132,35 @@ describe('attachments', () => {
       .expect(200);
     const share = await request(server).post(`/api/notes/${noteId}/share`).set(owner.auth).expect(200);
 
-    const read = await request(server)
-      .get(`/api/public/notes/${share.body.token as string}`)
-      .expect(200);
+    const link = `/api/public/notes/${share.body.token as string}`;
+    const read = await request(server).get(link).expect(200);
     expect(Object.keys(read.body.attachments)).toEqual([shown.body.id]);
     await request(server)
       .get(read.body.attachments[shown.body.id] as string)
+      .expect(200);
+
+    // New addresses later on, for the same files only, and not counted as a view.
+    const views = async () =>
+      (await request(server).get(`/api/notes/${noteId}/share`).set(owner.auth)).body.share.viewCount as number;
+    const before = await views();
+    const fresh = await request(server).get(`${link}/attachments`).expect(200);
+    expect(Object.keys(fresh.body)).toEqual([shown.body.id]);
+    await request(server)
+      .get(fresh.body[shown.body.id] as string)
+      .expect(200);
+    expect(await views()).toBe(before);
+
+    // Behind a password, they need the password or the proof of it, like the note.
+    await request(server)
+      .patch(`/api/notes/${noteId}/share`)
+      .set(owner.auth)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    await request(server).get(`${link}/attachments`).expect(403);
+    const opened = await request(server).post(link).send({ password: 'open sesame' }).expect(200);
+    await request(server)
+      .get(`${link}/attachments`)
+      .set('X-Share-Access', opened.body.access as string)
       .expect(200);
   });
 
