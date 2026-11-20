@@ -112,7 +112,11 @@ export class LinksService {
     return note;
   }
 
-  private async resolveKeys(userId: string, keys: string[]): Promise<Map<string, string>> {
+  /**
+   * For each normalised title that some note outside the trash has, the id
+   * of that note: the most recently edited one when several share a title.
+   */
+  async resolveKeys(userId: string, keys: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     if (keys.length === 0) return result;
     // Titles are matched case-insensitively. Prisma cannot express

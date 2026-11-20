@@ -1,4 +1,4 @@
-import { extractWikiLinks, isLinkable, normalizeTitle, renameLinks } from './wikilinks';
+import { extractWikiLinks, isLinkable, normalizeTitle, renameLinks, unlinkExcept } from './wikilinks';
 
 describe('extractWikiLinks', () => {
   it('finds links and aliases', () => {
@@ -149,5 +149,35 @@ describe('isLinkable', () => {
 describe('normalizeTitle', () => {
   it('lower-cases and collapses whitespace', () => {
     expect(normalizeTitle('  Project   Atlas ')).toBe('project atlas');
+  });
+});
+
+describe('unlinkExcept', () => {
+  const shared = (key: string) => key === 'starter';
+
+  it('keeps the links a reader may follow and writes the others out as their text', () => {
+    expect(unlinkExcept('See [[Starter]] and [[ starter |my starter]], not [[Secret plan]].', shared)).toBe(
+      'See [[Starter]] and [[ starter |my starter]], not Secret plan.',
+    );
+  });
+
+  it('leaves no trace of a title that was behind an alias, or of a heading', () => {
+    const text = unlinkExcept(
+      '[[Secret plan|a plan]] and [[Secret plan#Budget]] and [[Budget 2026#Q1|numbers]]',
+      shared,
+    );
+    expect(text).toBe('a plan and Secret plan and numbers');
+    expect(text).not.toContain('Budget 2026');
+  });
+
+  it('does not touch code, and copes with a note that has no links', () => {
+    const code = 'Use `[[Secret plan|x]]` like this:\n\n```\n[[Secret plan|y]]\n```\n';
+    expect(unlinkExcept(code, shared)).toBe(code);
+    expect(unlinkExcept('Nothing to see.', shared)).toBe('Nothing to see.');
+    expect(unlinkExcept('', shared)).toBe('');
+  });
+
+  it('treats every link the same when none may be followed', () => {
+    expect(unlinkExcept('[[A]] [[B|b]] [[C]]', () => false)).toBe('A b C');
   });
 });
