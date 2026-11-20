@@ -27,6 +27,7 @@ model User {
   apiTokens      ApiToken[]
   memberships    NotebookMember[]
   invitesSent    NotebookInvite[]
+  inviteSends    InviteSend[]
   attachments    Attachment[]
 
   @@map("users")
@@ -285,4 +286,22 @@ model Attachment {
   @@index([noteId])
   @@index([userId])
   @@map("attachments")
+}
+
+/// One invitation sent, kept for the limits on sending: per inviting account
+/// an hour and per address a day. Rows are only ever added, and pruned once
+/// they are older than a day, so withdrawing or renewing an invitation does
+/// not make room for more mail.
+model InviteSend {
+  id          String   @id @default(uuid()) @db.Uuid
+  invitedById String   @map("invited_by_id") @db.Uuid
+  /// Lower case, as the invitation has it.
+  email       String
+  sentAt      DateTime @default(now()) @map("sent_at")
+
+  invitedBy User @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([invitedById, sentAt])
+  @@index([email, sentAt])
+  @@map("invite_sends")
 }

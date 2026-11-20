@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { AcceptInviteDto, InviteDto, MemberRoleDto } from './dto/member.dto';
-import { InviteView, MembersService, MemberView, ReceivedInvite } from './members.service';
+import { InviteView, MembersService, MemberView } from './members.service';
 
 /**
  * Who a notebook is shared with. Closed to API tokens, like the other routes
@@ -66,35 +66,15 @@ export class MembersController {
   }
 }
 
-/** Invitations to the signed-in account. */
+/** Accepting an invitation, by the token of its link. */
 @Controller('invites')
 export class InvitesController {
   constructor(private readonly members: MembersService) {}
 
-  /** Open invitations to the address of this account. */
-  @Get()
-  received(@CurrentUser() user: AuthUser): Promise<ReceivedInvite[]> {
-    return this.members.received(user.id);
-  }
-
-  /** Accepts an invitation by the token in its mail. The account has to have the invited address. */
+  /** Accepts an invitation by the token of its link. The account presenting it joins. */
   @Post('accept')
   @HttpCode(HttpStatus.OK)
   acceptByToken(@CurrentUser() user: AuthUser, @Body() dto: AcceptInviteDto): Promise<{ notebookId: string }> {
     return this.members.acceptByToken(user.id, dto.token);
-  }
-
-  /** Accepts an invitation shown in the app. */
-  @Post(':id/accept')
-  @HttpCode(HttpStatus.OK)
-  accept(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<{ notebookId: string }> {
-    return this.members.accept(user.id, id);
-  }
-
-  /** Turns an invitation down. */
-  @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  decline(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
-    return this.members.decline(user.id, id);
   }
 }

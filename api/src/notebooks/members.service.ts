@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -19,15 +21,18 @@ import { PrismaService } from '../prisma/prisma.service';
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Open invitations a notebook can have at a time. */
 export const MAX_OPEN_INVITES = 20;
-/** Invitations one account can send in an hour, so the mail cannot be used to flood an address. */
+/** Invitations one account can send in an hour. */
 export const MAX_INVITES_PER_HOUR = 10;
+/** Invitations one address can be sent in a day, whoever sends them, so the mail cannot be used to flood it. */
+export const MAX_INVITES_PER_ADDRESS_PER_DAY = 3;
 
 const INVITE_GONE = 'This invitation does not work any more. Ask for a new one.';
 
 export interface MemberView {
   userId: string;
   name: string;
-  email: string;
+  /** Only for the owner. Members see each other's names, not their addresses. */
+  email?: string;
   role: MemberRole;
   since: Date;
 }
@@ -37,15 +42,12 @@ export interface InviteView {
   email: string;
   role: MemberRole;
   expiresAt: Date;
-}
-
-/** An invitation as the invited account sees it in the app. */
-export interface ReceivedInvite {
-  id: string;
-  notebook: { id: string; name: string };
-  from: { name: string };
-  role: MemberRole;
-  expiresAt: Date;
+  /**
+   * The link to accept with, only in the answer to the invitation itself and
+   * only when the server cannot send mail: the owner passes it on. It is
+   * never stored, so it cannot be shown again.
+   */
+  link?: string;
 }
 
 /**
@@ -104,7 +106,7 @@ export class MembersService {
       members: notebook.members.map((member) => ({
         userId: member.user.id,
         name: member.user.name,
-        email: member.user.email,
+        ...(granted.access === 'owner' ? { email: member.user.email } : {}),
         role: member.role,
         since: member.createdAt,
       })),
@@ -116,9 +118,10 @@ export class MembersService {
   }
 
   /**
-   * Invites an address. An account that has it sees the invitation in the
-   * app; a mail with a link goes out as well when the server can send mail.
-   * Inviting an address again renews its invitation with the new role.
+   * Invites an address. The invitation is accepted with the token of its
+   * link, which goes out by mail when the server can send mail, and is
+   * otherwise handed to the owner once, in this answer, to pass on. Inviting
+   * an address again renews its invitation with a new token and role.
    */
   async invite(
     ownerId: string,
@@ -144,16 +147,31 @@ export class MembersService {
     const invite = await this.prisma.$transaction(async (tx) => {
       // Invitations by one account wait for each other here, so the limits below count right.
       await tx.$queryRaw`SELECT id FROM users WHERE id = ${ownerId}::uuid FOR UPDATE`;
+      const day = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      await tx.inviteSend.deleteMany({ where: { sentAt: { lte: day } } });
       await tx.notebookInvite.deleteMany({ where: { expiresAt: { lte: now } } });
-      const lastHour = await tx.notebookInvite.count({
-        where: { invitedById: ownerId, createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) } },
+      // Counted from the sends, which only ever grow within the hour and the
+      // day: withdrawing or renewing an invitation does not make room.
+      const lastHour = await tx.inviteSend.count({
+        where: { invitedById: ownerId, sentAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) } },
       });
       if (lastHour >= MAX_INVITES_PER_HOUR) {
-        throw new BadRequestException('That is a lot of invitations for one hour. Try again later.');
+        throw new HttpException(
+          'That is a lot of invitations for one hour. Try again later.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      const toAddress = await tx.inviteSend.count({ where: { email, sentAt: { gt: day } } });
+      if (toAddress >= MAX_INVITES_PER_ADDRESS_PER_DAY) {
+        throw new HttpException(
+          'This address has had enough invitations for today. Try again tomorrow.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
       }
       const open = await tx.notebookInvite.count({ where: { notebookId, email: { not: email } } });
       if (open >= MAX_OPEN_INVITES)
         throw new BadRequestException('This notebook has as many open invitations as it can.');
+      await tx.inviteSend.create({ data: { invitedById: ownerId, email, sentAt: now } });
       const data = {
         role,
         tokenHash: hashResetToken(token),
@@ -168,13 +186,14 @@ export class MembersService {
       });
     });
 
-    if (this.mail.enabled) {
-      // In the fragment, as with the reset link, so the token stays out of access logs.
-      this.mail.send(inviteMail(email, `${this.config.appUrl}/invites#token=${token}`)).catch((error: unknown) => {
-        this.logger.error(`Could not send an invitation mail (${failureKind(error)})`);
-      });
-    }
-    return { id: invite.id, email: invite.email, role: invite.role, expiresAt: invite.expiresAt };
+    // In the fragment, as with the reset link, so the token stays out of access logs.
+    const link = `${this.config.appUrl}/invites#token=${token}`;
+    const view: InviteView = { id: invite.id, email: invite.email, role: invite.role, expiresAt: invite.expiresAt };
+    if (!this.mail.enabled) return { ...view, link };
+    this.mail.send(inviteMail(email, link)).catch((error: unknown) => {
+      this.logger.error(`Could not send an invitation mail (${failureKind(error)})`);
+    });
+    return view;
   }
 
   /** Withdraws an invitation that is still open. */
@@ -205,57 +224,25 @@ export class MembersService {
     if (removed.count === 0) throw new NotFoundException('No such member');
   }
 
-  /** The open invitations to the address of this account. */
-  async received(userId: string, now = new Date()): Promise<ReceivedInvite[]> {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true } });
-    const invites = await this.prisma.notebookInvite.findMany({
-      where: { email: user.email, expiresAt: { gt: now } },
-      include: { notebook: { select: { id: true, name: true } }, invitedBy: { select: { name: true } } },
-      orderBy: { createdAt: 'asc' },
-    });
-    return invites.map((invite) => ({
-      id: invite.id,
-      notebook: invite.notebook,
-      from: { name: invite.invitedBy.name },
-      role: invite.role,
-      expiresAt: invite.expiresAt,
-    }));
-  }
-
-  /** Accepts an invitation in the app. Only the account with the invited address can. */
-  async accept(userId: string, inviteId: string): Promise<{ notebookId: string }> {
-    const invite = await this.prisma.notebookInvite.findUnique({ where: { id: inviteId } });
-    return this.join(userId, invite);
-  }
-
   /**
-   * Accepts an invitation by the token in its mail. As with a reset link, the
-   * token works once and only until it runs out. It is also tied to the
-   * address it went to: whoever is signed in has to have that address, so a
-   * forwarded link is no use to someone else.
+   * Accepts an invitation by the token of its link, the only way to accept
+   * one. As with a reset link, the token works once and only until it runs
+   * out. The account that presents it joins, whatever its address: the token
+   * is the proof, not an address, which nobody here has checked.
    */
   async acceptByToken(userId: string, token: string): Promise<{ notebookId: string }> {
     const invite = await this.prisma.notebookInvite.findUnique({ where: { tokenHash: hashResetToken(token) } });
     return this.join(userId, invite);
   }
 
-  /** Turns an invitation down. It goes, and the owner can invite again. */
-  async decline(userId: string, inviteId: string): Promise<void> {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true } });
-    await this.prisma.notebookInvite.deleteMany({ where: { id: inviteId, email: user.email } });
-  }
-
   private async join(userId: string, invite: NotebookInvite | null, now = new Date()): Promise<{ notebookId: string }> {
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true } });
     if (!invite || invite.expiresAt.getTime() <= now.getTime()) throw new NotFoundException(INVITE_GONE);
-    if (invite.email !== user.email) {
-      throw new ForbiddenException('This invitation is for another address. Sign in with the address it was sent to.');
-    }
     const notebook = await this.prisma.notebook.findUnique({
       where: { id: invite.notebookId },
       select: { userId: true },
     });
-    if (!notebook || notebook.userId === userId) throw new NotFoundException(INVITE_GONE);
+    if (!notebook) throw new NotFoundException(INVITE_GONE);
+    if (notebook.userId === userId) throw new BadRequestException('This notebook is yours already.');
     await this.prisma.$transaction(async (tx) => {
       // Used once: the delete decides which of two accepts at the same moment counts.
       const used = await tx.notebookInvite.deleteMany({ where: { id: invite.id } });
