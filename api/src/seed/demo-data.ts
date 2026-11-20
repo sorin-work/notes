@@ -145,7 +145,7 @@ const retro = `# Sprint retro notes
 
 **Could be better**
 
-- Too many meetings on Wednesdays
+- Too many meetings on Wednesdays, the Atlas weekly sync among them
 - Flaky end-to-end tests blocked two merges
 
 **We will try**
