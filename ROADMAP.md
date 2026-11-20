@@ -321,11 +321,13 @@ A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
 `sleep` rather than cron. It reads the age of the newest dump from the file
 names when it starts, so a restart does not add one, and then looks at the
 clock every minute. Beyond the design, the same script restores
-(`backup restore <file>`), loading the dump into a new database that replaces
-the old one only when the load worked. The README has the commands, and CI
-runs `scripts/check-backup.sh` after the end-to-end tests: the loop and the
-pruning against clocks that are wrong, three dumps while keeping two, a
-restore into a scratch database and a row count of every table. Still open:
+(`backup restore <file>`), loading the dump into a new database that takes
+the place of the old one in a single transaction, and only when the load
+worked. The README has the commands, and CI runs `scripts/check-backup.sh`
+after the end-to-end tests: the loop and the pruning against clocks that are
+wrong, three dumps while keeping two, a restore into a scratch database and
+over one that holds something else, and a row count of every table. Still
+open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.

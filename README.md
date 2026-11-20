@@ -213,7 +213,11 @@ After each dump only the newest seven are kept. Files with any other name are
 left alone: rename a dump to keep it for good. How old a dump is, and which
 ones are the oldest, is read from the time in the file name and never from
 the file's modification time. A dump dated in the future, which is what a
-clock that was set back leaves behind, counts as made now and not as overdue.
+clock that was wrong leaves behind, counts as made now and not as overdue.
+Such dumps are never removed and do not count towards the seven, so they
+cannot push out the real ones. The same goes for a name with a day that does
+not exist, such as 31 February. Every run names them in a warning in the
+log, and deleting them is up to you.
 
 | Variable                  | Default     | Purpose                               |
 | ------------------------- | ----------- | ------------------------------------- |
@@ -227,22 +231,29 @@ A dump right now, for example before an upgrade:
 docker compose --profile backup run --rm backup once
 ```
 
-To restore, stop the API, name the dump and start the API again:
+To restore, stop what is connected to the database, name the dump and start
+things again. That is the API, and the backup service too, since a dump that
+is being made holds a connection as well:
 
 ```bash
-docker compose stop api
+docker compose --profile backup stop api backup
 docker compose --profile backup run --rm backup restore notes-20261120T030000Z.dump
-docker compose start api
+docker compose --profile backup start api backup
 ```
 
+Leave `backup` out of the first and the last line if you do not run the
+backup service.
+
 `restore` without a file name lists the dumps. The restore replaces the whole
-database, so everything written after the dump is gone. The dump is loaded
-into a new database first, and that one takes the place of the old one only
-when the load worked: a damaged file, or an API that is still running, leaves
-the data as it was. Should the very last step fail, giving the new database
-its name, the script says where the restored data is and prints the command
-that finishes the job. When the API starts again it applies any migrations
-that are newer than the dump.
+database, so everything written after the dump is gone. It goes in three
+steps. The dump is loaded into a new database. Then, in one transaction, the
+old database is renamed aside and the new one gets its name. Last, the old
+one is dropped. So a damaged file leaves the data as it was, and so does
+anything still connected to the database: the script then lists who is
+connected. At no point is there no database, also if the restore is killed
+half way. If only the last step fails, the restore is done and the script
+says which old copy is left to remove. When the API starts again it applies
+any migrations that are newer than the dump.
 
 After losing the volume, or on another machine, it is the same command: put
 the dump in `./backups`, run the `restore` line (it starts the database by
@@ -362,7 +373,11 @@ It starts with `scripts/check-backup-loop.sh`, which needs neither Docker nor
 a database and can be run by itself. That one drives the daily loop with
 stand-ins for `pg_dump` and `sleep` and with dump files dated in the past and
 in the future, and fails if the loop makes more than one dump, makes two
-without a pause, or leaves fewer dumps behind than it should.
+without a pause, or leaves fewer dumps behind than it should. It also walks
+a restore through its steps with stand-ins and fails if the database would
+be touched when the dump does not load or the swap is refused. With the real
+database the check then restores over a database that holds something else,
+tries a damaged dump, and tries with a second client connected.
 
 ## Project layout
 
