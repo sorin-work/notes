@@ -1121,6 +1121,39 @@ describe('renaming a note', () => {
 });
 
 describe('orphans and unlinked mentions', () => {
+  it('stays responsive while a note holds the parser up, and does not try that note again until it changes', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body.id as string;
+    const target = await post({ title: 'Atlas' });
+    const fill = (piece: string) => piece.repeat(Math.floor(99_000 / piece.length)) + ' Atlas';
+    // The inputs that held the parser for seconds to a minute, each under the limits.
+    // Written to the database directly: a request body that size is refused before it gets here.
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    const prisma = app.get(PrismaService);
+    for (const piece of ['> - > - Atlas\n', '*_', '>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Atlas\n']) {
+      await prisma.note.create({
+        data: { userId: me.body.id as string, title: `Hostile ${piece.length}`, content: fill(piece) },
+      });
+    }
+    await post({ title: 'Plain', content: 'We met about the atlas.' });
+
+    const listing = request(server).get(`/api/notes/${target}/mentions`).set(auth);
+    const started = Date.now();
+    // While the list waits on the workers, another request is answered at once.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await request(server).get('/api/notes').set(auth).expect(200);
+    expect(Date.now() - started).toBeLessThan(400);
+    const mentions = await listing.expect(200);
+    expect(mentions.body.items.map((item: { title: string }) => item.title)).toEqual(['Plain']);
+
+    // The second time the hostile notes are known and cost nothing.
+    const again = Date.now();
+    await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
+    expect(Date.now() - again).toBeLessThan(400);
+  });
+
   it('lists the notes with no links in or out', async () => {
     const { auth } = await signUp();
     const server = app.getHttpServer();
