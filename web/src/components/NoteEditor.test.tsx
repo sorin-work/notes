@@ -67,15 +67,20 @@ describe('NoteEditor', () => {
       }),
     );
     renderEditor();
-    const select = await screen.findByLabelText('Notebook');
-    await screen.findByRole('option', { name: 'Recipes' });
+    // The notebook of a note is picked from a list that opens under its button.
+    const pick = async (name: string) => {
+      await userEvent.click(await screen.findByRole('button', { name: /^Notebook:/ }));
+      await userEvent.click(
+        within(screen.getByRole('group', { name: 'Notebook, pick one' })).getByRole('button', { name }),
+      );
+    };
     const patches = () => calls.filter((call) => call.method === 'PATCH');
 
     // A notebook nobody can read: no question.
-    await userEvent.selectOptions(select, 'nb-work');
+    await pick('Work');
     await waitFor(() => expect(patches()).toHaveLength(1));
 
-    await userEvent.selectOptions(select, 'nb-recipes');
+    await pick('Recipes');
     expect(await screen.findByRole('dialog', { name: 'Make this note public?' })).toHaveTextContent(
       'can be read by anyone who has that link',
     );
@@ -83,7 +88,7 @@ describe('NoteEditor', () => {
     expect(patches()).toHaveLength(1);
     expect(screen.queryByText(/can read this note/)).not.toBeInTheDocument();
 
-    await userEvent.selectOptions(select, 'nb-recipes');
+    await pick('Recipes');
     await userEvent.click(await screen.findByRole('button', { name: 'Move it' }));
     await waitFor(() => expect(patches()).toHaveLength(2));
     expect(patches()[1]?.body).toEqual({ notebookId: 'nb-recipes' });
@@ -170,6 +175,28 @@ describe('NoteEditor', () => {
     // A save names the revision the text was based on.
     expect(patches[0]?.body).toEqual({ title: 'Atlas v2', content: 'Links to [[Atlas data model]].', revision: 3 });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
+  });
+
+  it('asks for the unlinked mentions again after a save only when the title changed', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1/mentions': { body: { items: [], total: 0, page: 1, pageSize: 10, capped: false } },
+      }),
+    );
+    renderEditor();
+    const count = (path: string) => calls.filter((call) => call.method === 'GET' && call.url.includes(path)).length;
+    const saves = () => calls.filter((call) => call.method === 'PATCH').length;
+    await waitFor(() => expect(count('/mentions')).toBe(1));
+
+    await userEvent.type(screen.getByLabelText('Note content'), ' More.');
+    await waitFor(() => expect(saves()).toBe(1), { timeout: 2000 });
+    // The backlinks are asked for again after the save, the mentions are not.
+    await waitFor(() => expect(count('/backlinks')).toBe(2));
+    expect(count('/mentions')).toBe(1);
+
+    await userEvent.type(screen.getByLabelText('Title'), ' v2');
+    await waitFor(() => expect(saves()).toBe(2), { timeout: 2000 });
+    await waitFor(() => expect(count('/mentions')).toBe(2));
   });
 
   it('pins the note straight away', async () => {

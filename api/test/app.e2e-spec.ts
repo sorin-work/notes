@@ -23,6 +23,8 @@ import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
+import { MAX_GRAPH_NODES } from '../src/links/links.service';
+import { PARSE_DEADLINE_MS, ParsePool, TOTAL_DEADLINE_MS } from '../src/links/parse-pool';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { TrashService } from '../src/trash/trash.service';
 import { setupApp } from '../src/setup-app';
@@ -728,6 +730,8 @@ describe('api tokens', () => {
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AttachmentsController',
       'AuthController',
+      'LinksController',
+      'MentionsController',
       'NoteAttachmentsController',
       'NotebookSharesController',
       'NotebooksController',
@@ -847,9 +851,10 @@ describe('links and search', () => {
       .expect(201);
 
     const links = await request(server).get(`/api/notes/${source.body.id}/links`).set(auth).expect(200);
+    // In the order of their title keys.
     expect(links.body).toEqual([
-      { title: 'project atlas', noteId: target.body.id },
       { title: 'Missing note', noteId: null },
+      { title: 'project atlas', noteId: target.body.id },
     ]);
 
     const backlinks = await request(server).get(`/api/notes/${target.body.id}/backlinks`).set(auth).expect(200);
@@ -1038,8 +1043,8 @@ describe('renaming a note', () => {
     );
     const links = await request(server).get(`/api/notes/${ideas.id}/links`).set(auth).expect(200);
     expect(links.body).toEqual([
-      { title: 'Project Atlas', noteId: target.id },
       { title: 'Other', noteId: null },
+      { title: 'Project Atlas', noteId: target.id },
     ]);
 
     // Left alone: plain text, the trash, and other people's notes.
@@ -1140,6 +1145,211 @@ describe('renaming a note', () => {
     expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(2);
     expect((await getNote(auth, first.id)).content).toBe('One [[Project Atlas]].');
     expect((await getNote(auth, second.id)).content).toBe('Two [[Project Atlas]].');
+  });
+});
+
+describe('orphans and unlinked mentions', () => {
+  it('stays responsive while a note holds the parser up, and does not try that note again until it changes', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body.id as string;
+    const target = await post({ title: 'Atlas' });
+    const fill = (piece: string) => piece.repeat(Math.floor(99_000 / piece.length)) + ' Atlas';
+    // The inputs that held the parser for seconds to a minute, each under the limits.
+    // Written to the database directly: a request body that size is refused before it gets here.
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    const prisma = app.get(PrismaService);
+    for (const piece of ['> - > - Atlas\n', '*_', '>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Atlas\n']) {
+      await prisma.note.create({
+        data: { userId: me.body.id as string, title: `Hostile ${piece.length}`, content: fill(piece) },
+      });
+    }
+    await post({ title: 'Plain', content: 'We met about the atlas.' });
+    // Room for the small note on a busy machine. The hostile ones take far longer than that.
+    const pool = app.get(ParsePool);
+    pool.deadline = 2_000;
+    // And for a stopped worker's place to be taken: under Jest a new one compiles its TypeScript first.
+    pool.totalDeadline = 10_000;
+
+    const listing = request(server).get(`/api/notes/${target}/mentions`).set(auth);
+    const started = Date.now();
+    // While the list waits on the workers, another request is answered at once.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await request(server).get('/api/notes').set(auth).expect(200);
+    expect(Date.now() - started).toBeLessThan(400);
+    const mentions = await listing.expect(200);
+    expect(mentions.body.items.map((item: { title: string }) => item.title)).toEqual(['Plain']);
+
+    // Each note is tried once for its revision. Once all of them have been, a list asks the workers nothing.
+    for (let i = 0; i < 3; i++) await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
+    const run = jest.spyOn(pool, 'run');
+    await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
+    expect(run).not.toHaveBeenCalled();
+    run.mockRestore();
+    pool.deadline = PARSE_DEADLINE_MS;
+    pool.totalDeadline = TOTAL_DEADLINE_MS;
+  });
+
+  it('lists the notes with no links in or out', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body.id as string;
+
+    await post({ title: 'Hub', content: 'See [[ atlas  PLAN ]] and [[Nowhere]].' });
+    await post({ title: 'Atlas plan', content: 'No links here.' });
+    const alone = await post({ title: 'Alone', content: 'Mentions Hub in plain words only.', tags: ['solo'] });
+    const trashed = await post({ title: 'Gone', content: 'See [[Stray]].' });
+    const stray = await post({ title: 'Stray', content: 'Only linked from the trash.' });
+    await request(server).delete(`/api/notes/${trashed}`).set(auth).expect(204);
+    // A link connects two notes outside the trash. These three lead nowhere of that kind.
+    const dangling = await post({ title: 'Dangling', content: 'Only to [[A note that is missing]].' });
+    const selfish = await post({ title: 'Selfish', content: 'Only to [[Selfish]] itself.' });
+    const lost = await post({ title: 'Lost', content: 'Only to [[Gone]], which is in the trash.' });
+    // A template is in no list, and its links connect nothing.
+    await post({ title: 'Meeting template', content: 'Notes for [[Alone]].', isTemplate: true });
+
+    const orphans = async (query = '') => {
+      const response = await request(server).get(`/api/notes?orphans=true&sort=title${query}`).set(auth).expect(200);
+      return response.body.items.map((note: { id: string }) => note.id) as string[];
+    };
+    // "Hub" links to "Atlas plan", which makes neither of them an orphan.
+    expect(await orphans()).toEqual([alone, dangling, lost, selfish, stray]);
+    expect(await orphans('&tag=solo')).toEqual([alone]);
+    const all = await request(server).get('/api/notes?orphans=false').set(auth).expect(200);
+    expect(all.body.total).toBe(7);
+  });
+
+  it('finds unlinked mentions and turns the one it showed into a link that can be undone', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    type Found = { id: string; before: string; match: string; after: string; offset: number; version: number };
+    const post = async (body: object, headers = auth) =>
+      (await request(server).post('/api/notes').set(headers).send(body).expect(201)).body.id as string;
+    const mentions = async (id: string, query = '') => {
+      const response = await request(server).get(`/api/notes/${id}/mentions${query}`).set(auth).expect(200);
+      return response.body as { items: Found[]; total: number; capped: boolean };
+    };
+    const link = (target: string, found: Found, headers = auth) =>
+      request(server)
+        .post(`/api/notes/${target}/mentions/${found.id}/link`)
+        .set(headers)
+        .send({ offset: found.offset, text: found.match, version: found.version });
+
+    const atlas = await post({ title: 'Project Atlas', content: 'The plan.' });
+    const text =
+      '# Minutes\n\nIn `project atlas` code first. We agreed that project atlas ships in March.\n\nProject Atlas needs a budget.';
+    const plain = await post({ title: 'Minutes', content: text });
+    await post({ title: 'Linked', content: 'Already links to [[Project Atlas]], and names Project Atlas again.' });
+    await post({ title: 'Code', content: 'Only in code: `Project Atlas`\n\n```\nProject Atlas\n```' });
+    await post({
+      title: 'Address',
+      content: 'Only in [a link](https://x.test/a_(b)/project atlas) and www.project-atlas.org.',
+    });
+    await post({ title: 'Stems', content: 'Projects and atlases, but never the two words together.' });
+    await post({ title: 'Project Atlas notes', content: 'The title has the words, the text does not.' });
+    const trashed = await post({ title: 'Old', content: 'Project Atlas, from the trash.' });
+    await request(server).delete(`/api/notes/${trashed}`).set(auth).expect(204);
+    await post({ title: 'Theirs', content: 'Project Atlas in another account.' }, other.auth);
+
+    const found = await mentions(atlas);
+    expect(found).toMatchObject({ total: 1, capped: false });
+    // What is shown is the mention that will be linked: the one in the sentence, not the one in code before it.
+    expect(found.items).toEqual([
+      expect.objectContaining({
+        id: plain,
+        title: 'Minutes',
+        before: 'In project atlas code first. We agreed that ',
+        match: 'project atlas',
+        after: ' ships in March.',
+        offset: text.indexOf('project atlas ships'),
+      }),
+    ]);
+    const shown = found.items[0];
+    expect((await mentions(atlas, '?page=2&pageSize=1')).items).toEqual([]);
+
+    // Short titles, notes of other accounts and unknown notes get nothing.
+    const short = await post({ title: 'We', content: 'x' });
+    expect((await mentions(short)).total).toBe(0);
+    await request(server).get(`/api/notes/${atlas}/mentions`).set(other.auth).expect(404);
+    await link(atlas, shown, other.auth).expect(404);
+    // The body has to name the mention.
+    await request(server).post(`/api/notes/${atlas}/mentions/${plain}/link`).set(auth).send({}).expect(400);
+
+    // The note changes after the list was made: nothing is linked until the list is asked for again.
+    await request(server)
+      .patch(`/api/notes/${plain}`)
+      .set(auth)
+      .send({ content: `Intro.\n\n${text}` })
+      .expect(200);
+    const stale = await link(atlas, shown).expect(409);
+    expect(stale.body.message).toContain('has changed since');
+    const again = (await mentions(atlas)).items[0];
+    expect(again.offset).toBe(shown.offset + 8);
+
+    const before = await request(server).get(`/api/notes/${plain}`).set(auth).expect(200);
+    await link(atlas, again).expect(204);
+    const after = await request(server).get(`/api/notes/${plain}`).set(auth).expect(200);
+    expect(after.body.content).toBe(
+      'Intro.\n\n# Minutes\n\nIn `project atlas` code first. We agreed that [[project atlas]] ships in March.\n\nProject Atlas needs a budget.',
+    );
+    // The app made this change, so the note keeps its place in "last edited". Its revision counts it all the same.
+    expect(after.body.updatedAt).toBe(before.body.updatedAt);
+    expect(after.body.revision).toBe(before.body.revision + 1);
+    expect(again.version).toBe(before.body.revision);
+
+    // It is a backlink now and no longer a mention, and the old text is in the history.
+    const backlinks = await request(server).get(`/api/notes/${atlas}/backlinks`).set(auth).expect(200);
+    expect(backlinks.body.map((item: { id: string }) => item.id)).toContain(plain);
+    expect((await mentions(atlas)).total).toBe(0);
+    const versions = await request(server).get(`/api/notes/${plain}/versions`).set(auth).expect(200);
+    const texts = await Promise.all(
+      versions.body.map(async (version: { id: string }) => {
+        const one = await request(server).get(`/api/notes/${plain}/versions/${version.id}`).set(auth).expect(200);
+        return one.body.content as string;
+      }),
+    );
+    expect(texts).toContain(before.body.content);
+
+    // The same request again finds the note changed, and the search index follows the new text.
+    await link(atlas, again).expect(409);
+    const search = await request(server).get('/api/search').query({ q: '"project atlas ships"' }).set(auth);
+    expect(search.body.items.map((hit: { id: string }) => hit.id)).toEqual([plain]);
+  });
+
+  it('offers no mentions of a title that is not one note alone, and links none', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body.id as string;
+    const total = async (id: string) =>
+      (await request(server).get(`/api/notes/${id}/mentions`).set(auth).expect(200)).body.total as number;
+
+    const first = await post({ title: 'Atlas', content: 'The first.' });
+    await post({ title: 'Minutes', content: 'We looked at the atlas.' });
+    const listed = await request(server).get(`/api/notes/${first}/mentions`).set(auth).expect(200);
+    expect(listed.body.total).toBe(1);
+    const shown = listed.body.items[0];
+
+    // A second note takes the title, in other letters. A link would now lead to that one.
+    const second = await post({ title: 'atlas', content: 'The second.' });
+    expect(await total(first)).toBe(0);
+    expect(await total(second)).toBe(0);
+    const refused = await request(server)
+      .post(`/api/notes/${first}/mentions/${shown.id}/link`)
+      .set(auth)
+      .send({ offset: shown.offset, text: shown.match, version: shown.version })
+      .expect(409);
+    expect(refused.body.message).toContain('Another note has the same title');
+    // In the trash it does not count, and the mention is back.
+    await request(server).delete(`/api/notes/${second}`).set(auth).expect(204);
+    expect(await total(first)).toBe(1);
+
+    const untitled = await post({ content: 'No title given.' });
+    await post({ title: 'About', content: 'Still untitled, that one.' });
+    expect(await total(untitled)).toBe(0);
   });
 });
 
@@ -1249,6 +1459,341 @@ describe('editing in two places', () => {
     expect((await read(auth, source.id)).revision).toBe(4);
     await prisma.$executeRaw`UPDATE notes SET title = 'By hand' WHERE id = ${source.id}::uuid`;
     expect((await read(auth, source.id)).revision).toBe(5);
+  });
+});
+
+describe('graph', () => {
+  it('returns notes as nodes and resolved links as edges, narrowed by notebook and tag', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object, headers = auth) =>
+      (await request(server).post(path).set(headers).send(body).expect(201)).body.id as string;
+    const graph = async (query: Record<string, string> = {}) => {
+      const response = await request(server).get('/api/links/graph').query(query).set(auth).expect(200);
+      return response.body as { nodes: { id: string; title: string; links: number }[]; edges: object[]; total: number };
+    };
+
+    const work = await post('/api/notebooks', { name: 'Work' });
+    const inner = await post('/api/notebooks', { name: 'Atlas', parentId: work });
+    // Two notes share a title. Links go to the one edited last, as everywhere else.
+    const olderPlan = await post('/api/notes', { title: 'Plan', content: 'The first plan.' });
+    const plan = await post('/api/notes', {
+      title: 'plan',
+      content: 'See [[Hub]].',
+      notebookId: inner,
+      tags: ['atlas'],
+    });
+    const hub = await post('/api/notes', {
+      title: 'Hub',
+      content: 'Links to [[ PLAN ]], [[Plan|again]], [[Hub]], [[Missing]] and [[Gone]].',
+      notebookId: work,
+      tags: ['atlas'],
+    });
+    const alone = await post('/api/notes', { title: 'Alone', content: 'No links.' });
+    const gone = await post('/api/notes', { title: 'Gone', content: 'See [[Hub]].' });
+    // A template is no node, and its link to the hub is no edge and is not counted.
+    await post('/api/notes', { title: 'Hub template', content: 'See [[Hub]].', isTemplate: true });
+    await request(server).delete(`/api/notes/${gone}`).set(auth).expect(204);
+    await post('/api/notes', { title: 'Hub', content: 'See [[Plan]].' }, other.auth);
+
+    const all = await graph();
+    expect(all.total).toBe(4);
+    // Newest first.
+    expect(all.nodes.map((node) => node.id)).toEqual([alone, hub, plan, olderPlan]);
+    // The hub links to the plan and is linked from it. Its other links connect nothing.
+    expect(all.nodes[1]).toEqual({ id: hub, title: 'Hub', links: 2 });
+    expect(all.nodes.map((node) => node.links)).toEqual([0, 2, 2, 0]);
+    // One edge each way between the hub and the newer plan. Nothing for the note linking to itself,
+    // the missing note, the note in the trash or the other account.
+    const edges = [
+      { source: hub, target: plan },
+      { source: plan, target: hub },
+    ].sort((a, b) => a.source.localeCompare(b.source));
+    expect(all.edges).toEqual(edges);
+
+    // A top-level notebook covers the notebooks inside it.
+    expect((await graph({ notebookId: work })).nodes.map((node) => node.id)).toEqual([hub, plan]);
+    // Alone in its notebook, the plan has no edge here. It still says that it has links elsewhere.
+    const innerOnly = await graph({ notebookId: inner });
+    expect(innerOnly).toMatchObject({ total: 1, nodes: [{ id: plan, title: 'plan', links: 2 }], edges: [] });
+    expect((await graph({ notebookId: 'none' })).nodes.map((node) => node.id)).toEqual([alone, olderPlan]);
+    expect((await graph({ tag: '#Atlas' })).edges).toHaveLength(2);
+    expect((await graph({ notebookId: 'none', tag: 'atlas' })).total).toBe(0);
+
+    const foreign = await post('/api/notebooks', { name: 'Theirs' }, other.auth);
+    await request(server).get('/api/links/graph').query({ notebookId: foreign }).set(auth).expect(404);
+    await request(server).get('/api/links/graph').query({ notebookId: 'NONE' }).set(auth).expect(400);
+    // The graph is not paged, and says so instead of ignoring the question.
+    const paged = await request(server).get('/api/links/graph').query({ page: 2 }).set(auth).expect(400);
+    expect(paged.body.message).toContain('property page should not exist');
+    await request(server).get('/api/links/graph').query({ pageSize: 10 }).set(auth).expect(400);
+    await request(server).get('/api/links/graph').expect(401);
+  });
+
+  it('draws no more than the limit of notes, the ones edited last, with the links among them', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    const post = async (title: string, content: string) =>
+      (await request(server).post('/api/notes').set(auth).send({ title, content }).expect(201)).body.id as string;
+
+    // Three notes that will fall outside the limit, one of them linked from inside it.
+    const old = await post('Old', 'Too old to be drawn. See [[Older]].');
+    const older = await post('Older', 'Even older.');
+    const prisma = app.get(PrismaService);
+    const longAgo = new Date('2020-01-01T00:00:00Z');
+    await prisma.note.updateMany({ where: { id: { in: [old, older] } }, data: { updatedAt: longAgo } });
+    // Enough notes in between to fill the limit but for two.
+    await prisma.note.createMany({
+      data: Array.from({ length: MAX_GRAPH_NODES - 2 }, (_, index) => ({
+        userId: me.body.id as string,
+        title: `Filler ${index}`,
+        content: '',
+        updatedAt: new Date(Date.UTC(2024, 0, 1, 0, 0, index)),
+      })),
+    });
+    const fresh = await post('Fresh', 'See [[Newest]] and [[Old]].');
+    const newest = await post('Newest', 'See [[Fresh]].');
+
+    const response = await request(server).get('/api/links/graph').set(auth).expect(200);
+    const graph = response.body as {
+      nodes: { id: string; title: string; links: number }[];
+      edges: { source: string; target: string }[];
+      total: number;
+    };
+    expect(graph.total).toBe(MAX_GRAPH_NODES + 2);
+    expect(graph.nodes).toHaveLength(MAX_GRAPH_NODES);
+    expect(graph.nodes.slice(0, 2).map((node) => node.id)).toEqual([newest, fresh]);
+    const drawn = new Set(graph.nodes.map((node) => node.id));
+    expect(drawn.has(old)).toBe(false);
+    expect(drawn.has(older)).toBe(false);
+    // Only links between two notes that are both drawn. The one to "Old" is counted on "Fresh" and not drawn.
+    expect(graph.edges).toEqual(
+      [
+        { source: fresh, target: newest },
+        { source: newest, target: fresh },
+      ].sort((a, b) => a.source.localeCompare(b.source)),
+    );
+    expect(graph.nodes.find((node) => node.id === fresh)?.links).toBe(3);
+    expect(graph.nodes.find((node) => node.id === newest)?.links).toBe(2);
+  });
+});
+
+describe('nested notebooks', () => {
+  it('nests four levels, moves a notebook with what is inside it and refuses loops and a fifth level', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const create = (name: string, parentId?: string, headers = auth) =>
+      request(server).post('/api/notebooks').set(headers).send({ name, parentId });
+    const move = (id: string, parentId: string | null) =>
+      request(server).patch(`/api/notebooks/${id}`).set(auth).send({ parentId });
+    const id = async (name: string, parentId?: string) => (await create(name, parentId).expect(201)).body.id as string;
+
+    const a = await id('A');
+    const b = await id('B', a);
+    const c = await id('C', b);
+    const d = await id('D', c);
+    const fifth = await create('E', d).expect(400);
+    expect(fifth.body.message).toBe('Notebooks can be nested 4 levels deep at most');
+
+    // The same name is fine in another place, and refused side by side.
+    await create('D', a).expect(201);
+    await create('d', c).expect(409);
+
+    // No loops: not into itself, not into anything inside it.
+    await move(a, a).expect(400);
+    expect((await move(a, d).expect(400)).body.message).toBe(
+      'A notebook cannot be moved into a notebook that is inside it',
+    );
+    expect((await move(b, c).expect(400)).body.message).toContain('inside it');
+
+    // "B" takes up three levels. It fits inside a top-level notebook, and not one level further down.
+    const x = await id('X');
+    const y = await id('Y', x);
+    await move(b, y).expect(400);
+    const moved = await move(b, x).expect(200);
+    expect(moved.body).toMatchObject({ id: b, parentId: x });
+    const parents = async () =>
+      Object.fromEntries(
+        (await request(server).get('/api/notebooks').set(auth).expect(200)).body.map(
+          (notebook: { id: string; parentId: string | null }) => [notebook.id, notebook.parentId],
+        ),
+      );
+    // What was inside "B" came along untouched.
+    expect(await parents()).toMatchObject({ [b]: x, [c]: b, [d]: c, [a]: null });
+
+    // Another account's notebook is neither a parent nor movable.
+    const theirs = (await create('Theirs', undefined, other.auth).expect(201)).body.id as string;
+    await move(a, theirs).expect(404);
+    await request(server).patch(`/api/notebooks/${a}`).set(other.auth).send({ parentId: null }).expect(404);
+    await create('Mine', theirs).expect(404);
+  });
+
+  it('lets only one of two moves through that would make a loop together', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const id = async (name: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name }).expect(201)).body.id as string;
+    const move = (notebook: string, parentId: string) =>
+      request(server).patch(`/api/notebooks/${notebook}`).set(auth).send({ parentId });
+
+    for (let round = 0; round < 5; round++) {
+      const [p, q] = [await id(`P${round}`), await id(`Q${round}`)];
+      // Each move is fine alone. Together they would leave P inside Q inside P.
+      const [first, second] = await Promise.all([move(p, q), move(q, p)]);
+      expect([first.status, second.status].sort()).toEqual([200, 400]);
+      const list = await request(server).get('/api/notebooks').set(auth).expect(200);
+      const parentOf = (notebook: string) =>
+        list.body.find((item: { id: string }) => item.id === notebook).parentId as string | null;
+      expect([parentOf(p), parentOf(q)].filter((parent) => parent === null)).toHaveLength(1);
+    }
+  });
+
+  it('means the notebook and everything below it for the list, the search, the graph and deleting', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const notebook = async (name: string, parentId?: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name, parentId }).expect(201)).body.id as string;
+    const note = async (title: string, notebookId?: string) =>
+      (await request(server).post('/api/notes').set(auth).send({ title, content: 'Deep sync', notebookId }).expect(201))
+        .body.id as string;
+    const ids = (response: { body: { items?: { id: string }[]; nodes?: { id: string }[] } }) =>
+      (response.body.items ?? response.body.nodes ?? []).map((item) => item.id).sort();
+
+    const work = await notebook('Work');
+    const meetings = await notebook('Meetings', work);
+    const weekly = await notebook('Weekly', meetings);
+    const march = await notebook('March', weekly);
+    const top = await note('Top', work);
+    const mid = await note('Mid', weekly);
+    const deep = await note('Deep', march);
+    const outside = await note('Outside');
+    const old = await note('Old', march);
+    await request(server).delete(`/api/notes/${old}`).set(auth).expect(204);
+
+    const all = [top, mid, deep].sort();
+    expect(ids(await request(server).get(`/api/notes?notebookId=${work}`).set(auth).expect(200))).toEqual(all);
+    expect(ids(await request(server).get(`/api/notes?notebookId=${meetings}`).set(auth).expect(200))).toEqual(
+      [mid, deep].sort(),
+    );
+    expect(ids(await request(server).get(`/api/notes?notebookId=${march}`).set(auth).expect(200))).toEqual([deep]);
+    expect(ids(await request(server).get('/api/search').query({ q: 'sync', notebookId: work }).set(auth))).toEqual(all);
+    expect(ids(await request(server).get('/api/links/graph').query({ notebookId: meetings }).set(auth))).toEqual(
+      [mid, deep].sort(),
+    );
+
+    // Deleting a notebook in the middle takes everything below it, and the notes go to the trash.
+    const removed = await request(server).delete(`/api/notebooks/${meetings}`).set(auth).expect(200);
+    expect(removed.body).toEqual({ trashedNotes: 2 });
+    const left = await request(server).get('/api/notebooks').set(auth).expect(200);
+    expect(left.body.map((item: { name: string }) => item.name)).toEqual(['Work']);
+    expect(ids(await request(server).get('/api/notes').set(auth).expect(200))).toEqual([top, outside].sort());
+    const trash = await request(server).get('/api/trash').set(auth).expect(200);
+    expect(trash.body.map((item: { id: string }) => item.id).sort()).toEqual([mid, deep, old].sort());
+    // A note restored from there is not lost, it just has no notebook any more.
+    await request(server).post(`/api/trash/${deep}/restore`).set(auth).expect(204);
+    const restored = await request(server).get(`/api/notes/${deep}`).set(auth).expect(200);
+    expect(restored.body).toMatchObject({ notebookId: null, deletedAt: null });
+  });
+
+  it('exports nested folders and imports them at the same depth, folding only what is deeper', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const notebook = async (name: string, parentId?: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name, parentId }).expect(201)).body.id as string;
+
+    const work = await notebook('Work');
+    const clients = await notebook('Clients', work);
+    const acme = await notebook('Acme', clients);
+    const year = await notebook('2026', acme);
+    // A notebook next to a note whose file would have its name.
+    const odd = await notebook('Offer.md', acme);
+    for (const [title, notebookId] of [
+      ['Kickoff', year],
+      ['Offer', acme],
+      ['Terms', odd],
+    ]) {
+      await request(server).post('/api/notes').set(auth).send({ title, content: 'Text', notebookId }).expect(201);
+    }
+
+    const exported = await request(server)
+      .get('/api/export')
+      .set(auth)
+      .buffer(true)
+      .parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => done(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    const zip = await JSZip.loadAsync(exported.body as Buffer);
+    const files = Object.values(zip.files)
+      .filter((file) => !file.dir)
+      .map((file) => file.name)
+      .sort();
+    expect(files).toEqual([
+      'Work/Clients/Acme/2026/Kickoff.md',
+      'Work/Clients/Acme/Offer (2).md',
+      'Work/Clients/Acme/Offer.md/Terms.md',
+    ]);
+
+    // One folder too many for the import: it is folded into the fourth level.
+    zip.file('Work/Clients/Acme/2026/Q1/Review.md', 'Deeper than notebooks go.');
+    const other = await signUp();
+    const imported = await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .attach('files', await zip.generateAsync({ type: 'nodebuffer' }), 'export.zip')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 4, notebooksCreated: 6, skipped: [] });
+
+    const list = await request(server).get('/api/notebooks').set(other.auth).expect(200);
+    const byId = new Map<string, { name: string; parentId: string | null }>(
+      list.body.map((item: { id: string; name: string; parentId: string | null }) => [item.id, item]),
+    );
+    const pathOf = (item: { name: string; parentId: string | null }): string =>
+      item.parentId ? `${pathOf(byId.get(item.parentId)!)}/${item.name}` : item.name;
+    expect([...byId.values()].map(pathOf).sort()).toEqual([
+      'Work',
+      'Work/Clients',
+      'Work/Clients/Acme',
+      'Work/Clients/Acme/2026',
+      'Work/Clients/Acme/2026 - Q1',
+      'Work/Clients/Acme/Offer.md',
+    ]);
+  });
+  it('never lets a move push the notebooks of an import that runs at the same moment below the fourth level', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const make = async (name: string, parentId?: string) =>
+      (await request(server).post('/api/notebooks').set(auth).send({ name, parentId }).expect(201)).body.id as string;
+    // A notebook at the third level to move "A" into, and an "A" four levels deep once the import is done.
+    const third = await make('Three', await make('Two', await make('One')));
+    const a = await make('A');
+    const zip = new JSZip();
+    for (let i = 0; i < 12; i++) zip.file(`A/B${i}/C/D/n${i}.md`, 'Deep.');
+    const upload = await zip.generateAsync({ type: 'nodebuffer' });
+
+    const [imported, moved] = await Promise.all([
+      request(server).post('/api/import').set(auth).attach('files', upload, 'export.zip'),
+      new Promise((resolve) => setTimeout(resolve, 20)).then(() =>
+        request(server).patch(`/api/notebooks/${a}`).set(auth).send({ parentId: third }),
+      ),
+    ]);
+    expect(imported.status).toBe(201);
+    // Whichever came first, the other one fits around it: the move is refused, or the import starts a new "A".
+    expect([200, 400]).toContain(moved.status);
+
+    const list = await request(server).get('/api/notebooks').set(auth).expect(200);
+    const parents = new Map<string, string | null>(
+      list.body.map((item: { id: string; parentId: string | null }) => [item.id, item.parentId]),
+    );
+    const depth = (id: string): number => (parents.get(id) ? 1 + depth(parents.get(id)!) : 1);
+    expect(Math.max(...[...parents.keys()].map(depth))).toBeLessThanOrEqual(4);
+    const notes = await request(server).get('/api/notes?pageSize=50').set(auth).expect(200);
+    expect(notes.body.items).toHaveLength(12);
   });
 });
 
@@ -2048,6 +2593,31 @@ describe('sharing a notebook', () => {
     };
   };
 
+  it('covers the notebooks inside it at every depth, and says so on each of them', async () => {
+    const { server, auth, recipes, bread, link } = await kitchen();
+    const make = async (path: string, body: object) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+    const sour = await make('/api/notebooks', { name: 'Sour', parentId: bread });
+    const starter = await make('/api/notebooks', { name: 'Starter', parentId: sour.id });
+    const deep = await make('/api/notes', { title: 'Feeding', notebookId: starter.id });
+
+    expect(starter.sharedThrough).toEqual({ id: recipes, name: 'Recipes' });
+    const note = await request(server).get(`/api/notes/${deep.id}`).set(auth).expect(200);
+    expect(note.body.sharedThrough).toEqual({ id: recipes, name: 'Recipes' });
+
+    const index = await request(server).get(link).expect(200);
+    expect(index.body.notes).toContainEqual(
+      expect.objectContaining({ id: deep.id, title: 'Feeding', notebook: 'Bread / Sour / Starter' }),
+    );
+    await request(server).get(`${link}/${deep.id}`).expect(200);
+
+    // Moved out with what is inside it, the notebook and its note are private again at once.
+    await request(server).patch(`/api/notebooks/${sour.id}`).set(auth).send({ parentId: null }).expect(200);
+    await request(server).get(`${link}/${deep.id}`).expect(404);
+    const after = await request(server).get(`/api/notes/${deep.id}`).set(auth).expect(200);
+    expect(after.body.sharedThrough).toBeNull();
+  });
+
   it('shows its readers no template that sits in the notebook', async () => {
     const { server, auth, recipes, soup, link } = await kitchen();
     const template = await request(server)
@@ -2664,6 +3234,9 @@ describe('the JSON backup', () => {
 
     const work = await make('/api/notebooks', { name: 'Work' });
     const meetings = await make('/api/notebooks', { name: 'Meetings', parentId: work.id });
+    // Four levels, made parents first and listed in the file that way.
+    const oneToOnes = await make('/api/notebooks', { name: 'One-to-ones', parentId: meetings.id });
+    await make('/api/notebooks', { name: '2026', parentId: oneToOnes.id });
     const plan = await make('/api/notes', {
       title: 'Plan',
       content: 'See [[Monday]].',
@@ -2730,7 +3303,7 @@ describe('the JSON backup', () => {
       .expect(201);
     expect(restored.body).toEqual({
       notes: 4,
-      notebooks: 2,
+      notebooks: 4,
       tags: 1,
       versions: 2,
       attachments: 0,

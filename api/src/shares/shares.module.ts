@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AttachmentsModule } from '../attachments/attachments.module';
 import { AuthModule } from '../auth/auth.module';
 import { LinksModule } from '../links/links.module';
+import { NotebooksModule } from '../notebooks/notebooks.module';
 import { noStore } from './no-store.middleware';
 import { SharePasswordAttempts } from './share-password-attempts';
 import { NotebookSharesController, PublicSharesController, SharesController } from './shares.controller';
@@ -11,7 +12,8 @@ import { SharesService } from './shares.service';
   // AuthService tells the public controller whether the reader is the owner.
   // LinksService finds the notes that the [[links]] of a shared note lead to.
   // AttachmentsService signs the addresses of a shared note's files.
-  imports: [AuthModule, LinksModule, AttachmentsModule],
+  // NotebooksService says which notebooks are inside a shared one.
+  imports: [AuthModule, LinksModule, AttachmentsModule, NotebooksModule],
   controllers: [SharesController, NotebookSharesController, PublicSharesController],
   providers: [SharesService, SharePasswordAttempts],
 })

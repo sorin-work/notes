@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import JSZip from 'jszip';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,8 +21,36 @@ interface ExportableNote {
 
 const exportInclude = {
   tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } },
-  notebook: { include: { parent: true } },
 } as const;
+
+/**
+ * The folder of every notebook in the zip, such as "Work/Meetings/", with
+ * the notebooks nested as they are in the app. Names only have to differ
+ * between notebooks that sit side by side, and two of them can come out the
+ * same once the characters a file system refuses are gone, so each folder
+ * claims its name in `paths`. A folder then also never takes the name of a
+ * note's file next to it, which no file system could hold.
+ */
+export function notebookFolders(
+  notebooks: { id: string; name: string; parentId: string | null }[],
+  paths: UniquePaths,
+): Map<string, string> {
+  const byId = new Map(notebooks.map((notebook) => [notebook.id, notebook]));
+  const folders = new Map<string, string>();
+  const folderOf = (id: string | null, above = new Set<string>()): string => {
+    const notebook = id === null ? undefined : byId.get(id);
+    // A parent that is missing, or a loop in the data, ends the path at the top.
+    if (!notebook || above.has(notebook.id)) return '';
+    const known = folders.get(notebook.id);
+    if (known !== undefined) return known;
+    const parent = folderOf(notebook.parentId, above.add(notebook.id));
+    const folder = `${paths.claim(parent, safeFileName(notebook.name, 'Notebook'), '')}/`;
+    folders.set(notebook.id, folder);
+    return folder;
+  };
+  for (const notebook of notebooks) folderOf(notebook.id);
+  return folders;
+}
 
 /** A note as a Markdown file with its title, tags and dates in front matter. */
 export function toMarkdownFile(note: ExportableNote): string {
@@ -36,6 +65,13 @@ export function toMarkdownFile(note: ExportableNote): string {
   const body = note.content.endsWith('\n') || note.content === '' ? note.content : `${note.content}\n`;
   return serializeFrontMatter(data) + body;
 }
+
+/**
+ * How long reading an account for the export may take. Prisma ends a
+ * transaction after five seconds unless told otherwise, which a large
+ * account can need for its notes alone.
+ */
+export const EXPORT_READ_TIMEOUT_MS = 10 * 60 * 1000;
 
 @Injectable()
 export class ExportService {
@@ -56,24 +92,43 @@ export class ExportService {
 
   /**
    * Every note outside the trash as a zip of Markdown files. Notebooks become
-   * folders; notes without a notebook sit at the top.
+   * folders inside folders, as deep as they nest; notes without a notebook
+   * sit at the top.
    */
   async exportAll(userId: string): Promise<Readable> {
-    const notes = await this.prisma.note.findMany({
-      where: { userId, deletedAt: null },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      include: exportInclude,
-    });
+    // One snapshot for all three: a note moved to a notebook made a moment
+    // ago still finds its folder, every folder is the one the note was in,
+    // and the files are those of the notes that are exported.
+    const [notebooks, notes, files] = await this.prisma.$transaction(
+      async (tx) =>
+        [
+          await tx.notebook.findMany({
+            where: { userId },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: { id: true, name: true, parentId: true },
+          }),
+          await tx.note.findMany({
+            where: { userId, deletedAt: null },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            include: exportInclude,
+          }),
+          // The files of the notes go under attachments/<id>/, and the notes link to them there by a
+          // relative path, which this app's import and other Markdown apps follow.
+          await tx.attachment.findMany({
+            where: { userId, note: { userId, deletedAt: null } },
+            select: { id: true, fileName: true },
+          }),
+        ] as const,
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        timeout: EXPORT_READ_TIMEOUT_MS,
+        maxWait: 10_000,
+      },
+    );
 
     const zip = new JSZip();
     const paths = new UniquePaths();
 
-    // The files of the notes go under attachments/<id>/, and the notes link to them there by a
-    // relative path, which this app's import and other Markdown apps follow.
-    const files = await this.prisma.attachment.findMany({
-      where: { userId, note: { userId, deletedAt: null } },
-      select: { id: true, fileName: true },
-    });
     const fileOf = new Map(
       files.map((file) => [file.id, `attachments/${file.id}/${safeFileName(file.fileName, 'file')}`]),
     );
@@ -95,13 +150,15 @@ export class ExportService {
         `These ${missing.length} attachment files were missing from storage and are not in this export:\n${missing.join('\n')}\n`,
       );
     }
+    // The folders are named before any note file, so where a note and a notebook
+    // want the same name it is the note that gets the "(2)". "attachments" is
+    // taken first when there are files, so a notebook of that name gets a "(2)" too.
+    if (fileOf.size > 0 || missing.length > 0) paths.claim('', 'attachments', '');
+    const folders = notebookFolders(notebooks, paths);
     for (const note of notes) {
-      const folders: string[] = [];
-      if (note.notebook?.parent) folders.push(safeFileName(note.notebook.parent.name, 'Notebook'));
-      if (note.notebook) folders.push(safeFileName(note.notebook.name, 'Notebook'));
-      const folder = folders.map((name) => `${name}/`).join('');
+      const folder = (note.notebookId && folders.get(note.notebookId)) || '';
       const path = paths.claim(folder, safeFileName(note.title), '.md');
-      const up = '../'.repeat(folders.length);
+      const up = '../'.repeat(folder.split('/').filter(Boolean).length);
       const content = replaceAttachmentLinks(note.content, (id) => {
         const file = fileOf.get(id);
         return file && up + file.split('/').map(encodePathPart).join('/');

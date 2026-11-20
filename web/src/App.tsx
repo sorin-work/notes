@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
 import { Layout } from './components/Layout';
+import { lazyPage } from './components/LazyPage';
 import { UpdateBanner } from './components/UpdateBanner';
 import { CapturePage } from './pages/CapturePage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
@@ -14,6 +15,10 @@ import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SharedNotePage } from './pages/SharedNotePage';
 import { TrashPage } from './pages/TrashPage';
+
+// The graph brings a layout library that no other page needs, so it is only fetched when the page is opened.
+// A fetch can fail, in a tab left open across an update or without a connection. lazyPage keeps that inside the page.
+const GraphPage = lazyPage(() => import('./pages/GraphPage').then((module) => module.GraphPage));
 
 export function App() {
   return (
@@ -61,6 +66,7 @@ function AppRoutes() {
         <Route path="/notes" element={<NotesPage />} />
         <Route path="/notes/:noteId" element={<NotesPage />} />
         <Route path="/search" element={<SearchPage />} />
+        <Route path="/graph" element={<GraphPage />} />
         <Route path="/trash" element={<TrashPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/capture" element={<CapturePage />} />

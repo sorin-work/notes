@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, HttpException, NotFoundExcepti
 import { hashPassword, verifyPassword } from '../auth/password';
 import type { AppConfig } from '../config/config';
 import type { LinksService } from '../links/links.service';
+import type { NotebooksService } from '../notebooks/notebooks.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { accessIsValid } from './share-access';
 import { SharePasswordAttempts, TooManyWrongPasswords } from './share-password-attempts';
@@ -18,9 +19,14 @@ describe('SharesService', () => {
   let links: { resolveKeys: jest.Mock };
   let service: SharesService;
   let attempts: SharePasswordAttempts;
+  let notebooks: Pick<NotebooksService, 'idsWithChildren'>;
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    // nb2 is inside nb1.
+    notebooks = {
+      idsWithChildren: jest.fn((_userId: string, id: string) => Promise.resolve(id === 'nb1' ? ['nb1', 'nb2'] : [id])),
+    };
     links = { resolveKeys: jest.fn().mockResolvedValue(new Map()) };
     // Three wrong passwords a minute for a link.
     attempts = new SharePasswordAttempts({ authThrottleLimit: 3 } as AppConfig);
@@ -34,6 +40,7 @@ describe('SharesService', () => {
       {
         urls: (list: { id: string }[]) => Object.fromEntries(list.map((item) => [item.id, `/signed/${item.id}`])),
       } as never,
+      notebooks as unknown as NotebooksService,
     );
   });
 

@@ -61,6 +61,8 @@ describe('Sidebar', () => {
     expect(meetings.closest('ul')?.closest('li')).toContainElement(work);
     expect(screen.getByRole('link', { name: /#atlas/ })).toHaveAttribute('href', '/notes?tag=atlas');
     expect(screen.getByRole('link', { name: 'Not in a notebook' })).toHaveAttribute('href', '/notes?notebook=none');
+    expect(screen.getByRole('link', { name: 'Orphans' })).toHaveAttribute('href', '/notes?view=orphans');
+    expect(screen.getByRole('link', { name: 'Graph' })).toHaveAttribute('href', '/graph');
     expect(screen.getByRole('link', { name: 'All notes' })).not.toHaveAttribute('aria-current');
   });
 
@@ -259,6 +261,83 @@ describe('Sidebar', () => {
 
     const dialog = within(await screen.findByRole('dialog', { name: 'Share notebook' }));
     expect(await dialog.findByRole('button', { name: 'Create link' })).toBeInTheDocument();
+  });
+
+  describe('with notebooks four levels deep', () => {
+    const deep = [
+      notebook({ id: 'w', name: 'Work', noteCount: 1 }),
+      notebook({ id: 'm', name: 'Meetings', parentId: 'w', noteCount: 2 }),
+      notebook({ id: 'o', name: 'One-to-ones', parentId: 'm', noteCount: 3 }),
+      notebook({ id: 'y', name: '2026', parentId: 'o', noteCount: 4 }),
+      notebook({ id: 'p', name: 'Personal', noteCount: 0 }),
+    ];
+    const routes = {
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: deep },
+      'GET /api/tags': { body: [] },
+    };
+
+    it('shows the whole tree, each notebook inside its parent, with the notes below counted in', async () => {
+      mockFetch(routes);
+      renderSidebar('/notes?notebook=y');
+
+      const year = await screen.findByRole('link', { name: /2026/ });
+      expect(year).toHaveAttribute('aria-current', 'page');
+      const inside = (link: HTMLElement) => link.closest('ul')?.closest('li');
+      expect(inside(year)).toContainElement(screen.getByRole('link', { name: /One-to-ones/ }));
+      expect(inside(screen.getByRole('link', { name: /One-to-ones/ }))).toContainElement(
+        screen.getByRole('link', { name: /Meetings/ }),
+      );
+      expect(screen.getByRole('link', { name: /Work/ })).toHaveTextContent('10');
+      expect(screen.getByRole('link', { name: /Meetings/ })).toHaveTextContent('9');
+      expect(year).toHaveTextContent('4');
+      await expectNoAxeViolations({ part: true });
+    });
+
+    it('folds a notebook shut and open again, with the mouse or the keyboard, and remembers it', async () => {
+      mockFetch(routes);
+      const first = renderSidebar();
+
+      const fold = await screen.findByRole('button', { name: 'Fold Meetings' });
+      expect(fold).toHaveAttribute('aria-expanded', 'true');
+      expect(document.getElementById(fold.getAttribute('aria-controls') ?? '')).toContainElement(
+        screen.getByRole('link', { name: /One-to-ones/ }),
+      );
+      await userEvent.click(fold);
+      const unfold = screen.getByRole('button', { name: 'Unfold Meetings' });
+      expect(unfold).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByRole('link', { name: /One-to-ones/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /2026/ })).not.toBeInTheDocument();
+      // What is folded away is still counted.
+      expect(screen.getByRole('link', { name: /Meetings/ })).toHaveTextContent('9');
+      expect(JSON.parse(localStorage.getItem('notes.closedNotebooks') ?? '[]')).toEqual(['m']);
+      await expectNoAxeViolations({ part: true });
+
+      // Still folded after the app is opened again.
+      first.unmount();
+      renderSidebar();
+      const again = await screen.findByRole('button', { name: 'Unfold Meetings' });
+      expect(screen.queryByRole('link', { name: /One-to-ones/ })).not.toBeInTheDocument();
+      again.focus();
+      await userEvent.keyboard('{Enter}');
+      expect(screen.getByRole('button', { name: 'Fold Meetings' })).toHaveFocus();
+      expect(screen.getByRole('link', { name: /2026/ })).toBeInTheDocument();
+      expect(JSON.parse(localStorage.getItem('notes.closedNotebooks') ?? '[]')).toEqual([]);
+      // A notebook with nothing inside has nothing to fold.
+      expect(screen.queryByRole('button', { name: /Fold (2026|Personal)/ })).not.toBeInTheDocument();
+    });
+
+    it('offers a new notebook inside every notebook but those at the last level', async () => {
+      mockFetch(routes);
+      renderSidebar();
+
+      expect(await screen.findByRole('button', { name: 'New notebook inside One-to-ones' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New notebook inside Work' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'New notebook inside 2026' })).not.toBeInTheDocument();
+      // It can still be renamed, moved and deleted.
+      expect(screen.getByRole('button', { name: 'Edit 2026' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Delete 2026' })).toBeInTheDocument();
+    });
   });
 
   describe('signing out', () => {

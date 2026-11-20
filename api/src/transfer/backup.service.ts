@@ -5,6 +5,7 @@ import type { Readable } from 'node:stream';
 import { AttachmentsService, StoredFile } from '../attachments/attachments.service';
 import { RESTORE_TIMEOUT_MS } from '../attachments/timing';
 import { LinksService } from '../links/links.service';
+import { MAX_NOTEBOOK_DEPTH } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { readPreferences } from '../auth/preferences';
 import {
@@ -17,7 +18,7 @@ import {
   BackupTag,
 } from './backup';
 import { replaceAttachmentLinks } from './attachment-links';
-import { invalid } from './backup-check';
+import { invalid, notebookDepths } from './backup-check';
 import { readBackupStream } from './backup-stream';
 
 /** Notes read from the database at a time while the backup is written out. */
@@ -70,8 +71,9 @@ export class BackupService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
-    // Parents before the notebooks inside them, so a reader can make them in order.
-    notebooks.sort((a, b) => Number(a.parentId !== null) - Number(b.parentId !== null));
+    // Parents before the notebooks inside them, at every level, so a reader can make them in order.
+    const depths = notebookDepths(notebooks);
+    notebooks.sort((a, b) => (depths.get(a.id) ?? 0) - (depths.get(b.id) ?? 0));
 
     const head = {
       format: BACKUP_FORMAT,
@@ -290,9 +292,10 @@ export class BackupService {
           const summary = await readBackupStream(source, {
             notebooks: async (list) => {
               for (const notebook of list) notebookIds.set(notebook.id, randomUUID());
-              // Parents first, so the foreign key on parent_id is satisfied.
-              for (const nested of [false, true]) {
-                const level = list.filter((notebook) => (notebook.parentId !== null) === nested);
+              // Parents first, one level after the other, so the foreign key on parent_id is satisfied.
+              const depths = notebookDepths(list);
+              for (let depth = 1; depth <= MAX_NOTEBOOK_DEPTH; depth++) {
+                const level = list.filter((notebook) => depths.get(notebook.id) === depth);
                 if (level.length === 0) continue;
                 await tx.notebook.createMany({
                   data: level.map((notebook) => ({

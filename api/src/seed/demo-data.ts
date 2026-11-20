@@ -22,12 +22,28 @@ export interface DemoNote {
   content: string;
 }
 
-export const DEMO_NOTEBOOKS: { name: string; children?: string[] }[] = [
-  { name: 'Work', children: ['Project Atlas', 'Meetings'] },
-  { name: 'Personal', children: ['Recipes', 'Travel'] },
+export interface DemoNotebook {
+  name: string;
+  children?: DemoNotebook[];
+}
+
+export const DEMO_NOTEBOOKS: DemoNotebook[] = [
+  {
+    name: 'Work',
+    children: [{ name: 'Project Atlas' }, { name: 'Meetings', children: [{ name: 'One-to-ones' }] }],
+  },
+  { name: 'Personal', children: [{ name: 'Recipes' }, { name: 'Travel' }] },
   { name: 'Reading' },
-  { name: 'Learning', children: ['Rust'] },
+  { name: 'Learning', children: [{ name: 'Rust' }] },
 ];
+
+/** Every demo notebook as the names that lead to it, each one after the notebook it is in. */
+export function demoNotebookPaths(notebooks: DemoNotebook[] = DEMO_NOTEBOOKS, above: string[] = []): string[][] {
+  return notebooks.flatMap((notebook) => {
+    const path = [...above, notebook.name];
+    return [path, ...demoNotebookPaths(notebook.children ?? [], path)];
+  });
+}
 
 const atlasOverview = `# Project Atlas
 
@@ -147,7 +163,7 @@ const retro = `# Sprint retro notes
 
 **Could be better**
 
-- Too many meetings on Wednesdays
+- Too many meetings on Wednesdays, the Atlas weekly sync among them
 - Flaky end-to-end tests blocked two merges
 
 **We will try**
@@ -402,7 +418,7 @@ A few things to try:
   edit, split and preview with the buttons above the editor (or Ctrl+E).
 - **Link notes** by typing \`[[\` and choosing a title, for example
   [[Project Atlas]]. Notes that link here show up under *Backlinks*.
-- **Organise** with notebooks (one level of nesting), tags, pins and
+- **Organise** with notebooks (nested up to four levels), tags, pins and
   favourites.
 - **Search** everything from the search box. Words match as prefixes,
   so "meet" finds "meeting".
@@ -470,7 +486,7 @@ export const DEMO_NOTES: DemoNote[] = [
   },
   {
     title: '1:1 with Dana',
-    notebook: ['Work', 'Meetings'],
+    notebook: ['Work', 'Meetings', 'One-to-ones'],
     tags: ['meeting'],
     createdDaysAgo: 200,
     updatedDaysAgo: 8,

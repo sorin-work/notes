@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { AttachmentsService, StoredFile } from '../attachments/attachments.service';
 import { LinksService } from '../links/links.service';
+import { MAX_NOTEBOOK_DEPTH, NotebooksService } from '../notebooks/notebooks.service';
 import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TagsService } from '../tags/tags.service';
@@ -98,13 +99,14 @@ export function splitPath(path: string): { folders: string[]; name: string } {
 }
 
 /**
- * Notebooks only nest one level, so deeper folders are folded into the
- * second level: "A/B/C" becomes notebook "B - C" inside "A".
+ * Folders become notebooks at the depth they have, as far as notebooks
+ * nest. What is deeper is folded into the last level: with four levels,
+ * "A/B/C/D/E" becomes notebook "D - E" inside "A/B/C".
  */
 export function notebookPath(folders: string[]): string[] {
   const cleaned = folders.map((folder) => folder.trim()).filter(Boolean);
-  if (cleaned.length <= 2) return cleaned;
-  return [cleaned[0], cleaned.slice(1).join(' - ')];
+  if (cleaned.length <= MAX_NOTEBOOK_DEPTH) return cleaned;
+  return [...cleaned.slice(0, MAX_NOTEBOOK_DEPTH - 1), cleaned.slice(MAX_NOTEBOOK_DEPTH - 1).join(' - ')];
 }
 
 function toDate(value: unknown): Date | undefined {
@@ -126,6 +128,7 @@ export class ImportService {
     private readonly tags: TagsService,
     private readonly links: LinksService,
     private readonly attachments: AttachmentsService,
+    private readonly notebooks: NotebooksService,
   ) {}
 
   /**
@@ -221,7 +224,6 @@ export class ImportService {
       throw new BadRequestException(`An import can contain at most ${MAX_IMPORT_NOTES} notes`);
     }
 
-    const notebooks = new NotebookResolver(this.prisma, userId);
     for (const candidate of candidates) {
       const { data, body } = candidate.data
         ? { data: candidate.data, body: candidate.text }
@@ -237,7 +239,11 @@ export class ImportService {
         0,
         MAX_TITLE_LENGTH,
       );
-      const notebookId = await notebooks.resolve(notebookPath(folders));
+      // Names are cut to the length a notebook name can have.
+      const path = notebookPath(folders).map((folder) => folder.slice(0, 80));
+      // Only looked up here, for the check for duplicates. The notebooks are
+      // made in the transaction of the note, under the lock on the tree.
+      const existingNotebook = await this.notebooks.findPath(userId, path);
       const finalTitle = title || 'Untitled';
 
       // Links to images and PDFs next to the note become attachment: links, with ids made now.
@@ -261,7 +267,11 @@ export class ImportService {
         continue;
       }
 
-      if (options.skipExisting && (await this.exists(userId, notebookId, finalTitle, linked, planned.size > 0))) {
+      if (
+        options.skipExisting &&
+        existingNotebook !== undefined &&
+        (await this.exists(userId, existingNotebook, finalTitle, linked, planned.size > 0))
+      ) {
         result.duplicates++;
         for (const reference of planned.values()) files?.linked.add(reference.path);
         continue;
@@ -299,6 +309,11 @@ export class ImportService {
       let attached = 0;
       await this.prisma
         .$transaction(async (tx) => {
+          // A notebook moved or deleted at the same moment can neither end up
+          // too deep nor leave the note without its notebook.
+          const notebook = await this.notebooks.findOrCreatePath(tx, userId, path);
+          const notebookId = notebook.id;
+          result.notebooksCreated += notebook.created;
           const bytes = stored.reduce((sum, file) => sum + file.size, 0);
           if (stored.length > 0 && !(await this.attachments.hasRoom(tx, userId, bytes))) {
             result.skipped.push({
@@ -346,7 +361,6 @@ export class ImportService {
         if (!set.linked.has(path)) result.skipped.push({ file: path, reason: 'No note links to it' });
       }
     }
-    result.notebooksCreated = notebooks.created;
     return result;
   }
 
@@ -377,40 +391,5 @@ export class ImportService {
         AND regexp_replace(content, 'attachment:[0-9a-f-]{36}', 'attachment:', 'g') = ${withoutAttachmentIds(content)}
       LIMIT 1`;
     return rows.length > 0;
-  }
-}
-
-/** Finds or creates the notebooks for imported folders, matching names case-insensitively. */
-class NotebookResolver {
-  created = 0;
-  private readonly cache = new Map<string, string>();
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly userId: string,
-  ) {}
-
-  async resolve(path: string[]): Promise<string | null> {
-    let parentId: string | null = null;
-    for (const segment of path) {
-      const name = segment.slice(0, 80);
-      const key = `${parentId ?? ''}/${name.toLowerCase()}`;
-      let id = this.cache.get(key);
-      if (!id) {
-        const existing: { id: string } | null = await this.prisma.notebook.findFirst({
-          where: { userId: this.userId, parentId, name: { equals: name, mode: 'insensitive' } },
-          select: { id: true },
-        });
-        if (existing) {
-          id = existing.id;
-        } else {
-          id = (await this.prisma.notebook.create({ data: { userId: this.userId, parentId, name } })).id;
-          this.created++;
-        }
-        this.cache.set(key, id);
-      }
-      parentId = id;
-    }
-    return parentId;
   }
 }

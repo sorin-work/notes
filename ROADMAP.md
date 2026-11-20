@@ -33,10 +33,10 @@ couple of weekends, **L** several weeks of spare time.
 | 12  | More import sources and export formats | Shipped | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Shipped | both     | L    | 8          |
-| 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
+| 15  | Deeper notebook nesting                | Shipped | both     | M    | -          |
 | 16  | Templates and daily notes              | Shipped | both     | M    | -          |
 | 17  | Notebooks shared with other accounts   | Shipped | both     | L    | 8          |
-| 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
+| 18  | Graph view and unlinked mentions       | Shipped | both     | M    | -          |
 
 ## Next
 
@@ -48,40 +48,7 @@ Empty for now: everything that was in this group has shipped.
 
 ## Maybe
 
-### 15. Deeper notebook nesting
-
-Notebooks nest one level. Importing a vault with deeper folders flattens them
-("A/B/C" becomes "B - C" inside "A"), which is the main reason I would want
-more.
-
-- The one-level rule is spread out: `assertCanBeParent`, `update` and
-  `idsWithChildren` in `NotebooksService`, `notebookTree` and `totalNotes` in
-  `web/src/lib/notebooks.ts`, the two-level markup in `Sidebar` and
-  `NotebookSelect`, `notebookPath` in the importer and the folder building in
-  `ExportService.exportAll`.
-- Any depth means a recursive query for "this notebook and everything below
-  it", a cycle check when moving a notebook, and a collapsible tree in the
-  sidebar.
-- Undecided: whether it is worth it at all when tags and links exist. A cap
-  of three or four levels would keep the sidebar manageable.
-
-### 18. Graph view and unlinked mentions
-
-Two ways to get more out of the links that are already stored.
-
-- Graph: a page that draws notes as dots and `[[links]]` as lines, to spot
-  clusters and orphans. All edges are in `note_links`. A `GET /links/graph`
-  endpoint would return nodes and resolved edges in one query, reusing the
-  title matching in `LinksService.resolveKeys`. Drawing it needs a force
-  layout (d3-force or similar), and I doubt it stays readable beyond a few
-  hundred notes.
-- Unlinked mentions: under the backlinks, list notes that mention this note's
-  title without linking to it, each with a "Link" button that wraps the
-  mention in `[[ ]]`. Candidates can come from the full-text index, then be
-  checked against the text with code blocks ignored. Short or common titles
-  ("Ideas") will be noisy.
-- A cheaper first step: an "Orphans" filter for notes with no links in or
-  out.
+Empty for now: everything that was in this group has shipped.
 
 ## Shipped
 
@@ -407,6 +374,47 @@ ends by itself, and sent at the same user's next sign-in. Still open: pins,
 tags, notebooks and the trash need a connection, and a note made offline is
 not in the lists until it is sent.
 
+### 15. Deeper notebook nesting
+
+Notebooks nest four levels deep. I took the cap over any depth: it keeps the
+sidebar readable, and four levels hold the vaults I have seen. The number is
+`MAX_NOTEBOOK_DEPTH` in `NotebooksService`, which enforces it, and the same
+constant in `web/src/lib/notebooks.ts` decides what the app offers.
+
+Creating, moving and deleting a notebook each run in one transaction that
+first locks the account's row (`lockTree`) and then reads the tree. The checks
+for depth and for loops therefore see what they are about to change, and two
+moves made at the same moment cannot put two notebooks inside each other. A
+move takes along what is inside the notebook and is refused when that would
+end below the fourth level. Deleting a notebook deletes the notebooks inside
+it and moves the notes of all of them to the trash. `idsWithChildren` kept its
+name and is one recursive query for "this notebook and everything inside it",
+used by the note list, the search, the graph and the links that share a
+notebook, which so cover every level inside it. `sharedThrough` looks as far
+up as notebooks nest. No migration was needed, `parentId` was there already,
+so one-level data is untouched.
+
+The importer keeps folders as notebooks four levels deep and joins what is
+deeper into the fourth ("D - E"), the way it used to join everything below the
+first. It makes the notebooks of each note in the transaction of that note,
+under the same lock as a move, so a move at the same moment cannot push them
+deeper. The exporter writes nested folders, read in one snapshot. A folder
+claims its name before the files next to it, so a notebook and a note that
+want the same name in the zip both get in.
+
+In the sidebar the notebooks are a nested list with a fold button in front of
+every notebook that has others inside, and the folded ones are remembered in
+the browser. The notebook of a note is picked from a list that folds the same
+way (`NotebookSelect`), with its own memory. Both are plain nested lists of
+links and buttons, so Tab, Enter and Space work them. The notebook dialog only
+offers places where the notebook fits with what it holds.
+
+Still open: the filter selects above the lists and the "Inside" select of the
+notebook dialog are ordinary selects that show the whole tree indented and do
+not fold. The arrow keys do not move through the tree. A notebook cannot be
+dragged to another place, and the lock makes two changes to the notebooks of
+one account wait for each other, which nobody will notice.
+
 ### 16. Templates and daily notes
 
 Both are built. A note becomes a template through `isTemplate`, a column and
@@ -446,21 +454,80 @@ is no page that lists the daily notes or steps from one day to the next, and
 
 Built as planned, with tags and link titles following the owner. One access
 check, `AccessService`, sits in front of every route that takes a note or a
-notebook: owner, member of the note's notebook (or the one around it, through
-the same parent and children as `idsWithChildren`), or a `404`. The services
-keep looking notes up by owner and id, with the owner the check hands back,
-so a route that forgot the check fails closed; an end-to-end test walks every
-note route as an outsider and expects `404`. `NotebookMember` has a read or
-edit role. Invitations go by email through the mail setup of the password
-reset, with the same token rules (hashed, once, in the fragment) plus a week
-of life and a tie to the invited address, and are also shown in the app to
-an existing account. Members see nothing of the owner beyond the notebook:
-links, backlinks, titles and search with the notebook filter are kept to
-it, and templates and the trash stay out. Two editors meet the conflict
-question of item 8. Owners change roles and remove members, members leave,
-and a change in a member's outbox for a note they lost is refused and listed.
-Different from the plan: an editor changes text, tags and adds notes, but
-pins, moving, templates, share links, renaming links across the owner's
+notebook: owner, member of the note's notebook or of one above it, at any of
+the four levels (the same recursive query as `idsWithChildren`), or a `404`.
+Writes check again inside their transaction with the note row locked. The
+services keep looking notes up by owner and id, with the owner the check
+hands back, so a route that forgot the check fails closed; an end-to-end
+test walks every note route as an outsider and expects `404`.
+`NotebookMember` has a read or edit role. Invitations are accepted only with
+the token of their link, under the password reset's rules plus a week of
+life; the link is mailed, or without mail shown once to the owner. Sends are
+counted per account an hour and per address a day. Members see nothing of
+the owner beyond the notebook: links, backlinks, titles, mentions, the graph
+and search with the notebook filter are kept to it, and templates and the
+trash stay out. Two editors meet the conflict question of item 8. Owners
+change roles and remove members, members leave, and a change in a member's
+outbox for a note they lost is refused and listed. Different from the plan:
+an editor changes text and tags, adds notes and attaches files, but pins,
+moving, templates, share links, renaming or linking across the owner's
 notes, duplicating and the trash stay the owner's. Still open: no
 notifications when someone changes a shared note, and the demo seed has no
 second account to share with.
+
+### 18. Graph view and unlinked mentions
+
+Both halves are built, and the Orphans view with them. Orphans is a view in
+the sidebar, `GET /notes?orphans=true`, for notes with no link to or from
+another note outside the trash. A link to a missing title, to the trash or to
+the note itself connects nothing. It combines with the notebook and tag
+selects. Under the backlinks, `UnlinkedMentions` lists the notes that write
+the title of the open note without linking to it (`GET /notes/:id/mentions`).
+The full-text index names the candidates with a phrase query, and
+`findMention` beside `extractWikiLinks` then reads each one. The parser the
+preview renders with (micromark with GFM, through `mdast-util-from-markdown`,
+in `prose.ts`) says which stretches are plain text, with nothing inside a link
+or image label counted, and a mention has to lie inside one of them as whole
+words, with the same title key as `NoteLink.targetKey`. Titles under three
+characters get no mentions, and neither do titles that cannot be written as a
+link, titles that another note has too, and "Untitled". The list is paged,
+only the 200 newest candidates are read, and each note comes with the line and
+the position of the mention it shows and the revision of the note. "Link"
+(`POST /notes/:id/mentions/:sourceId/link`) takes those three and wraps that
+mention through `writeNoteText`, tied to that revision, so a note that has
+changed since is left alone. Before it writes, it parses the new text again
+and refuses unless the only change is one more `[[link]]` at that place. The
+list offers only what "Link" would take, with the same function. Every parse
+runs in a pool of two worker threads with half a second each, and its tree and
+verdict are kept by note and revision. A request parses at most 1,000,000
+characters or one second, skips notes over 100,000 characters, and one account
+runs two such requests at a time. It saves the old text as a version, syncs
+the links and leaves `updatedAt` alone.
+
+The graph is a page of its own. `GET /links/graph` returns nodes and resolved
+edges from one query, with titles matched by the SQL expression `resolveKeys`
+uses, for the 300 notes edited last at most. It takes the notebook and the tag
+and refuses anything else, paging included. Every node also carries the number
+of links it has in all, so the list can say when they lead to notes that are
+not shown. `layoutGraph` runs d3-force to its end in a plain function, after
+the page has been drawn and once per answer of the server, so the page shows
+the settled picture as SVG and animates nothing. The picture depends only on
+which notes and links there are: notes are laid out in the order of their ids,
+and there is no seed. Dots and titles are sized in pixels of the screen
+whatever the zoom, a dot can be clicked within 12 pixels of its middle, and
+with more than 40 notes in view titles only show for the note pointed at, in
+the picture or in the list. It can be dragged, zoomed with the buttons or with
+Ctrl or Cmd and the wheel, a click on a dot opens the note, and the notebook
+and tag selects narrow it down. The same notes and links are listed in words
+under the picture, which is what a screen reader and the keyboard get. The
+page is loaded on demand, so d3-force is not in the main bundle, and
+`lazyPage` keeps a failed load inside the layout with a way to try again.
+
+Still open: a title of only very common words finds nothing, because the index
+drops those words. Common titles ("Ideas") are as noisy as predicted, and
+there is no way to dismiss a mention. Only the first mention in a note that
+can be linked is offered at a time. In the graph, dots cannot be moved by
+hand, links have no arrowheads, and above 300 notes only the filters show the
+rest. The dots are not tab stops, and two fingers on a touch screen do not
+zoom: the buttons do. The layout still runs on the main thread, for about a
+third of a second at 300 notes.

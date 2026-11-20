@@ -143,6 +143,43 @@ export interface Backlink {
   context: string;
 }
 
+/** A note that writes another note's title without linking to it, with the place where it does. */
+export interface Mention {
+  id: string;
+  title: string;
+  updatedAt: string;
+  /** The line of the mention: what stands before it, the mention as written, what follows. */
+  before: string;
+  match: string;
+  after: string;
+  /** Where the mention starts in that note's text, and the revision of the note it was found in. */
+  offset: number;
+  version: number;
+}
+
+export interface MentionPage extends Page<Mention> {
+  /** True when more notes matched than the server read, so some mentions may be missing. */
+  capped: boolean;
+}
+
+export interface GraphNode {
+  id: string;
+  title: string;
+  /**
+   * How many links the note has to and from other notes, wherever they are.
+   * More than its edges in the graph when some lead to notes that the
+   * filters or the limit left out.
+   */
+  links: number;
+}
+
+/** Notes and the links between them. `total` is larger than the number of nodes when the server cut the graph short. */
+export interface Graph {
+  nodes: GraphNode[];
+  edges: { source: string; target: string }[];
+  total: number;
+}
+
 export interface OutgoingLink {
   title: string;
   noteId: string | null;

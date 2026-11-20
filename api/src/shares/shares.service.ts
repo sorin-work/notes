@@ -7,6 +7,7 @@ import { APP_CONFIG, AppConfig } from '../config/config';
 import { LinksService } from '../links/links.service';
 import { WORKING_NOTE } from '../notes/note-scope';
 import { extractWikiLinks, normalizeTitle, unlinkExcept } from '../links/wikilinks';
+import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ShareOptionsDto } from './dto/share.dto';
 import { accessIsValid, signAccess } from './share-access';
@@ -93,6 +94,25 @@ function passwordRequired(message: string): ForbiddenException {
 }
 
 /** A link that passed the checks, with what is needed to read through it. */
+/** A notebook's name and the names above it, as far up as notebooks nest. */
+const NOTEBOOK_PATH = {
+  name: true,
+  parent: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
+} as const;
+
+interface NotebookPath {
+  id?: string;
+  name: string;
+  parent?: NotebookPath | null;
+}
+
+/** "Bread / Rye": where a notebook sits inside the shared notebook `rootId`, which is left out. */
+function pathBelow(notebook: NotebookPath | null | undefined, rootId: string | null): string | null {
+  const names: string[] = [];
+  for (let at = notebook; at && at.id !== rootId; at = at.parent) names.unshift(at.name);
+  return names.length ? names.join(' / ') : null;
+}
+
 interface OpenShare {
   share: ShareLink;
   ownerId: string;
@@ -118,6 +138,7 @@ export class SharesService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly attempts: SharePasswordAttempts,
     private readonly attachments: AttachmentsService,
+    private readonly notebooks: NotebooksService,
   ) {}
 
   async get(userId: string, subject: ShareSubject): Promise<ShareView | null> {
@@ -225,7 +246,7 @@ export class SharesService {
       where: { token },
       include: {
         note: { select: { userId: true, deletedAt: true } },
-        notebook: { select: { id: true, userId: true, children: { select: { id: true } } } },
+        notebook: { select: { id: true, userId: true } },
       },
     });
     const ownerId = share?.note?.userId ?? share?.notebook?.userId;
@@ -254,9 +275,8 @@ export class SharesService {
         throw passwordRequired('This link is protected by a password');
       }
     }
-    const notebookIds = share.notebook
-      ? [share.notebook.id, ...share.notebook.children.map((child) => child.id)]
-      : null;
+    // Everything inside the notebook, at any depth, asked for now.
+    const notebookIds = share.notebook ? await this.notebooks.idsWithChildren(ownerId, share.notebook.id) : null;
     return { share, ownerId, notebookIds, access };
   }
 
@@ -274,14 +294,14 @@ export class SharesService {
       this.prisma.note.findMany({
         // The notes of the notebook, without the trash and without its templates.
         where: { userId: open.ownerId, ...WORKING_NOTE, notebookId: { in: open.notebookIds ?? [] } },
-        select: { id: true, title: true, updatedAt: true, notebookId: true, notebook: { select: { name: true } } },
+        select: { id: true, title: true, updatedAt: true, notebookId: true, notebook: { select: NOTEBOOK_PATH } },
       }),
     ]);
     const listed = notes.map((note) => ({
       id: note.id,
       title: note.title,
       updatedAt: note.updatedAt,
-      notebook: note.notebookId === rootId ? null : (note.notebook?.name ?? null),
+      notebook: note.notebookId === rootId ? null : pathBelow(note.notebook, rootId),
     }));
     // The notes of the notebook itself first, then each notebook inside it, by title within.
     listed.sort(

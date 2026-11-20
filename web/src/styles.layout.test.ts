@@ -23,3 +23,16 @@ describe('the shade behind the menu', () => {
     expect(layout).toContain("const NARROW_SCREEN = '(max-width: 820px)';");
   });
 });
+
+describe('the graph', () => {
+  // A grid column is as wide as its longest word unless it is told otherwise.
+  // One title without spaces once made every row of the list wider than the page.
+  it('wraps a title without spaces in the list', () => {
+    expect(css).toMatch(/\.graph-list \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toMatch(/\.graph-list li \{\n {2}overflow-wrap: anywhere;\n\}/);
+  });
+
+  it('sizes the titles in the picture in pixels', () => {
+    expect(css).toMatch(/\.graph-node text \{[^}]*font-size: 12px;/);
+  });
+});

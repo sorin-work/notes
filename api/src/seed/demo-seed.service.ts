@@ -4,7 +4,7 @@ import { APP_CONFIG, AppConfig } from '../config/config';
 import { extractWikiLinks, normalizeTitle } from '../links/wikilinks';
 import { PrismaService } from '../prisma/prisma.service';
 import { newShareToken } from '../shares/shares.service';
-import { DEMO_NOTEBOOKS, DEMO_NOTES } from './demo-data';
+import { DEMO_NOTES, demoNotebookPaths } from './demo-data';
 
 export const DEMO_EMAIL = 'demo@example.com';
 export const DEMO_PASSWORD = 'demo-password';
@@ -44,17 +44,16 @@ export class DemoSeedService implements OnApplicationBootstrap {
         });
 
         const notebookIds = new Map<string, string>();
-        for (const notebook of DEMO_NOTEBOOKS) {
-          const parent = await tx.notebook.create({
-            data: { userId: user.id, name: notebook.name, createdAt: daysAgo(330) },
+        for (const path of demoNotebookPaths()) {
+          const created = await tx.notebook.create({
+            data: {
+              userId: user.id,
+              name: path[path.length - 1],
+              parentId: notebookIds.get(path.slice(0, -1).join('/')) ?? null,
+              createdAt: daysAgo(path.length === 1 ? 330 : 300),
+            },
           });
-          notebookIds.set(notebook.name, parent.id);
-          for (const child of notebook.children ?? []) {
-            const created = await tx.notebook.create({
-              data: { userId: user.id, name: child, parentId: parent.id, createdAt: daysAgo(300) },
-            });
-            notebookIds.set(`${notebook.name}/${child}`, created.id);
-          }
+          notebookIds.set(path.join('/'), created.id);
         }
 
         const tagIds = new Map<string, string>();

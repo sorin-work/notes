@@ -59,6 +59,20 @@ describe('NotesPage', () => {
     );
   });
 
+  it('asks for the notes without links in the orphans view', async () => {
+    const calls = mockFetch({ 'GET /api/notes': { body: page() }, 'GET /api/notebooks': { body: [] } });
+    renderPage('/notes?view=orphans&tag=atlas');
+
+    expect(await screen.findByRole('heading', { name: 'Orphans · #atlas' })).toBeInTheDocument();
+    // The heading comes from the address alone, so the request may not have gone out yet.
+    await waitFor(() => expect(calls.some((call) => call.url.startsWith('/api/notes?'))).toBe(true));
+    const asked = calls.find((call) => call.url.startsWith('/api/notes?'))?.url ?? '';
+    expect(Object.fromEntries(new URLSearchParams(asked.split('?')[1]))).toMatchObject({
+      orphans: 'true',
+      tag: 'atlas',
+    });
+  });
+
   it('creates a note that fits every filter of the list', async () => {
     const calls = mockFetch({
       'GET /api/notes': { body: page([]) },
@@ -70,7 +84,9 @@ describe('NotesPage', () => {
     renderPage('/notes?notebook=none&tag=atlas&view=favorites');
 
     expect(await screen.findByRole('heading', { name: 'Favourites · Not in a notebook · #atlas' })).toBeInTheDocument();
-    expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('notebookId=none');
+    await waitFor(() =>
+      expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('notebookId=none'),
+    );
     await userEvent.click(await screen.findByRole('button', { name: 'Create a note' }));
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
       notebookId: null,

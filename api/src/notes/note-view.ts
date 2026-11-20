@@ -2,6 +2,27 @@ import type { Prisma } from '@prisma/client';
 import type { Access } from '../access/access.service';
 import { excerpt } from '../common/text';
 
+/**
+ * A notebook with the notebooks it is inside, each with its share link, as
+ * far up as notebooks nest: four levels, so a notebook has three above it
+ * at most (MAX_NOTEBOOK_DEPTH in the notebooks service, which this file
+ * cannot import without a loop).
+ */
+const shareOf = { select: { expiresAt: true } } as const;
+export const notebookShareSelect = {
+  id: true,
+  name: true,
+  share: shareOf,
+  parent: {
+    select: {
+      id: true,
+      name: true,
+      share: shareOf,
+      parent: { select: { id: true, name: true, share: shareOf } },
+    },
+  },
+} satisfies Prisma.NotebookSelect;
+
 export const noteInclude = {
   tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } },
   notebook: {
@@ -10,7 +31,7 @@ export const noteInclude = {
       name: true,
       parentId: true,
       share: { select: { expiresAt: true } },
-      parent: { select: { id: true, name: true, share: { select: { expiresAt: true } } } },
+      parent: { select: notebookShareSelect },
     },
   },
   share: { select: { id: true } },
@@ -26,23 +47,23 @@ export interface SharedThrough {
 const live = (share: { expiresAt: Date | null } | null, now: Date) =>
   !!share && (share.expiresAt === null || share.expiresAt > now);
 
+/** A notebook, its share link and the notebooks it is inside, nearest first. */
+export interface ShareChain {
+  id: string;
+  name: string;
+  share: { expiresAt: Date | null } | null;
+  parent?: ShareChain | null;
+}
+
 /**
  * The notebook through whose link something is public: the notebook itself,
- * or the notebook it is inside. A notebook link covers both levels.
+ * or the nearest notebook it is inside, at any depth. A notebook link covers
+ * everything inside it.
  */
-export function sharedThrough(
-  notebook: {
-    id: string;
-    name: string;
-    share: { expiresAt: Date | null } | null;
-    parent: { id: string; name: string; share: { expiresAt: Date | null } | null } | null;
-  } | null,
-  now = new Date(),
-): SharedThrough | null {
-  if (!notebook) return null;
-  if (live(notebook.share, now)) return { id: notebook.id, name: notebook.name };
-  if (notebook.parent && live(notebook.parent.share, now))
-    return { id: notebook.parent.id, name: notebook.parent.name };
+export function sharedThrough(notebook: ShareChain | null | undefined, now = new Date()): SharedThrough | null {
+  for (let at = notebook; at; at = at.parent) {
+    if (live(at.share, now)) return { id: at.id, name: at.name };
+  }
   return null;
 }
 

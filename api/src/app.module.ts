@@ -7,6 +7,7 @@ import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { RequestLoggerMiddleware } from './common/request-logger.middleware';
 import { ConfigModule } from './config/config.module';
 import { HealthController } from './health/health.controller';
+import { MentionsModule } from './mentions/mentions.module';
 import { NotebooksModule } from './notebooks/notebooks.module';
 import { NotesModule } from './notes/notes.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -31,6 +32,7 @@ import { VersionsModule } from './versions/versions.module';
     AttachmentsModule,
     TagsModule,
     VersionsModule,
+    MentionsModule,
     TrashModule,
     SearchModule,
     SharesModule,

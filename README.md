@@ -13,9 +13,12 @@ Markdown import/export.
 - **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
   the same as typing the `x`. Boxes are read-only on shared pages, in version
   history and for notes in the trash.
-- **Notebooks**, nested one level deep (e.g. _Work -> Meetings_). Selecting a
-  top-level notebook shows the notes in the notebooks inside it too. Deleting
-  a notebook moves its notes to the trash.
+- **Notebooks**, nested up to four levels deep (e.g. _Work -> Meetings ->
+  One-to-ones_). Selecting a notebook shows the notes in every notebook inside
+  it too. In the sidebar they are a tree that folds, and what is folded is
+  remembered in the browser. Moving a notebook takes what is inside it along.
+  Deleting one deletes the notebooks inside it and moves the notes of all of
+  them to the trash.
 - **Tags** typed under the title (`#book club` becomes `book-club`). Tags can
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
@@ -33,12 +36,16 @@ Markdown import/export.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
-  bookmarked.
+  bookmarked. The **Orphans** view lists the notes with no links in or out,
+  counting only links between notes outside the trash that are not
+  templates.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
-  paragraph the link is in. After a note is renamed, the editor offers to
-  update the links other notes have to its old title.
+  paragraph the link is in. Under them are its **unlinked mentions**: notes
+  that write its title without linking to it, each with a Link button that
+  puts `[[ ]]` around the mention. After a note is renamed, the editor offers
+  to update the links other notes have to its old title.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted. Words in `"double quotes"` are a phrase: they have to follow
@@ -83,14 +90,17 @@ Markdown import/export.
   notebooks, notes, tags or titles, nor the notebook's templates. The owner
   can change a role or remove someone, and a member can leave.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
-  become folders, tags and dates go in YAML front matter) or a single note as
-  `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault or a
-  Notion export (page ids are stripped and links between pages become
-  `[[wiki links]]`), and Evernote `.enex` files (each file becomes a notebook,
-  attachments are left out). Importing the same files again leaves out the
-  notes that are there already. A full JSON backup of one account (trash,
-  history and all) restores into an empty account. "Print" in the browser
-  gives the note alone, ready to save as PDF.
+  become folders, nested like the notebooks, and tags and dates go in YAML
+  front matter) or a single note as `.md`. Import `.md`/`.txt` files or zips,
+  such as an Obsidian vault or a Notion export (page ids are stripped and
+  links between pages become `[[wiki links]]`), and Evernote `.enex` files
+  (each file becomes a notebook, attachments are left out). Folders become
+  notebooks at the depth they have. Below the fourth level they are joined
+  into one: `A/B/C/D/E` becomes the notebook "D - E" inside A, B and C.
+  Importing the same files again leaves out the notes that are there already.
+  A full JSON backup of one account (trash, history and all) restores into an
+  empty account. "Print" in the browser gives the note alone, ready to save as
+  PDF.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
@@ -104,6 +114,16 @@ Markdown import/export.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
+- **Graph**: a page that draws every note as a dot and every link as a line,
+  to spot clusters and notes nothing leads to. Drag it, zoom with the buttons
+  or with Ctrl or Cmd and the wheel, and click a dot to open the note. A plain
+  turn of the wheel scrolls the page. Dots and titles keep their size on the
+  screen at every zoom. With many notes in view the titles are left out until
+  one is pointed at or the picture is zoomed in. The notebook and tag selects
+  narrow it down. It draws 300 notes at most, the ones edited last, and says
+  so when there are more. Under the picture the same notes and links are
+  listed in words, and a note whose links lead to notes that are not shown
+  says so.
 - **Keyboard and screen readers**: skip links lead past the sidebar to the
   content and to the open note, dialogs keep Tab inside them, the arrow keys
   move through the note list, and the link suggestions and the quick switcher
@@ -164,7 +184,7 @@ Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 | Part     | Tech                                                                               |
 | -------- | ---------------------------------------------------------------------------------- |
 | API      | TypeScript, NestJS 11, Prisma 6, PostgreSQL 17, JWT auth, class-validator          |
-| Web      | React 19, TypeScript, Vite, React Router, TanStack Query, react-markdown           |
+| Web      | React 19, TypeScript, Vite, React Router, TanStack Query, react-markdown, d3-force |
 | Tests    | Jest + Supertest for the API, Vitest + Testing Library + axe for the web app       |
 | Tooling  | ESLint, Prettier, GitHub Actions                                                   |
 | Delivery | Docker Compose: Postgres, the API, and nginx serving the web app and proxying /api |
@@ -554,10 +574,11 @@ api/
   prisma/               schema and migrations
   src/
     auth/               sign-up, login, JWT guard, account changes
-    notebooks/          notebooks and their one level of nesting
+    notebooks/          notebooks and their nesting, four levels deep
     notes/              notes, filters and sorting, note export
     tags/               tag names, renaming and merging
-    links/              [[wiki link]] parsing, link storage and backlinks
+    links/              [[wiki link]] parsing, link storage, backlinks and the graph
+    mentions/           unlinked mentions and the link that fixes one
     versions/           version history and restore
     trash/              trash, restore and the hourly purge
     search/             Postgres full-text search
@@ -591,6 +612,53 @@ ignoring case and extra spaces; if several notes share a title, the most
 recently edited one wins. Renaming a note therefore leaves links to the old
 title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
+
+An unlinked mention is a title written out in the plain text of another note,
+as whole words, ignoring case and extra spaces. The API reads the note with
+the Markdown parser the preview renders it with (micromark with GFM), so plain
+text is what shows as plain text: not code of any kind, not a link or an image
+with anything in its label, not a reference, a URL or HTML, and not an
+existing `[[link]]`. Notes that already link to the title are left out. A
+title gets no mentions when it is shorter than three characters, when it
+cannot be written as a link (with `[`, `]`, `|`, `#` or a backtick in it),
+when another note outside the trash has the same title, or when the note is
+still called "Untitled": a link has to lead to this note and no other. The
+search index picks the candidates, so a title made only of very common words
+("The Who") finds nothing, and only the 200 notes edited last that match are
+read.
+
+The parser is slow on some notes, seconds or more for a small one built to
+trip it, so it never runs on the thread that answers requests. Two worker
+threads parse, and each parse gets half a second. A worker that takes longer
+is stopped and replaced, and the note offers no mentions until it is edited:
+the verdict is kept by account, note, revision and a hash of the text, and so
+is the tree of a note that was parsed, so each revision is parsed once. Both
+caches are bounded by an estimate of the memory they take, and each worker by
+256 MB. A note waits at most two seconds in all for a worker, and at most 32
+wait at a time. Past either, the list answers 503 (try again in a moment), and
+Link answers 400 or 429. Before that, a note longer than 100,000 characters,
+with more than 2,000 closing brackets, or with quotes or lists nested more
+than 16 deep is not parsed at all, and a note that does not write the title is
+passed over. One request parses at most 1,000,000 characters and spends at
+most a second on it. Past either limit the list stops and says it may be
+missing some notes. One account runs two mention requests at a time, and a
+third answers 429. The list is loaded when a note is opened and after its
+title changes, not after every save.
+
+The list shows the line of the mention that the Link button will wrap, and
+only mentions that Link will take: the first one in each note for which it
+works. Link puts the brackets in, parses the new text again and writes it only
+when it holds exactly one `[[link]]` more, at that place, every piece of code,
+HTML, every link, image, reference and definition exactly as before, and every
+emphasis, strong and strikethrough where it was. Brackets next to `*`, `_` or
+`~` can change how those pair up, so then there is no mention. Nor right after
+a `!`, where the brackets would open an image, nor in a table cell beyond the
+columns of the header, which the preview does not show. A note that Link
+cannot parse in time answers 400. The button changes the other note: its old
+text is saved as a version first, so the change can be undone from its
+history, and its "last edited" time stays as it was. The request names the
+revision of the note that the mention was found in. If the note has been
+edited since, nothing is changed and the list is loaded again.
 
 When a rename leaves links dangling, the editor shows how many notes still
 link to the old title and offers to update them, naming both titles. The
@@ -1001,15 +1069,17 @@ takes either away. The password is stored as a hash, made the same way as
 account passwords.
 
 A notebook is shared the same way under `/notebooks/:id/share`. Its link
-answers with `"kind": "notebook"`, the name and the list of its notes, and
-`GET /public/notes/:token/:noteId` gives one of them. Which notes belong to
-the notebook is looked up with every request: a note added later is there,
-and one that is moved out, put in the trash or turned into a template
-answers `404` from then on.
-The answer to the right password has an `access` value. Sent back in an
-`X-Share-Access` header it opens the notes of the notebook for an hour, so
-the password is typed once and only real attempts count against the limit.
-It is worth nothing for another link, or after the password changed.
+answers with `"kind": "notebook"`, the name and the list of its notes and of
+the notes in the notebooks inside it, at any depth, each with the way to its
+notebook below the shared one ("Bread / Sour"), and `GET
+/public/notes/:token/:noteId` gives one of them. Which notes belong to the
+notebook is looked up with every request: a note added later is there, and one
+that is moved out, put in the trash or turned into a template answers `404`
+from then on. The answer
+to the right password has an `access` value. Sent back in an `X-Share-Access`
+header it opens the notes of the notebook for an hour, so the password is
+typed once and only real attempts count against the limit. It is worth nothing
+for another link, or after the password changed.
 
 In a shared note a `[[link]]` stays a link only where the reader may follow
 it. Its title is looked up first among the notes of the same shared
@@ -1024,7 +1094,8 @@ note, to a note that only a shared notebook covers: `[[Private plan]]`
 becomes `Private plan`, with `links: {}`.
 
 `GET /notes/:id` and `GET /notebooks` carry `sharedThrough`, the notebook
-whose live link makes the note or notebook public, or `null`.
+whose live link makes the note or notebook public, or `null`: the notebook
+itself or the nearest one it is inside, however far up.
 
 A note's files are uploaded with `POST /notes/:id/attachments`, one per
 request, as `file`. The type is read from the bytes and has to be PNG, JPEG,

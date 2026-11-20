@@ -223,6 +223,12 @@ export class ListNotesQuery extends NoteFilterQuery {
   @IsBoolean()
   favorite?: boolean;
 
+  /** Only notes with no links in or out. */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  orphans?: boolean;
+
   @ApiPropertyOptional({ enum: NOTE_SORTS })
   @IsOptional()
   @IsIn(NOTE_SORTS)

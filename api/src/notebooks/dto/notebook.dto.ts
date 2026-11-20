@@ -8,7 +8,7 @@ export class CreateNotebookDto {
   @MaxLength(80)
   name: string;
 
-  /** A top-level notebook to nest this one under. */
+  /** The notebook to nest this one in. */
   @IsOptional()
   @IsUUID()
   parentId?: string | null;

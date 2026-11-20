@@ -1,6 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
-import { linkContext, LinksService } from './links.service';
+import { linkContext, LinksService, MAX_GRAPH_NODES } from './links.service';
 
 const USER = 'user-1';
 
@@ -29,6 +29,45 @@ describe('LinksService', () => {
       await service.sync(asPrismaService(prisma), 'n1', 'No links here');
       expect(prisma.noteLink.deleteMany).toHaveBeenCalled();
       expect(prisma.noteLink.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('graph', () => {
+    it('asks for nodes and edges in one query and maps the answer', async () => {
+      const nodes = [
+        { id: 'a', title: 'Atlas', links: 3 },
+        { id: 'b', title: 'Budget', links: 1 },
+      ];
+      prisma.$queryRaw.mockResolvedValue([{ total: BigInt(412), nodes, edges: [{ source: 'a', target: 'b' }] }]);
+
+      await expect(service.graph(USER)).resolves.toEqual({
+        nodes,
+        edges: [{ source: 'a', target: 'b' }],
+        total: 412,
+      });
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes the filters and the limit as parameters, never as SQL text', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ total: BigInt(0), nodes: [], edges: [] }]);
+      await service.graph(USER, { notebookIds: ['nb-1', 'nb-2'], tag: "x'); DROP TABLE notes; --" });
+
+      const [strings, ...values] = prisma.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+      const where = values.find((value) => (value as { sql?: string }).sql?.includes('n.notebook_id')) as {
+        sql: string;
+        values: unknown[];
+      };
+      expect(where.values).toEqual([USER, 'nb-1', 'nb-2', USER, "x'); DROP TABLE notes; --"]);
+      expect(where.sql).toContain('n.notebook_id IN (?::uuid,?::uuid)');
+      expect(values).toContain(MAX_GRAPH_NODES);
+      expect(strings.join('?') + where.sql).not.toMatch(/drop|nb-1/i);
+    });
+
+    it('asks for the notes outside any notebook with "none"', async () => {
+      prisma.$queryRaw.mockResolvedValue([]);
+      await expect(service.graph(USER, { notebookIds: 'none' })).resolves.toEqual({ nodes: [], edges: [], total: 0 });
+      const where = (prisma.$queryRaw.mock.calls[0] as { sql?: string }[]).find((value) => value?.sql?.includes('n.'));
+      expect(where?.sql).toContain('n.notebook_id IS NULL');
     });
   });
 
@@ -75,6 +114,12 @@ describe('LinksService', () => {
         { title: 'Alpha', noteId: 'a1' },
         { title: 'Missing', noteId: null },
       ]);
+    });
+
+    it('asks for the links in the order of their title keys', async () => {
+      prisma.note.findFirst.mockResolvedValue({ outgoingLinks: [] });
+      await service.outgoing(USER, 'n1');
+      expect(prisma.note.findFirst.mock.calls[0][0].select.outgoingLinks.orderBy).toEqual([{ targetKey: 'asc' }]);
     });
 
     it('does not query titles for a note without links', async () => {

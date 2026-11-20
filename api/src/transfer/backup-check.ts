@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { DATE_FORMATS } from '../common/day';
+import { MAX_NOTEBOOK_DEPTH } from '../notebooks/notebooks.service';
 import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { normalizeTagNames } from '../tags/tag-name';
 import { MAX_VERSIONS_PER_NOTE } from '../versions/versions.service';
@@ -78,9 +79,12 @@ export function readExportedAt(value: unknown): string {
   return date(value, 'exportedAt');
 }
 
-/** All notebooks, checked together: ids, names in their place, and one level of nesting. */
+/** How many notebooks one backup may hold. The checks below are linear, this keeps them short too. */
+export const MAX_BACKUP_NOTEBOOKS = 10_000;
+
+/** All notebooks, checked together: ids, names in their place, and nesting as deep as notebooks go, without loops. */
 export function readNotebooks(value: unknown): BackupNotebook[] {
-  const notebooks = list(value, 'notebooks').map((entry, index): BackupNotebook => {
+  const notebooks = list(value, 'notebooks', MAX_BACKUP_NOTEBOOKS).map((entry, index): BackupNotebook => {
     const where = `notebooks[${index}]`;
     if (!isObject(entry)) invalid(where, 'is not an object');
     return {
@@ -98,14 +102,57 @@ export function readNotebooks(value: unknown): BackupNotebook[] {
     if (notebook.parentId !== null) {
       const parent = byId.get(notebook.parentId);
       if (!parent) invalid(`notebooks[${index}].parentId`, 'names no notebook in the file');
-      // The nesting rule of the app: one level.
-      if (parent.parentId !== null) invalid(`notebooks[${index}]`, 'is nested deeper than notebooks can be');
     }
     const key = `${notebook.parentId ?? ''}/${notebook.name.toLowerCase()}`;
     if (names.has(key)) invalid(`notebooks[${index}].name`, 'is taken by another notebook in the same place');
     names.add(key);
   }
+  // The nesting rule of the app: MAX_NOTEBOOK_DEPTH levels, and no notebook inside itself.
+  const depths = notebookDepths(notebooks);
+  notebooks.forEach((notebook, index) => {
+    const depth = depths.get(notebook.id);
+    if (depth === undefined) invalid(`notebooks[${index}]`, 'is inside itself');
+    if (depth > MAX_NOTEBOOK_DEPTH) invalid(`notebooks[${index}]`, 'is nested deeper than notebooks can be');
+  });
   return notebooks;
+}
+
+/**
+ * The level of each notebook, 1 at the top, from the parents in the list.
+ * A notebook in a loop, or below one, gets no level. Notebooks whose parent
+ * is not in the list count as at the top. One pass: each notebook is
+ * walked up from only until a notebook whose level, or whose being in a
+ * loop, is known already, so the work grows with the number of notebooks
+ * and not faster, however the parents are made up.
+ */
+export function notebookDepths(notebooks: { id: string; parentId: string | null }[]): Map<string, number> {
+  const parents = new Map(notebooks.map((notebook) => [notebook.id, notebook.parentId]));
+  const known = new Map<string, number | 'loop'>();
+  for (const notebook of notebooks) {
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let base: number | 'loop' = 0;
+    for (let at: string | null | undefined = notebook.id; at && parents.has(at); at = parents.get(at)) {
+      const level = known.get(at);
+      if (level !== undefined) {
+        base = level;
+        break;
+      }
+      if (onPath.has(at)) {
+        base = 'loop';
+        break;
+      }
+      path.push(at);
+      onPath.add(at);
+    }
+    for (let index = path.length - 1; index >= 0; index--) {
+      if (base !== 'loop') base += 1;
+      known.set(path[index], base);
+    }
+  }
+  const depths = new Map<string, number>();
+  for (const [id, level] of known) if (level !== 'loop') depths.set(id, level);
+  return depths;
 }
 
 export function readTags(value: unknown): BackupTag[] {

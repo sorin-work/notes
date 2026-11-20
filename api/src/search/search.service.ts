@@ -68,7 +68,7 @@ export class SearchService {
     if (options.notebookId === 'none') {
       conditions.push(Prisma.sql`n.notebook_id IS NULL`);
     } else if (options.notebookId) {
-      // A top-level notebook covers the notebooks inside it too, as in the note list.
+      // A notebook covers every notebook inside it too, as in the note list.
       const ids = await this.notebooks.idsWithChildren(userId, options.notebookId);
       conditions.push(Prisma.sql`n.notebook_id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})`);
     }

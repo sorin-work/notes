@@ -7,10 +7,19 @@ import { createNote, listNotes, openDailyNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Notebook, NoteChanges } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { useStoredSet } from '../hooks/useStoredSet';
 import { todaysNote } from '../lib/days';
 import { dropStashes } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
-import { notebookTree, ownNotebooks, totalNotes, trashedWith } from '../lib/notebooks';
+import {
+  isInside,
+  MAX_NOTEBOOK_DEPTH,
+  type NotebookNode,
+  notebookTree,
+  ownNotebooks,
+  totalNotes,
+  trashedWith,
+} from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
 import {
   cannotReachServer,
@@ -21,10 +30,10 @@ import {
 } from '../lib/outbox';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { LinkIcon, PencilIcon, PeopleIcon, TrashIcon } from './Icons';
-import { Invitations } from './Invitations';
 import { MembersDialog, MembersList } from './MembersDialog';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
+import { TreeToggle } from './TreeToggle';
 import { ShareDialog } from './ShareDialog';
 import { ErrorMessage } from './States';
 
@@ -74,6 +83,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const own = ownNotebooks(notebooks.data ?? []);
   const tree = notebookTree(own);
   const sharedTree = notebookTree((notebooks.data ?? []).filter((notebook) => !own.includes(notebook)));
+  // Notebooks are open until they are folded shut, and stay the way they were left.
+  const [closed, toggleClosed] = useStoredSet('notes.closedNotebooks');
 
   // Only the note list is filtered. On the other pages nothing in here is the current place.
   const onNotes = location.pathname.startsWith('/notes');
@@ -145,7 +156,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
       setAction(null);
-      if (activeNotebook === id || tree.some((n) => n.id === id && n.children.some((c) => c.id === activeNotebook))) {
+      // The list was showing the deleted notebook, or one that went with it.
+      if (isInside(notebooks.data ?? [], activeNotebook, id)) {
         navigate('/notes');
       }
     },
@@ -157,6 +169,47 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     if (!q) return;
     navigate(`/search?q=${encodeURIComponent(q)}`);
     onNavigate?.();
+  };
+
+  /** A notebook with, when it is open, the notebooks inside it. Deeper ones are drawn the same way. */
+  // A notebook inside a shared one, at any depth: a link, and what is inside it.
+  const sharedBranch = (node: NotebookNode): React.ReactNode => (
+    <li key={node.id}>
+      <div className="nav-row">
+        {filterLink(`?notebook=${node.id}`, activeNotebook === node.id, node.name, totalNotes(node), 'nested')}
+      </div>
+      {node.children.length > 0 && <ul>{node.children.map(sharedBranch)}</ul>}
+    </li>
+  );
+
+  const branch = (node: NotebookNode) => {
+    const open = !closed.has(node.id);
+    const insideId = `notebooks-in-${node.id}`;
+    return (
+      <li key={node.id}>
+        <div className="nav-row">
+          {node.children.length > 0 ? (
+            <TreeToggle name={node.name} open={open} controls={insideId} onToggle={() => toggleClosed(node.id)} />
+          ) : (
+            <span className="tree-toggle" aria-hidden="true" />
+          )}
+          {filterLink(
+            `?notebook=${node.id}`,
+            activeNotebook === node.id,
+            node.name,
+            totalNotes(node),
+            '',
+            publicBecause(node),
+          )}
+          <NotebookMenu
+            notebook={node}
+            canNest={node.depth < MAX_NOTEBOOK_DEPTH}
+            onAction={(kind) => setAction(kind === 'create' ? { kind, parentId: node.id } : { kind, notebook: node })}
+          />
+        </div>
+        {node.children.length > 0 && open && <ul id={insideId}>{node.children.map(branch)}</ul>}
+      </li>
+    );
   };
 
   const filterLink = (
@@ -187,7 +240,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="sidebar" aria-label="Main">
       <div className="sidebar-top">
-        <Invitations />
         <Link to="/notes" className="brand" onClick={onNavigate}>
           <img src="/favicon.svg" alt="" width={22} height={22} /> Notes
         </Link>
@@ -263,6 +315,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           {filterLink('?view=pinned', view === 'pinned', 'Pinned')}
           {filterLink('?view=favorites', view === 'favorites', 'Favourites')}
           {filterLink(`?notebook=${NO_NOTEBOOK}`, activeNotebook === NO_NOTEBOOK, 'Not in a notebook')}
+          {filterLink('?view=orphans', view === 'orphans', 'Orphans')}
           {filterLink('?view=templates', view === 'templates', 'Templates')}
         </div>
 
@@ -280,49 +333,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             </button>
           </div>
           {notebooks.data?.length === 0 && <p className="nav-empty">No notebooks yet.</p>}
-          <ul className="notebook-tree">
-            {tree.map((parent) => (
-              <li key={parent.id}>
-                <div className="nav-row">
-                  {filterLink(
-                    `?notebook=${parent.id}`,
-                    activeNotebook === parent.id,
-                    parent.name,
-                    totalNotes(parent),
-                    '',
-                    publicBecause(parent),
-                  )}
-                  <NotebookMenu
-                    notebook={parent}
-                    canNest
-                    onAction={(kind) =>
-                      setAction(kind === 'create' ? { kind, parentId: parent.id } : { kind, notebook: parent })
-                    }
-                  />
-                </div>
-                {parent.children.length > 0 && (
-                  <ul>
-                    {parent.children.map((child) => (
-                      <li key={child.id} className="nav-row">
-                        {filterLink(
-                          `?notebook=${child.id}`,
-                          activeNotebook === child.id,
-                          child.name,
-                          child.noteCount,
-                          'nested',
-                          publicBecause(child),
-                        )}
-                        <NotebookMenu
-                          notebook={child}
-                          onAction={(kind) => kind !== 'create' && setAction({ kind, notebook: child })}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ul>
+          <ul className="notebook-tree">{tree.map(branch)}</ul>
         </div>
 
         {sharedTree.length > 0 && (
@@ -367,21 +378,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       </button>
                     </span>
                   </div>
-                  {parent.children.length > 0 && (
-                    <ul>
-                      {parent.children.map((child) => (
-                        <li key={child.id} className="nav-row">
-                          {filterLink(
-                            `?notebook=${child.id}`,
-                            activeNotebook === child.id,
-                            child.name,
-                            child.noteCount,
-                            'nested',
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  {parent.children.length > 0 && <ul>{parent.children.map(sharedBranch)}</ul>}
                 </li>
               ))}
             </ul>
@@ -411,6 +408,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="sidebar-bottom">
+        <NavLink to="/graph" className="nav-item" onClick={onNavigate}>
+          Graph
+        </NavLink>
         <NavLink to="/trash" className="nav-item" onClick={onNavigate}>
           Trash
         </NavLink>
@@ -486,7 +486,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           message={
             <p>
               The notebook
-              {tree.some((n) => n.id === action.notebook.id && n.children.length > 0) &&
+              {(notebooks.data ?? []).some((notebook) => notebook.parentId === action.notebook.id) &&
                 ' and the notebooks inside it'}{' '}
               will be deleted. {trashedWith(own, action.notebook.id)}
             </p>

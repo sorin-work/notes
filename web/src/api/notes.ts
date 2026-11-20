@@ -1,5 +1,5 @@
 import { api, ApiError, download, json, withQuery } from './client';
-import type { Backlink, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
+import type { Backlink, Mention, MentionPage, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
 
 export type NoteSort = 'updated' | 'created' | 'title';
 
@@ -8,6 +8,8 @@ export interface NoteFilters {
   tag?: string;
   pinned?: boolean;
   favorite?: boolean;
+  /** Only notes with no links in or out. */
+  orphans?: boolean;
   /** The templates, which no other list shows. */
   templates?: boolean;
   sort?: NoteSort;
@@ -51,6 +53,20 @@ export const duplicateNote = (id: string) => api<Note>(`/notes/${id}/duplicate`,
 export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks`);
 
 export const outgoingLinks = (id: string) => api<OutgoingLink[]>(`/notes/${id}/links`);
+
+/** Notes that mention this note's title without linking to it. */
+export const mentions = (id: string, page: number, pageSize: number) =>
+  api<MentionPage>(withQuery(`/notes/${id}/mentions`, { page, pageSize }));
+
+/**
+ * Puts [[ ]] around a mention, exactly the one that was listed. The API
+ * answers 409 when that note has changed since.
+ */
+export const linkMention = (id: string, mention: Mention) =>
+  api<void>(
+    `/notes/${id}/mentions/${mention.id}/link`,
+    json('POST', { offset: mention.offset, text: mention.match, version: mention.version }),
+  );
 
 /** With `notebookId` of a notebook shared with you, the titles in it instead of your own. */
 export const noteTitles = (q: string, limit = 8, notebookId?: string | null) =>

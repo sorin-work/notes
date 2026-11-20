@@ -1,7 +1,8 @@
 import { loadConfig } from '../config/config';
 import { extractWikiLinks, normalizeTitle } from '../links/wikilinks';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
-import { DEMO_NOTEBOOKS, DEMO_NOTES } from './demo-data';
+import { MAX_NOTEBOOK_DEPTH } from '../notebooks/notebooks.service';
+import { DEMO_NOTES, demoNotebookPaths } from './demo-data';
 import { DEMO_EMAIL, DemoSeedService } from './demo-seed.service';
 
 const env = { DATABASE_URL: 'postgresql://x', JWT_SECRET: 'x'.repeat(32) };
@@ -18,12 +19,16 @@ describe('demo data', () => {
   });
 
   it('puts every note in a notebook that exists', () => {
-    const paths = new Set(
-      DEMO_NOTEBOOKS.flatMap((nb) => [nb.name, ...(nb.children ?? []).map((child) => `${nb.name}/${child}`)]),
-    );
+    const paths = new Set(demoNotebookPaths().map((path) => path.join('/')));
     for (const note of DEMO_NOTES) {
       if (note.notebook.length) expect(paths).toContain(note.notebook.join('/'));
     }
+  });
+
+  it('nests its notebooks more than one level, and no deeper than notebooks go', () => {
+    const depths = demoNotebookPaths().map((path) => path.length);
+    expect(Math.max(...depths)).toBeGreaterThan(2);
+    expect(Math.max(...depths)).toBeLessThanOrEqual(MAX_NOTEBOOK_DEPTH);
   });
 
   it('never has a note edited before it was created', () => {
@@ -62,6 +67,12 @@ describe('DemoSeedService', () => {
 
     expect(prisma.user.create.mock.calls[0][0].data.email).toBe(DEMO_EMAIL);
     expect(prisma.note.create).toHaveBeenCalledTimes(DEMO_NOTES.length);
+    // Each notebook is created inside the one before it in its path.
+    const notebooks = prisma.notebook.create.mock.calls.map(([args]) => args.data);
+    expect(notebooks).toHaveLength(demoNotebookPaths().length);
+    expect(notebooks.find((data) => data.name === 'One-to-ones')?.parentId).toBe('nb-Meetings');
+    expect(notebooks.find((data) => data.name === 'Meetings')?.parentId).toBe('nb-Work');
+    expect(notebooks.find((data) => data.name === 'Work')?.parentId).toBeNull();
     expect(prisma.noteLink.createMany).toHaveBeenCalled();
     expect(prisma.noteVersion.create).toHaveBeenCalled();
     expect(prisma.shareLink.create).toHaveBeenCalled();
