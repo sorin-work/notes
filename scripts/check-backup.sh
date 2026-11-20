@@ -8,7 +8,8 @@
 #   2. Three real dumps with BACKUP_KEEP=2 leave the two newest, and leave
 #      files that are not dumps alone.
 #   3. The newest dump restores into a scratch database.
-#   4. Every table has the same number of rows in both, and there are rows.
+#   4. Every table has the same number of rows in both, and the application
+#      tables are not all empty.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -71,7 +72,9 @@ row_counts "$PGDATABASE" >"$work/source.txt"
 row_counts "$scratch" >"$work/restored.txt"
 cat "$work/source.txt"
 diff "$work/source.txt" "$work/restored.txt" || fail "row counts differ between $PGDATABASE (-) and the restored copy (+)"
-total=$(awk '{ rows += $2 } END { print rows + 0 }' "$work/source.txt")
-[ "$total" -gt 0 ] || fail "$PGDATABASE has no rows, so this proves nothing"
+# Prisma's own table always has rows. Only the application's tables say
+# whether there was anything to lose.
+total=$(awk '$1 !~ /\._prisma_migrations$/ { rows += $2 } END { print rows + 0 }' "$work/source.txt")
+[ "$total" -gt 0 ] || fail "the application tables of $PGDATABASE are empty, so this proves nothing"
 
-echo "OK: $(wc -l <"$work/source.txt") tables and $total rows came back from $newest"
+echo "OK: $(wc -l <"$work/source.txt") tables came back from $newest, $total rows in the application tables"
