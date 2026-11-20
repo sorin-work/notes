@@ -1576,6 +1576,34 @@ describe('sharing a notebook', () => {
     };
   };
 
+  it('shows its readers no template that sits in the notebook', async () => {
+    const { server, auth, recipes, soup, link } = await kitchen();
+    const template = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Recipe template', content: 'Serves {{title}}', notebookId: recipes, isTemplate: true })
+      .expect(201);
+    // A note in the notebook links to it by title.
+    await request(server)
+      .patch(`/api/notes/${soup}`)
+      .set(auth)
+      .send({ content: 'Leeks, see [[Recipe template]].' })
+      .expect(200);
+
+    const index = await request(server).get(link).expect(200);
+    expect(JSON.stringify(index.body)).not.toContain('Recipe template');
+    const never = await request(server).get(`${link}/6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e`).expect(404);
+    const hidden = await request(server).get(`${link}/${template.body.id}`).expect(404);
+    expect(hidden.body).toEqual(never.body);
+    // The link reads as plain words, as one to a note the reader may not open.
+    const shared = await request(server).get(`${link}/${soup}`).expect(200);
+    expect(shared.body.links).toEqual({});
+    expect(shared.body.content).not.toContain(template.body.id);
+    // And the owner is not told that the template is public.
+    const own = await request(server).get(`/api/notes/${template.body.id}`).set(auth).expect(200);
+    expect(own.body.sharedThrough).toBeNull();
+  });
+
   it('shows the notes of the notebook and of the notebooks inside it, and nothing from outside', async () => {
     const { server, auth, recipes, soup, rye, plan, link, token } = await kitchen();
 
