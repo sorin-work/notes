@@ -48,6 +48,19 @@ describe('ApiTokensService', () => {
       await expect(service.create('user-1', { name: 'one too many' })).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.apiToken.create).not.toHaveBeenCalled();
     });
+
+    it('locks the account before it counts, so requests at the same moment cannot pass the limit together', async () => {
+      prisma.apiToken.count.mockResolvedValue(0);
+      prisma.apiToken.create.mockResolvedValue({ id: 't1' });
+      await service.create('user-1', { name: 'script' });
+
+      const [strings, id] = prisma.$queryRaw.mock.calls[0] as [TemplateStringsArray, string];
+      expect(strings.join('?')).toMatch(/SELECT id FROM users WHERE id = \?::uuid FOR UPDATE/);
+      expect(id).toBe('user-1');
+      const order = (mock: jest.Mock) => mock.mock.invocationCallOrder[0];
+      expect(order(prisma.$queryRaw)).toBeLessThan(order(prisma.apiToken.count));
+      expect(order(prisma.apiToken.count)).toBeLessThan(order(prisma.apiToken.create));
+    });
   });
 
   it('lists the tokens of one user, newest first, without the hash', async () => {
