@@ -461,6 +461,26 @@ describe('NotesService', () => {
       prisma.note.updateMany.mockResolvedValue({ count: 1 });
     });
 
+    it('runs the access check of a shared note first inside the transaction, and writes nothing when it refuses', async () => {
+      const order: string[] = [];
+      prisma.note.updateMany.mockImplementation(() => {
+        order.push('write');
+        return Promise.resolve({ count: 1 });
+      });
+      const allow = jest.fn(() => {
+        order.push('guard');
+        return Promise.resolve();
+      });
+      await service.update(USER, 'n1', { content: 'x' }, allow);
+      expect(allow).toHaveBeenCalledWith(prisma);
+      expect(order).toEqual(['guard', 'write']);
+
+      prisma.note.updateMany.mockClear();
+      const refuse = jest.fn(() => Promise.reject(new NotFoundException('Note not found')));
+      await expect(service.update(USER, 'n1', { content: 'y' }, refuse)).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
+    });
+
     it('saves a version, syncs links and bumps updatedAt when the content changes', async () => {
       await service.update(USER, 'n1', { content: 'New [[Link]]' });
       expect(versions.snapshotIfDue).toHaveBeenCalledWith(prisma, note());
