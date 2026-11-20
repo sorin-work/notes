@@ -39,7 +39,6 @@ import {
   openEntryFor,
   QueuedElsewhere,
   queueText,
-  replaceQueuedText,
   resolveEntry,
   useOutbox,
 } from '../lib/outbox';
@@ -92,6 +91,21 @@ export function NoteEditor({ noteId }: { noteId: string }) {
   }
   if (!note.data) return null;
   return <LoadedEditor note={note.data} />;
+}
+
+/**
+ * One id per waiting entry and version of it: the note "keep both" or leaving
+ * makes from it, so asking again, or retrying, never queues a second copy.
+ */
+const keptIds = new Map<string, string>();
+function keepBothId(entry: { seq?: number; version: number; noteId: string }, whose: 'mine' | 'theirs'): string {
+  const key = `${whose}:${entry.noteId}:${entry.seq}:${entry.version}`;
+  let id = keptIds.get(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    keptIds.set(key, id);
+  }
+  return id;
 }
 
 function LoadedEditor({ note }: { note: Note }) {
@@ -236,16 +250,13 @@ function LoadedEditor({ note }: { note: Note }) {
   const saveOverConflict = useCallback(
     async (draft: Draft, conflict: unknown) => {
       if (conflict instanceof QueuedElsewhere && ownerId) {
-        // Nobody left to ask which to keep: both are kept, this text in the
-        // note and the other tab's as a note of its own.
-        const other = conflict.queued;
-        await createOffline(ownerId, {
-          title: `${savedTitle(other.title)} (from another tab)`,
-          content: other.content,
-        });
-        await replaceQueuedText(ownerId, note.id, draft);
+        // Nobody left to ask. The other tab's waiting text is not touched at
+        // all; this tab's text becomes a note of its own, and only once that
+        // create is safely queued does the draft count as saved.
+        const title = `${savedTitle(draft.title)} (kept when leaving)`;
+        await createOffline(ownerId, { title, content: draft.content }, keepBothId(conflict.queued, 'mine'));
         notify(
-          `“${savedTitle(draft.title)}” had changes waiting from another tab when you left it. Your text was kept in the note, and the other text as a new note.`,
+          `“${savedTitle(draft.title)}” had changes waiting from another tab when you left it. The note keeps that tab's text, and yours is in a new note, “${title}”.`,
         );
         return;
       }
@@ -367,15 +378,23 @@ function LoadedEditor({ note }: { note: Note }) {
     if (!theirs) return;
     setDialog(null);
     if (elsewhere && ownerId) {
-      // Mine replaces the other tab's queued text; "keep both" keeps that as a note of its own.
-      if (withTheirsInHistory) {
-        void createOffline(ownerId, {
-          title: `${savedTitle(elsewhere.title)} (from another tab)`,
-          content: elsewhere.content,
-        });
-      }
-      parent.current = { title: elsewhere.title, content: elsewhere.content };
-      void autosave.retry();
+      // "Keep mine" replaces the other tab's text only if it is still exactly
+      // what the question showed: queued with that text as the parent, any
+      // later change there raises the question again. "Keep both" first keeps
+      // that text as a note of its own, under an id that stays the same if
+      // this is tried again, so a retry makes no second copy.
+      const other = elsewhere;
+      void (async () => {
+        if (withTheirsInHistory) {
+          await createOffline(
+            ownerId,
+            { title: `${savedTitle(other.title)} (from another tab)`, content: other.content },
+            keepBothId(other, 'theirs'),
+          );
+        }
+        parent.current = { title: other.title, content: other.content };
+        await autosave.retry();
+      })();
       return;
     }
     revision.current = theirs.revision;
