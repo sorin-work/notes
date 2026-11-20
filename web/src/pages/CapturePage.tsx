@@ -11,7 +11,8 @@ import { captureDraft } from '../lib/capture';
  *
  * Nothing is created until the button is pressed. Any site can send a
  * signed-in visitor to this address, so a page that saved by itself would
- * let strangers put notes into the account.
+ * let strangers put notes into the account. For the same reason the draft
+ * takes very little from the link, see captureDraft.
  */
 export function CapturePage() {
   const [params] = useSearchParams();
@@ -46,6 +47,11 @@ export function CapturePage() {
           <span>Text</span>
           <textarea rows={10} value={content} onChange={(event) => setContent(event.target.value)} />
         </label>
+        {draft.urlDropped && (
+          <p className="field-error" role="status">
+            The address that came with this link was left out, because it is not a plain http or https web address.
+          </p>
+        )}
         <p className="muted">Nothing is saved until you press the button. You can go on writing in the note after.</p>
         {save.error && <ErrorMessage error={save.error} />}
         <div className="form-actions start">
