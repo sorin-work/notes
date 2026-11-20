@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toggleTask } from './tasks';
+import { countLines, toggleTask } from './tasks';
 
 describe('toggleTask', () => {
   it('ticks and unticks the box on the given line only', () => {
@@ -50,5 +50,13 @@ describe('toggleTask', () => {
   it('counts lines the way the parser does and keeps the line endings', () => {
     expect(toggleTask('one\r\n\r\n- [ ] a\r\n- [ ] b\r\n', 4, false)).toBe('one\r\n\r\n- [ ] a\r\n- [x] b\r\n');
     expect(toggleTask('one\r- [ ] a\r- [ ] b', 3, false)).toBe('one\r- [ ] a\r- [x] b');
+  });
+});
+
+describe('countLines', () => {
+  it('counts \\r\\n as one line ending and a lone \\r or \\n as one each', () => {
+    expect(countLines('')).toBe(1);
+    expect(countLines('a\r\nb\rc\nd')).toBe(4);
+    expect(countLines('a\n\r\n\r')).toBe(4);
   });
 });

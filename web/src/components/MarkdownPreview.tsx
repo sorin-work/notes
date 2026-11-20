@@ -1,6 +1,7 @@
 import { ComponentProps, createContext, memo, MouseEvent, useContext } from 'react';
 import ReactMarkdown, { defaultUrlTransform, ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { countLines } from '../lib/tasks';
 import { linkifyWikiLinks, normalizeTitle, WIKI_PROTOCOL, wikiTarget } from '../lib/wikilinks';
 
 interface MarkdownPreviewProps {
@@ -83,9 +84,13 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   if (!content.trim()) {
     return <p className="preview-empty">Nothing to preview yet.</p>;
   }
+  const linkified = linkifyWikiLinks(content);
+  // Boxes are found in the source by line number, and the parser reads the
+  // linkified text. Should the two ever differ in their lines, boxes stay read-only.
+  const sameLines = onToggleTask !== undefined && countLines(linkified) === countLines(content);
   return (
     <div className="markdown">
-      <ToggleTaskContext value={onToggleTask}>
+      <ToggleTaskContext value={sameLines ? onToggleTask : undefined}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           urlTransform={urlTransform}
@@ -121,7 +126,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
             input: TaskBox,
           }}
         >
-          {linkifyWikiLinks(content)}
+          {linkified}
         </ReactMarkdown>
       </ToggleTaskContext>
     </div>

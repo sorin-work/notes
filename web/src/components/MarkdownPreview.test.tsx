@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import * as wikilinks from '../lib/wikilinks';
 import { MarkdownPreview } from './MarkdownPreview';
 
 describe('MarkdownPreview', () => {
@@ -72,6 +73,12 @@ describe('MarkdownPreview', () => {
       [9, true],
       [13, false],
     ]);
+  });
+
+  it('keeps boxes read-only when the preview and the source differ in their lines', () => {
+    vi.spyOn(wikilinks, 'linkifyWikiLinks').mockImplementation((text) => text.replace('\n', ' '));
+    render(<MarkdownPreview content={'Intro\n\n- [ ] one'} onToggleTask={vi.fn()} />);
+    expect(screen.getByRole('checkbox')).toBeDisabled();
   });
 
   it('opens normal links in a new tab and drops javascript: URLs', () => {
