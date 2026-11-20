@@ -310,10 +310,15 @@ Good to know:
   later.
 - `docker compose down -v` removes the database volume, not the dumps.
 - Beside each dump the files of attachments go into
-  `notes-<time>.files.tar`, made just before the dump, so no row in the dump
-  points at a file the archive lacks. Only regular files named like an
-  attachment id go in, never a link. A restore puts the files back after the
-  database, and refuses an archive that holds anything else. It also refuses
+  `notes-<time>.files.tar`, made just before the dump. A file deleted in
+  between is in the archive without a row and is swept out after a restore.
+  A file uploaded in between has its row in the dump but is not in the
+  archive: after a restore that note shows the file as missing, and the
+  export and the JSON backup leave it out and list it. A backup of a stopped
+  stack has no such gap. Only regular files named like an attachment id go
+  in, never a link. A restore puts the files back after the database, and
+  refuses an archive that holds anything else, a hard link included, or that
+  unpacks into anything but plain files. It also refuses
   to start while the API is connected, because the API writes and removes
   files as it goes. A dump without an archive, from before there were
   attachments, restores the database and leaves the files as they are.
