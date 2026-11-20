@@ -70,6 +70,52 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByText(/Password changed/)).toBeInTheDocument();
     expect(getToken()).toBe('tok-2');
+    // No API tokens, so nothing to say about them.
+    expect(screen.queryByRole('button', { name: 'Revoke all tokens' })).not.toBeInTheDocument();
+  });
+
+  it('lists the API tokens after a password change and revokes them all on one click', async () => {
+    let revoked = false;
+    const calls = mockFetch({
+      ...loaded,
+      'GET /api/auth/tokens': () => ({
+        body: revoked
+          ? []
+          : [
+              {
+                id: 't1',
+                name: 'backup script',
+                readOnly: false,
+                lastUsedAt: null,
+                createdAt: '2026-01-01T00:00:00Z',
+              },
+              { id: 't2', name: 'old laptop', readOnly: true, lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z' },
+            ],
+      }),
+      'PATCH /api/auth/password': { body: { token: 'tok-2', user } },
+      'DELETE /api/auth/tokens': () => {
+        revoked = true;
+        return { body: { revoked: 2 } };
+      },
+    });
+    renderSettings();
+
+    await userEvent.type(screen.getByLabelText('Current password'), 'old-password');
+    await userEvent.type(screen.getByLabelText('New password'), 'new-password');
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'new-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Change password' }));
+
+    // Not revoked behind the owner's back: shown, with the choice.
+    const notice = within(await screen.findByRole('group', { name: 'API tokens that still work' }));
+    expect(notice.getByText('backup script')).toBeInTheDocument();
+    expect(notice.getByText('old laptop')).toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+
+    await userEvent.click(notice.getByRole('button', { name: 'Revoke all tokens' }));
+
+    expect(await screen.findByText(/All API tokens are revoked/)).toBeInTheDocument();
+    expect(calls.filter((call) => call.method === 'DELETE').map((call) => call.url)).toEqual(['/api/auth/tokens']);
+    expect(await screen.findByText('No tokens yet.')).toBeInTheDocument();
   });
 
   it('saves a new name without asking for the password', async () => {
@@ -168,13 +214,19 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('No tokens yet.')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Token name'), 'backup script');
     await userEvent.click(screen.getByLabelText('Read-only'));
+    await userEvent.type(screen.getByLabelText('Password, to create the token'), 'demo-password');
     await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
 
     expect(await screen.findByLabelText('New API token')).toHaveValue('nt_secret-value');
     expect(screen.getByText(/Copy it now, it is not shown again/)).toBeInTheDocument();
-    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ name: 'backup script', readOnly: true });
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      name: 'backup script',
+      readOnly: true,
+      currentPassword: 'demo-password',
+    });
     expect(await screen.findByText(/read-only · made/)).toHaveTextContent('never used');
     expect(screen.getByLabelText('Token name')).toHaveValue('');
+    expect(screen.getByLabelText('Password, to create the token')).toHaveValue('');
   });
 
   it('revokes an API token after asking', async () => {
