@@ -1837,8 +1837,8 @@ describe('notebooks shared with other accounts', () => {
           .replace('{noteId}', noteId)
           .replace('{versionId}', version.id);
         const query = route.name === 'NotesController.orphanedLinks' ? '?from=Old' : '';
-        const response = await request(server())
-          [route.verb](path + query)
+        const agent = request(server());
+        const response = await agent[route.verb](path + query)
           .set(auth)
           .send(bodies[route.name] ?? {});
         expect({ route: route.name, status: response.status }).toEqual({ route: route.name, status: 404 });

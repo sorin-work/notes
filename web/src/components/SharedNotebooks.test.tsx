@@ -61,8 +61,10 @@ describe('notebooks shared with other accounts', () => {
     expect(screen.queryByRole('button', { name: 'Delete Kitchen' })).not.toBeInTheDocument();
     await expectNoAxeViolations({ part: true });
 
+    // Leaving needs to know who is leaving: wait for the sign-in.
+    await screen.findByText(user.name);
     await userEvent.click(screen.getByRole('button', { name: 'Leave Kitchen' }));
-    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Leave' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Leave' }));
     await waitFor(() =>
       expect(calls.some((call) => call.method === 'DELETE' && call.url === `/api/notebooks/k/members/${user.id}`)).toBe(
         true,
