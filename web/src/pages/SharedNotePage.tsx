@@ -132,7 +132,12 @@ function SharedNoteView({ note, indexPath }: { note: SharedNote; indexPath: stri
           {note.tags.map((tag) => `#${tag}`).join(' ')}
         </p>
       </header>
-      <MarkdownPreview content={note.content} onWikiLink={follow} linkedTitles={linked} />
+      <MarkdownPreview
+        content={note.content}
+        onWikiLink={follow}
+        linkedTitles={linked}
+        attachmentUrls={note.attachments}
+      />
     </article>
   );
 }

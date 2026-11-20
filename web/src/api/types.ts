@@ -196,6 +196,22 @@ export interface SharedNote {
   updatedAt: string;
   /** Where each of those links leads, by normalised title: a path under /s/. */
   links: Record<string, string>;
+  /** Signed addresses of the note's own attachments, by id. They run out in minutes. */
+  attachments: Record<string, string>;
+}
+
+/** A file of a note: a pasted image or an attached PDF. */
+export interface Attachment {
+  id: string;
+  noteId: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
+  /** Works without a login for a few minutes. */
+  url: string;
+  /** What to put in the note to show or link it. */
+  markdown: string;
 }
 
 /** The index of a shared notebook. */
