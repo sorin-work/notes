@@ -10,7 +10,9 @@ import JSZip from 'jszip';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { APP_CONFIG, loadConfig } from '../src/config/config';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
@@ -117,6 +119,21 @@ describe('account', () => {
 
     const renamed = await request(server).patch('/api/auth/me').set(auth).send({ name: '  Grace  ' }).expect(200);
     expect(renamed.body.name).toBe('Grace');
+
+    // null is not "left out": both used to reach the database and answer 500.
+    await request(server).patch('/api/auth/me').set(auth).send({ name: null }).expect(400);
+    await request(server)
+      .patch('/api/auth/me')
+      .set(auth)
+      .send({ email: null, currentPassword: 'password123' })
+      .expect(400);
+    await request(server).patch('/api/auth/me').set(auth).send({ name: 'Grace', currentPassword: null }).expect(400);
+    await request(server).delete('/api/auth/me').set(auth).send({ password: null }).expect(400);
+    await request(server)
+      .patch('/api/auth/password')
+      .set(auth)
+      .send({ currentPassword: null, newPassword: 'password456' })
+      .expect(400);
 
     await request(server).patch('/api/auth/me').set(auth).send({ email }).expect(400);
     // 403, not 401: the web app takes a 401 to mean the session is over.
@@ -357,6 +374,97 @@ describe('links and search', () => {
 
     await request(server).get('/api/search?q=%22%26%7C!').set(auth).expect(200);
   });
+
+  it('searches inside a notebook or a tag, matches quoted phrases and pages', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object, headers = auth) =>
+      (await request(server).post(path).set(headers).send(body).expect(201)).body.id as string;
+    const search = async (query: Record<string, string | number>) => {
+      const response = await request(server).get('/api/search').query(query).set(auth).expect(200);
+      return { ids: response.body.items.map((hit: { id: string }) => hit.id) as string[], total: response.body.total };
+    };
+
+    const work = await post('/api/notebooks', { name: 'Work' });
+    const meetings = await post('/api/notebooks', { name: 'Meetings', parentId: work });
+    const inWork = await post('/api/notes', { title: 'Plan', content: 'The weekly sync moved.', notebookId: work });
+    const inMeetings = await post('/api/notes', {
+      title: 'Minutes',
+      content: 'Sync notes, sent weekly.',
+      notebookId: meetings,
+      tags: ['Team Sync'],
+    });
+    const unfiled = await post('/api/notes', { title: 'Loose', content: 'A weekly team sync.', tags: ['team-sync'] });
+
+    expect((await search({ q: 'weekly sync' })).ids.sort()).toEqual([inWork, inMeetings, unfiled].sort());
+    // A top-level notebook covers the notebooks inside it.
+    expect((await search({ q: 'weekly sync', notebookId: work })).ids.sort()).toEqual([inWork, inMeetings].sort());
+    expect((await search({ q: 'weekly sync', notebookId: meetings })).ids).toEqual([inMeetings]);
+    expect((await search({ q: 'weekly sync', notebookId: 'none' })).ids).toEqual([unfiled]);
+    expect((await search({ q: 'weekly sync', tag: '#Team Sync' })).ids.sort()).toEqual([inMeetings, unfiled].sort());
+    expect((await search({ q: 'weekly sync', notebookId: work, tag: 'team-sync' })).ids).toEqual([inMeetings]);
+
+    // In quotes the words have to follow each other in that order, and are not prefixes.
+    expect((await search({ q: '"weekly sync"' })).ids).toEqual([inWork]);
+    expect((await search({ q: '"weekly sync" plan' })).ids).toEqual([inWork]);
+    expect((await search({ q: 'wee' })).total).toBe(3);
+    expect((await search({ q: '"wee"' })).total).toBe(0);
+    // A phrase that is still being typed searches as ordinary words.
+    expect((await search({ q: '"weekly sy' })).total).toBe(3);
+    // A phrase is split the way the note was, so dots inside words and numbers survive.
+    const dotted = await post('/api/notes', { title: 'Setup', content: 'Use node.js today with a 3.5 mm jack.' });
+    expect((await search({ q: '"node.js today"' })).ids).toEqual([dotted]);
+    expect((await search({ q: '"3.5 mm" setup' })).ids).toEqual([dotted]);
+    expect((await search({ q: '"node today"' })).total).toBe(0);
+
+    const first = await search({ q: 'weekly sync', pageSize: 2 });
+    const second = await search({ q: 'weekly sync', pageSize: 2, page: 2 });
+    expect(first.total).toBe(3);
+    expect([...first.ids, ...second.ids].sort()).toEqual([inWork, inMeetings, unfiled].sort());
+
+    // Values that look like SQL are only ever compared, and another account's notebook is not found.
+    expect((await search({ q: "sync' OR '1'='1", tag: "x' OR '1'='1" })).total).toBe(0);
+    const foreign = await post('/api/notebooks', { name: 'Theirs' }, other.auth);
+    await request(server).get('/api/search').query({ q: 'sync', notebookId: foreign }).set(auth).expect(404);
+    await request(server).get('/api/search').query({ q: 'sync', notebookId: 'inbox' }).set(auth).expect(400);
+  });
+
+  it('answers 400, not 500, to filters and pages the database cannot take', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    await request(server).post('/api/notes').set(auth).send({ title: 'Sync', content: 'A sync.' }).expect(201);
+
+    for (const path of ['/api/search?q=sync', '/api/notes?sort=title']) {
+      await request(server).get(`${path}&notebookId=NONE`).set(auth).expect(400);
+      await request(server).get(`${path}&tag=%00`).set(auth).expect(400);
+      await request(server).get(`${path}&page=9223372036854775807`).set(auth).expect(400);
+      await request(server).get(`${path}&notebookId=none&tag=sync&page=100000`).set(auth).expect(200);
+    }
+    // A null character inside a phrase is dropped instead of reaching the database.
+    const phrase = await request(server).get('/api/search?q=%22a%00sync%22').set(auth).expect(200);
+    expect(phrase.body.total).toBe(1);
+  });
+
+  it('pages through equally ranked results without repeats or gaps', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const created = await request(server).post('/api/notes').set(auth).send({ title: 'Twin', content: 'Same text.' });
+      ids.push(created.body.id);
+    }
+    // Same text gives the same rank. With the same time as well, only the id is left to order by.
+    const sameTime = new Date('2026-01-01T00:00:00Z');
+    await app.get(PrismaService).note.updateMany({ where: { id: { in: ids } }, data: { updatedAt: sameTime } });
+
+    const paged: string[] = [];
+    for (const page of [1, 2, 3]) {
+      const response = await request(server).get('/api/search').query({ q: 'twin', pageSize: 2, page }).set(auth);
+      paged.push(...response.body.items.map((hit: { id: string }) => hit.id));
+    }
+    expect(paged).toEqual([...ids].sort());
+  });
 });
 
 describe('sharing', () => {
@@ -410,5 +518,73 @@ describe('import and export', () => {
 
     const list = await request(server).get('/api/notes?tag=baking').set(other.auth).expect(200);
     expect(list.body.items[0]).toMatchObject({ title: 'Bread', tags: ['baking'] });
+  });
+});
+
+/**
+ * The suites above run with a throttle limit too high to notice. This one
+ * has an app of its own with a limit of three, to see the routes that check
+ * the password count their requests at all.
+ */
+describe('password guesses with a low throttle limit', () => {
+  let limited: INestApplication<App>;
+  const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(APP_CONFIG)
+      .useValue({ ...loadConfig(), authThrottleLimit: 3 })
+      .overrideProvider(MAIL_TRANSPORT)
+      .useValue(fakeTransport)
+      .compile();
+    limited = moduleRef.createNestApplication();
+    setupApp(limited);
+    await limited.init();
+  });
+
+  afterAll(async () => {
+    await limited.close();
+  });
+
+  const account = async (name: string) => {
+    const response = await request(limited.getHttpServer())
+      .post('/api/auth/register')
+      .send({ email: `${name}-${Date.now()}@example.com`, name, password: 'password123' })
+      .expect(201);
+    return bearer(response.body.token);
+  };
+
+  it('caps the guesses against one account across the three routes together', async () => {
+    const server = limited.getHttpServer();
+    const victim = await account('victim');
+    const other = await account('other');
+
+    const guessOnProfile = (auth: { Authorization: string }) =>
+      request(server).patch('/api/auth/me').set(auth).send({ email: 'x@example.com', currentPassword: 'guess-1' });
+    const guessOnPassword = (auth: { Authorization: string }) =>
+      request(server)
+        .patch('/api/auth/password')
+        .set(auth)
+        .send({ currentPassword: 'guess-2', newPassword: 'password456' });
+    const guessOnDelete = (auth: { Authorization: string }) =>
+      request(server).delete('/api/auth/me').set(auth).send({ password: 'guess-3' });
+
+    // One guess on each route uses up the three the account gets.
+    await guessOnProfile(victim).expect(403);
+    await guessOnPassword(victim).expect(403);
+    await guessOnDelete(victim).expect(403);
+
+    // Now every one of the three is closed, whichever comes next. A route
+    // that lost its guard would answer 403 here.
+    const refused = await guessOnPassword(victim).expect(429);
+    expect(refused.headers['retry-after']).toBeDefined();
+    await guessOnProfile(victim).expect(429);
+    await guessOnDelete(victim).expect(429);
+
+    // The right password does not get through either until the minute is over.
+    await request(server).delete('/api/auth/me').set(victim).send({ password: 'password123' }).expect(429);
+
+    // Another account, from the same address, still has its own guesses.
+    await guessOnPassword(other).expect(403);
   });
 });

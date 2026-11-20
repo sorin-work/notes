@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as authApi from '../api/auth';
-import { getToken, setToken, setUnauthorizedHandler } from '../api/client';
+import { getToken, onTokenRemovedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
 
 type Status = 'loading' | 'signed-in' | 'signed-out';
@@ -36,6 +36,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(logout);
     return () => setUnauthorizedHandler(null);
   }, [logout]);
+
+  // Signing out in one tab signs out the others, cached notes included.
+  useEffect(() => onTokenRemovedElsewhere(logout), [logout]);
 
   useEffect(() => {
     if (!getToken()) return;

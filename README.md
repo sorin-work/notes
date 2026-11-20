@@ -10,6 +10,9 @@ Markdown import/export.
 - **Markdown editor** with edit, split and preview modes. GitHub flavoured
   Markdown: tables, task lists, strikethrough and autolinks. Notes save
   automatically a moment after you stop typing.
+- **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
+  the same as typing the `x`. Boxes are read-only on shared pages, in version
+  history and for notes in the trash.
 - **Notebooks**, nested one level deep (e.g. _Work -> Meetings_). Selecting a
   top-level notebook shows the notes in the notebooks inside it too. Deleting
   a notebook moves its notes to the trash.
@@ -17,20 +20,30 @@ Markdown import/export.
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
   own view.
+- **Filters**: two selects above the note list narrow it to a notebook, a tag
+  or both, on top of the Pinned and Favourites views. The choice is kept in
+  the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
+  bookmarked.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
   paragraph the link is in.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
-  highlighted.
+  highlighted. Words in `"double quotes"` are a phrase: they have to follow
+  each other and are not prefixes. A phrase can also match where a title ends
+  and the text begins, because both are indexed as one run of words. The same
+  two selects narrow a search to a notebook and a tag, and results load 30 at
+  a time.
 - **Quick switcher**: `Ctrl+K` (`Cmd+K` on a Mac) opens a small dialog with
   the notes edited last. Type part of a title, press Enter, and you are in
   that note with the cursor in its text, or on the preview when only the
   preview is showing.
 - **Version history**: while you edit, the previous text is saved as a
   version at most every ten minutes (the last 50 are kept). Any version can be
-  previewed and restored; restoring saves the current text first.
+  previewed and restored; restoring saves the current text first. The Changes
+  view shows line by line what differs between a version and the note as it
+  is now, with a changed title above it.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
 - **Share links**: a read-only public page for a single note at `/s/<token>`,
@@ -224,7 +237,7 @@ npm run dev
 | `LOG_LEVEL`            | `info`                  | `debug`, `info`, `warn` or `error`                                         |
 | `SEED_DEMO`            | `false`                 | Create the demo account on start-up                                        |
 | `TRASH_RETENTION_DAYS` | `30`                    | Days before trashed notes are deleted for good                             |
-| `AUTH_THROTTLE_LIMIT`  | `10`                    | Per-minute limit per client on routes that take a password                 |
+| `AUTH_THROTTLE_LIMIT`  | `10`                    | Per-minute limit on the routes that take a password                        |
 | `SMTP_HOST`            | (none)                  | SMTP server. Without it no mail is sent and password reset is off          |
 | `SMTP_PORT`            | `587`                   | Its port. `465` means TLS from the start, others use STARTTLS when offered |
 | `SMTP_FROM`            | (none)                  | Sender of the mails, required with `SMTP_HOST`                             |
@@ -303,7 +316,7 @@ web/
     auth/               auth context and route guards
     components/         editor, preview, sidebar, dialogs
     hooks/              autosave, theme and small state helpers
-    lib/                wiki links, dates, text helpers
+    lib/                wiki links, task lists, line diff, dates, text helpers
     pages/              one component per route
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
@@ -323,7 +336,17 @@ them up again. Links inside code blocks and inline code are ignored.
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
-notebooks do not create versions.
+notebooks do not create versions. Ticking a task box in the preview changes
+the text, so it counts as an edit.
+
+The Changes view in the history compares a version with what is in the
+editor at that moment, saved or not. Lines marked `-` are only in the
+version, lines marked `+` only in the note now, and long unchanged stretches
+are left out. Line endings are not compared. How long the note is does not
+matter, only how much changed: up to 2,000 added and removed lines are worked
+out, and past that the view says so and shows no diff. A single block that
+was only added or only removed is shown whatever its size. The view lists
+2,000 rows at most and then says how many more lines changed.
 
 ## API overview
 
@@ -337,7 +360,10 @@ account's token version, and the API compares it with the database on every
 request, so those two end all sessions at once. `PATCH /auth/password`
 answers with a new token for the browser that made the change. Changing the
 email and deleting the account ask for the password again; a wrong one is a
-`403`, not a `401`, because the session itself is still good.
+`403`, not a `401`, because the session itself is still good. The three
+routes that check the password count their requests twice against
+`AUTH_THROTTLE_LIMIT`: per client address on each route, and per account
+across all three, so a stolen login gets ten guesses a minute in total.
 
 `POST /auth/password-reset` with `{ email }` mails a link to
 `/reset-password?token=...` in the web app, and answers `204` whether or not
@@ -363,6 +389,6 @@ which is how the sign-in page knows to hide the link.
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
-| `GET /search?q=`                                               | Full-text search                          |
+| `GET /search?q=&notebookId=&tag=&page=`                        | Full-text search, `"phrases"` in quotes   |
 | `GET /tags`, `PATCH/DELETE /tags/:id`                          | Tags                                      |
 | `GET /export`, `GET /notes/:id/export`, `POST /import`         | Zip export, single note, import           |
