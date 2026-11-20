@@ -13,6 +13,10 @@ export interface Span {
 export interface ParsedNote {
   prose: Span[];
   verbatim: string[];
+  /** Emphasis, strong and strikethrough, as "type:from:to", in order. A link must not change how these pair up. */
+  formatting: string[];
+  /** The labels of reference definitions and footnotes, normalised: brackets around such a label make a reference, not a [[link]]. */
+  labels: string[];
 }
 
 /**
@@ -32,6 +36,9 @@ const VERBATIM = new Set([
   'footnoteReference',
 ]);
 
+/** Marks whose pairing a pair of brackets next to them can change. */
+const FORMATTING = new Set(['emphasis', 'strong', 'delete']);
+
 /** A backslash escape or a character reference: what is written there is not what is shown. */
 const ESCAPED = /\\[!-/:-@[-`{-~]|&(?:#\d{1,7}|#[xX][\da-fA-F]{1,6}|[A-Za-z][A-Za-z\d]{0,31});/g;
 const LINE_BREAK = /\r\n|\r|\n/g;
@@ -49,7 +56,8 @@ const CONTINUATION = /^[ \t>]*/;
 export const MAX_PARSED_NOTE_LENGTH = 100_000;
 const MAX_CLOSING_BRACKETS = 2_000;
 const MAX_NESTING = 16;
-const TOO_DEEP = new RegExp(`^(?:[ \\t]*(?:>|[-+*]|\\d{1,9}[.)])(?:[ \\t]+|$)){${MAX_NESTING + 1}}`, 'm');
+// A quote mark needs no space after it to open a quote, a list marker does.
+const TOO_DEEP = new RegExp(`^(?:[ \\t]*(?:>[ \\t]*|(?:[-+*]|\\d{1,9}[.)])(?:[ \\t]+|$))){${MAX_NESTING + 1}}`, 'm');
 
 /** Whether the parser can be given this note: see MAX_PARSED_NOTE_LENGTH. */
 export function parseable(text: string): boolean {
@@ -87,6 +95,8 @@ export function parseNote(text: string): ParsedNote | null {
   }
   const prose: Span[] = [];
   const verbatim: string[] = [];
+  const formatting: string[] = [];
+  const labels: string[] = [];
 
   // The walk keeps its own stack, because a note can nest quotes thousands deep.
   const stack: Nodes[] = [tree];
@@ -96,15 +106,26 @@ export function parseNote(text: string): ParsedNote | null {
     const to = node.position?.end.offset;
     if (from === undefined || to === undefined || from > to || to > text.length) return null;
 
+    if ((node.type === 'definition' || node.type === 'footnoteDefinition') && node.label) {
+      labels.push(node.label.trim().replace(/\s+/g, ' ').toLowerCase());
+    }
+    if (FORMATTING.has(node.type)) formatting.push(`${node.type}:${from}:${to}`);
     if (VERBATIM.has(node.type)) {
       verbatim.push(`${node.type}:${text.slice(from, to)}`);
     } else if (node.type === 'text') {
       addText(text, from, to, prose);
+    } else if (node.type === 'table') {
+      // Cells beyond the number of the header's are not shown, so nothing in them counts.
+      const columns = node.children[0]?.children.length ?? 0;
+      for (let index = node.children.length - 1; index >= 0; index--) {
+        const row = node.children[index];
+        stack.push({ ...row, children: row.children.slice(0, columns) });
+      }
     } else if ('children' in node) {
       for (let index = node.children.length - 1; index >= 0; index--) stack.push(node.children[index]);
     }
   }
-  return inOrder(prose) ? { prose, verbatim } : null;
+  return inOrder(prose) ? { prose, verbatim, formatting, labels } : null;
 }
 
 /** Adds the source of one text node, cut at line endings and around escapes. */

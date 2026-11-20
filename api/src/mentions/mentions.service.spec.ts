@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { PaginationQuery } from '../common/pagination';
 import { LinksService } from '../links/links.service';
+import { ParsePool } from '../links/parse-pool';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { VersionsService } from '../versions/versions.service';
@@ -26,6 +27,11 @@ function page(overrides: Partial<PaginationQuery> = {}): PaginationQuery {
 }
 
 describe('MentionsService', () => {
+  // Real workers: the parse is part of what is tested.
+  const pool = new ParsePool();
+  // More time than the app gives a parse: the test runner keeps the machine busy, and a small note should never time out here.
+  pool.deadline = 2_000;
+  afterAll(() => pool.onModuleDestroy());
   let prisma: PrismaMock;
   let links: jest.Mocked<Pick<LinksService, 'sync' | 'titleTaken'>>;
   let versions: jest.Mocked<Pick<VersionsService, 'snapshot'>>;
@@ -38,6 +44,7 @@ describe('MentionsService', () => {
     service = new MentionsService(
       asPrismaService(prisma),
       links as unknown as LinksService,
+      pool,
       versions as unknown as VersionsService,
     );
     prisma.note.findFirst.mockResolvedValue(target);
@@ -210,6 +217,68 @@ describe('MentionsService', () => {
     });
   });
 
+  describe('the parse', () => {
+    // Under the limits, and still a minute for the parser on the main thread.
+    const hostile = `${'> - > - Project Atlas\n'.repeat(4_700)}Project Atlas`;
+
+    it('parses each revision of a note once, and keeps what it found', async () => {
+      const run = jest.spyOn(pool, 'run');
+      prisma.$queryRaw.mockResolvedValue([{ id: 'a' }]);
+      prisma.note.findMany.mockResolvedValue([source('a', 'About Project Atlas.')]);
+      await service.list(USER, 'target', page());
+      await service.list(USER, 'target', page());
+      expect(run).toHaveBeenCalledTimes(1);
+
+      // A new revision is parsed again. For "Link" the tree is passed, so the worker does not parse the note twice.
+      prisma.note.findMany.mockResolvedValue([source('a', 'About Project Atlas.', 8)]);
+      const listed = await service.list(USER, 'target', page());
+      expect(run).toHaveBeenCalledTimes(2);
+      prisma.note.findFirst.mockResolvedValueOnce(target).mockResolvedValueOnce(source('a', 'About Project Atlas.', 8));
+      await service.link(USER, 'target', 'a', { offset: 6, text: 'Project Atlas', version: 8 });
+      expect(run).toHaveBeenLastCalledWith(
+        expect.objectContaining({ parsed: expect.objectContaining({ prose: expect.any(Array) }) }),
+      );
+      expect(listed.items).toHaveLength(1);
+    });
+
+    it('gives up on a note the parser takes too long on, once for each revision, and "Link" says why', async () => {
+      const run = jest.spyOn(pool, 'run');
+      prisma.$queryRaw.mockResolvedValue([{ id: 'h' }]);
+      prisma.note.findMany.mockResolvedValue([source('h', hostile)]);
+      const started = Date.now();
+      await expect(service.list(USER, 'target', page())).resolves.toMatchObject({ items: [] });
+      await expect(service.list(USER, 'target', page())).resolves.toMatchObject({ items: [] });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(Date.now() - started).toBeLessThan(5_000);
+
+      prisma.note.findFirst.mockResolvedValueOnce(target).mockResolvedValueOnce(source('h', hostile));
+      await expect(
+        service.link(USER, 'target', 'h', {
+          offset: hostile.lastIndexOf('Project'),
+          text: 'Project Atlas',
+          version: 7,
+        }),
+      ).rejects.toThrow(new BadRequestException('That note is too long or too intricate to look for mentions in'));
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('runs two mention requests of one user at a time and turns away a third', async () => {
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      prisma.$queryRaw.mockImplementation(() => held.then(() => []));
+      const two = [service.list(USER, 'target', page()), service.list(USER, 'target', page())];
+      await expect(service.list(USER, 'target', page())).rejects.toMatchObject({ status: 429 });
+      // Someone else is not held up by it.
+      prisma.note.findFirst.mockResolvedValue(target);
+      const other = service.list('user-2', 'target', page());
+      release();
+      await Promise.all([...two, other]);
+      // Once those are done there is room again.
+      await expect(service.list(USER, 'target', page())).resolves.toMatchObject({ items: [] });
+    });
+  });
+
   describe('link', () => {
     const text = 'Intro.\n\nWe talked about project atlas, and Project Atlas again.';
     const first = { offset: text.indexOf('project atlas'), text: 'project atlas', version: 7 };
@@ -299,7 +368,7 @@ describe('MentionsService', () => {
       const full = `Project Atlas ${'x'.repeat(MAX_CONTENT_LENGTH - 16)}`;
       given(source('a', full));
       await expect(service.link(USER, 'target', 'a', { offset: 0, text: 'Project Atlas', version: 7 })).rejects.toThrow(
-        new BadRequestException('That note is too long or too deeply nested to look for mentions in'),
+        new BadRequestException('That note is too long or too intricate to look for mentions in'),
       );
       untouched();
     });
