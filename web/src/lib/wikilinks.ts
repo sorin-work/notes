@@ -43,17 +43,30 @@ function outsideInlineCode(line: string, fn: (text: string) => string): string {
   return result + fn(line.slice(last));
 }
 
+function countCarriageReturns(text: string): number {
+  return text.split('\r').length - 1;
+}
+
 /**
  * Rewrites [[Title]] and [[Title|text]] as Markdown links with a wiki: URL so
  * the preview can render them as in-app links. Code is left alone.
+ *
+ * The result has the same line endings as the input, in the same number: the
+ * preview finds a clicked task box in the source by its line number. A link
+ * cannot hold a \n, but it can hold a lone \r, which the Markdown parser
+ * also takes for a line ending.
  */
 export function linkifyWikiLinks(markdown: string): string {
   return mapProseLines(markdown, (line) =>
     outsideInlineCode(line, (text) =>
-      text.replace(LINK, (_match, title: string, alias?: string) => {
+      text.replace(LINK, (match, title: string, alias?: string) => {
         const target = title.trim().replace(/\s+/g, ' ');
         const label = (alias ?? target).trim().replace(/[[\]]/g, '\\$&');
-        return `[${label}](${WIKI_PROTOCOL}${encodeURIComponent(target)})`;
+        const link = `[${label}](${WIKI_PROTOCOL}${encodeURIComponent(target)})`;
+        // Trimming, collapsing spaces and dropping the #heading lose any \r that
+        // was in the link. They go back in front of the link, not after it,
+        // where one could join a following \n into a single \r\n.
+        return '\r'.repeat(countCarriageReturns(match) - countCarriageReturns(link)) + link;
       }),
     ),
   );

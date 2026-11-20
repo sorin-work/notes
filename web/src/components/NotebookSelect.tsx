@@ -19,6 +19,15 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
       onChange={(event) => onChange(event.target.value || null)}
     >
       <option value="">No notebook</option>
+      <NotebookOptions notebooks={notebooks} />
+    </select>
+  );
+}
+
+/** One option per notebook, with the nested notebooks indented under their parent. */
+export function NotebookOptions({ notebooks }: { notebooks: Notebook[] }) {
+  return (
+    <>
       {notebookTree(notebooks).map((parent) => [
         <option key={parent.id} value={parent.id}>
           {parent.name}
@@ -30,6 +39,6 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
           </option>
         )),
       ])}
-    </select>
+    </>
   );
 }
