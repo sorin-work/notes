@@ -1,14 +1,17 @@
 import { QueryClient } from '@tanstack/react-query';
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queueText, replay, startOutbox } from '../lib/outbox';
 import { expectNoAxeViolations } from '../test/axe';
-import { note, user } from '../test/fixtures';
+import { note, user, userToken } from '../test/fixtures';
+import { setToken } from '../api/client';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { PendingChanges } from './PendingChanges';
 
 describe('PendingChanges', () => {
+  beforeEach(() => setToken(userToken));
+
   it('says what is waiting, lists what cannot be applied, and gives up a change only when told', async () => {
     const current = note({ id: 'n2', content: 'Changed elsewhere', revision: 9 });
     mockFetch({
@@ -27,7 +30,11 @@ describe('PendingChanges', () => {
     });
 
     const list = await screen.findByRole('region', { name: 'Changes not sent yet' });
-    expect(list).toHaveTextContent('Thrown away: could not be sent. This note is in the trash.');
+    expect(list).toHaveTextContent(
+      'Thrown away: could not be sent. The note is in the trash. Restore it and the change is sent.',
+    );
+    expect(screen.getByRole('button', { name: 'Save as a new note' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy text' })).toBeInTheDocument();
     expect(list).toHaveTextContent('Plan: the note was changed elsewhere meanwhile. Open it to decide what to keep.');
     expect(screen.getByRole('link', { name: 'Plan' })).toHaveAttribute('href', '/notes/n2');
     await expectNoAxeViolations({ part: true });

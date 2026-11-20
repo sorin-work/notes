@@ -11,7 +11,7 @@ import { readStash, stashDraft } from '../lib/draftStash';
 import { outboxEntryFor, queueText } from '../lib/outbox';
 import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
-import { note, notebook, user } from '../test/fixtures';
+import { note, notebook, user, userToken } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
 import { Notices } from './Notices';
@@ -674,7 +674,7 @@ describe('NoteEditor', () => {
 
     /** The editor for a signed-in user, with somewhere else to go and the notices beside it, as in the app. */
     function renderSignedIn() {
-      setToken('tok');
+      setToken(userToken);
       localStorage.setItem('notes.editorMode', 'split');
       return renderWithProviders(
         <AuthProvider>
