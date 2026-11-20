@@ -340,6 +340,16 @@ mark {
   padding: 0.9rem 0.8rem 0.6rem;
 }
 
+.new-from-template {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.new-from-template select {
+  flex: 1;
+  min-width: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -395,6 +405,15 @@ mark {
   text-decoration: none;
   min-width: 0;
   flex: 1;
+}
+
+.nav-button {
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .nav-item:hover {

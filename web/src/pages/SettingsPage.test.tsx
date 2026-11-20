@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { expectNoAxeViolations } from '../test/axe';
-import { user } from '../test/fixtures';
+import { notebook, summary, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SettingsPage } from './SettingsPage';
 
@@ -263,6 +263,44 @@ describe('SettingsPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete account…' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await expectNoAxeViolations({ part: true });
+  });
+
+  it('keeps the choices for the daily note with the account', async () => {
+    const chosen = { notebookId: 'gone', templateId: null, dateFormat: 'iso' as const };
+    const calls = mockFetch({
+      ...loaded,
+      'GET /api/auth/me': { body: { ...user, preferences: { dailyNotes: chosen } } },
+      'GET /api/notebooks': { body: [notebook({ id: 'j', name: 'Journal' })] },
+      'GET /api/notes': { body: { items: [summary({ id: 't1', title: 'Daily template' })], total: 1 } },
+      'PATCH /api/auth/preferences': ({ body }: { body: unknown }) => ({
+        body: { dailyNotes: { ...chosen, ...(body as { dailyNotes: object }).dailyNotes } },
+      }),
+    });
+    renderSettings();
+
+    // The notebook that was chosen has been deleted since. It shows as none, which is how a new note treats it.
+    const notebookChoice = await screen.findByLabelText('Notebook for new daily notes');
+    await screen.findByRole('option', { name: 'Journal' });
+    expect(notebookChoice).toHaveValue('');
+    expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('templates=true');
+
+    await userEvent.selectOptions(screen.getByLabelText('Template for new daily notes'), 'Daily template');
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+    expect(calls.find((call) => call.method === 'PATCH')).toMatchObject({
+      url: '/api/auth/preferences',
+      body: { dailyNotes: { templateId: 't1' } },
+    });
+    expect(screen.getByLabelText('Template for new daily notes')).toHaveValue('t1');
+
+    // The formats are shown the way today would be written in them.
+    const format = screen.getByLabelText('Date in the title');
+    expect(within(format).getAllByRole('option')).toHaveLength(3);
+    await userEvent.selectOptions(format, 'long');
+    await waitFor(() => expect(format).toHaveValue('long'));
+    expect(calls.filter((call) => call.method === 'PATCH').at(-1)?.body).toEqual({
+      dailyNotes: { dateFormat: 'long' },
+    });
     await expectNoAxeViolations({ part: true });
   });
 });

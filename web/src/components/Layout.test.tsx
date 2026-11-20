@@ -34,7 +34,11 @@ const routes = {
   'GET /api/auth/me': { body: user },
   'GET /api/notebooks': { body: [] },
   'GET /api/tags': { body: [] },
-  'GET /api/notes': { body: { items: [summary(atlas), summary(review)], total: 2, page: 1, pageSize: 50 } },
+  // As in the API, the list of templates is a different list from the list of notes. Here it is empty.
+  'GET /api/notes': ({ url }: { url: string }) => {
+    const items = url.includes('templates=true') ? [] : [summary(atlas), summary(review)];
+    return { body: { items, total: items.length, page: 1, pageSize: 50 } };
+  },
   'GET /api/notes/titles': { body: titles },
   'GET /api/notes/n1': { body: atlas },
   'GET /api/notes/n1/links': { body: [] },

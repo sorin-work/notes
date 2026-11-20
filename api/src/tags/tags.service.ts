@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { WORKING_NOTE } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { RenameTagDto } from './dto/rename-tag.dto';
 import { normalizeTagName, normalizeTagNames } from './tag-name';
@@ -19,7 +20,7 @@ export class TagsService {
     const tags = await this.prisma.tag.findMany({
       where: { userId },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { notes: { where: { note: { deletedAt: null } } } } } },
+      include: { _count: { select: { notes: { where: { note: WORKING_NOTE } } } } },
     });
     return tags
       .map((tag) => ({ id: tag.id, name: tag.name, noteCount: tag._count.notes }))
@@ -87,7 +88,7 @@ export class TagsService {
   private async view(id: string): Promise<TagView> {
     const tag = await this.prisma.tag.findUniqueOrThrow({
       where: { id },
-      include: { _count: { select: { notes: { where: { note: { deletedAt: null } } } } } },
+      include: { _count: { select: { notes: { where: { note: WORKING_NOTE } } } } },
     });
     return { id: tag.id, name: tag.name, noteCount: tag._count.notes };
   }

@@ -20,11 +20,22 @@ Markdown import/export.
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
   own view.
+- **Templates**: "Template" in a note's toolbar turns it into a template.
+  Templates have a list of their own and stay out of the other lists, the
+  search, the quick switcher, link suggestions and backlinks. Choose one in
+  "New from template" under the new-note button and press "Create" to start
+  a note from it, with `{{date}}` and `{{time}}` filled in. "Duplicate" makes
+  a plain copy of any note.
+- **Daily note**: "Today" in the sidebar opens the note of the day and starts
+  it when there is none. Settings say which notebook it goes into, which
+  template it starts from and how the date is written in its title, and
+  those choices follow the account to every device.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
   bookmarked. The **Orphans** view lists the notes with no links in or out,
-  counting only links that lead to another note outside the trash.
+  counting only links between notes outside the trash that are not
+  templates.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
@@ -63,6 +74,8 @@ Markdown import/export.
   link shows as its words. Notes and notebooks that a shared notebook makes
   public say so, and moving something into a shared notebook asks first.
   Stopping sharing kills the link; notes in the trash are never served.
+  A shared notebook never shows its templates: they are not listed, cannot
+  be opened through it, and a link to one reads as its words.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
@@ -151,8 +164,9 @@ Then open http://localhost:5181 and sign in with the demo account:
 - **Password:** `demo-password`
 
 The demo account is created on first start with notebooks, about twenty
-linked notes, tags, a few earlier versions, two notes in the trash and two
-shared notes. Set `SEED_DEMO=false` to start with an empty database.
+linked notes, tags, a template, a few earlier versions, two notes in the
+trash and two shared notes. Set `SEED_DEMO=false` to start with an empty
+database.
 
 | Service | Port (host)           | Notes                                       |
 | ------- | --------------------- | ------------------------------------------- |
@@ -419,7 +433,7 @@ web/
     auth/               auth context and route guards
     components/         editor, preview, sidebar, dialogs
     hooks/              autosave, theme and small state helpers
-    lib/                wiki links, task lists, line diff, dates, text helpers
+    lib/                wiki links, task lists, templates, line diff, dates, text
     pages/              one component per route
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
@@ -539,6 +553,45 @@ If the answer to a save gets lost on the way, the next save is told that the
 note has changed. The editor recognises its own text in that change and goes
 on without asking.
 
+A note made from a template gets the template's text and tags. Three
+placeholders are filled in, and no others: `{{date}}` (as `2026-11-20`),
+`{{time}}` (as `19:30`) and `{{title}}`, the title given for the new note.
+Date and time are those of the browser's clock, because the server does not
+know what day it is where you are. Anything else in double braces, and a
+placeholder without a value, is left as written. The note does not take the
+template's title: it starts as "Untitled" with the cursor in the title, and
+`{{title}}` stays in the text until you replace it. Its `[[links]]` are real
+links from then on, while the links written in a template do not count as
+backlinks. A link to a template's title still leads to the template, unless
+a note has the same title: a note always goes first. The notebook list
+counts templates apart from notes, and deleting a notebook says how many of
+each go to the trash with it. Neither
+a note from a template nor a duplicate takes the pin, the star, the share
+link or the history of the original. Turning a note into a template is no
+edit: it changes neither "last edited" nor the revision.
+
+"Today" asks for the daily note of a day. The day is the one the browser's
+clock shows, and the server never works out a date. An account has one daily
+note per day: clicking twice, or in two tabs at the same moment, opens the
+same note, which the database guarantees with a unique index. The note is
+found by its day and not by its title, so it stays the note of that day when
+it is renamed or when the date format is changed. A note written by hand
+under the title of the day, in any of the three formats, is taken for the
+note of that day the first time "Today" finds it. That is so for any note
+titled with the day, also one that has nothing to do with it: "Not the daily
+note" in its toolbar takes it off the day, and from then on neither the day
+nor its title makes it the daily note again. The next "Today" starts a new
+one. The title of a new daily note is written by the server, in the format
+the account has when the note is made, so a tab left open while the format
+was changed elsewhere still gets it right. A daily note in the trash
+makes room: "Today" starts a new one, and the old one comes back from the
+trash as an ordinary note. The three formats are `2026-11-20`,
+`20 November 2026` and `November 20, 2026`. In the template of a daily note
+`{{title}}` is the day as the title has it, and `{{date}}` is always
+`2026-11-20`. The notebook, the template and the format are preferences kept
+with the account. Theme and editor mode are not: they belong to a screen and
+stay in the browser.
+
 ## API overview
 
 The API describes itself. With the stack running, http://localhost:5181/api/docs
@@ -566,6 +619,24 @@ carries the note as it is now:
 The check only applies when `title` or `content` is sent, and a request
 without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
+
+`POST /notes` with `"templateId"` makes the note from that template, and
+`"placeholders": {"date": "...", "time": "..."}` gives the text to fill in,
+and `"title"` is the title of the new note and the value of `{{title}}`.
+The API only puts in what it is sent and never works out a date by itself.
+`GET /notebooks` gives each notebook a `noteCount` and, apart, a
+`templateCount`.
+`PATCH /notes/:id` with `"isTemplate"` turns a note into a template or back.
+
+`POST /notes/daily` with `{"date": "2026-11-20"}` answers with the daily note
+of that day and makes it when there is none, titled in the account's date
+format. `placeholders` can come along for the template. A note has a
+`dailyDate` when it is a daily note, and `DELETE /notes/:id/daily` takes it
+off its day. `GET /auth/me` has the account's `preferences`, and
+`PATCH /auth/preferences` changes the ones that are sent and answers with
+them as a read gives them:
+`{"dailyNotes": {"notebookId": null, "templateId": "...", "dateFormat": "long"}}`.
+`notebookId` and `templateId` can be `null` for none. `dateFormat` cannot.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
@@ -608,8 +679,9 @@ token is shown once, when it is made, and only its SHA-256 hash is stored. It ac
 
 - A read-only token gets a `403` on everything that is not a `GET`.
 - No token can touch the account: listing, making or revoking tokens,
-  changing the name, email or password, deleting the account and signing out
-  everywhere all answer `403`. `GET /auth/me` works. Sign in for the rest.
+  changing the name, email, password or preferences, deleting the account and
+  signing out everywhere all answer `403`. `GET /auth/me` works. Sign in for
+  the rest.
   In the code a route takes a token only when it is marked
   `@AllowApiToken()`, so a route added later is closed to tokens until
   someone opens it.
@@ -658,7 +730,8 @@ A notebook is shared the same way under `/notebooks/:id/share`. Its link
 answers with `"kind": "notebook"`, the name and the list of its notes, and
 `GET /public/notes/:token/:noteId` gives one of them. Which notes belong to
 the notebook is looked up with every request: a note added later is there,
-and one that is moved out or put in the trash answers `404` from then on.
+and one that is moved out, put in the trash or turned into a template
+answers `404` from then on.
 The answer to the right password has an `access` value. Sent back in an
 `X-Share-Access` header it opens the notes of the notebook for an hour, so
 the password is typed once and only real attempts count against the limit.

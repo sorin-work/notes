@@ -10,6 +10,7 @@ describe('AuthController', () => {
     login: jest.fn(),
     me: jest.fn(),
     updateProfile: jest.fn(),
+    updatePreferences: jest.fn(),
     deleteAccount: jest.fn(),
     changePassword: jest.fn(),
     logoutEverywhere: jest.fn(),
@@ -58,6 +59,8 @@ describe('AuthController', () => {
     const current = { id: '1', email: 'ada@example.com' };
     await controller.updateProfile(current, { name: 'Ada L.' });
     expect(auth.updateProfile).toHaveBeenCalledWith('1', { name: 'Ada L.' });
+    await controller.updatePreferences(current, { dailyNotes: { dateFormat: 'long' } });
+    expect(auth.updatePreferences).toHaveBeenCalledWith('1', { dailyNotes: { dateFormat: 'long' } });
     await controller.logoutEverywhere(current);
     expect(auth.logoutEverywhere).toHaveBeenCalledWith('1');
     await controller.deleteAccount(current, { password: 'pw' });
