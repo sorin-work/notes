@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as authApi from '../api/auth';
-import { getToken, setToken, setUnauthorizedHandler } from '../api/client';
+import { getToken, onTokenRemovedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
 
 type Status = 'loading' | 'signed-in' | 'signed-out';
@@ -12,6 +12,10 @@ interface AuthContextValue {
   login(email: string, password: string): Promise<void>;
   register(name: string, email: string, password: string): Promise<void>;
   logout(): void;
+  /** Shows a changed name or email without asking the API again. */
+  updateUser(user: User): void;
+  /** Swaps in the token the API hands out when it has ended the old one. */
+  renewSession(result: AuthResult): void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -32,6 +36,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(logout);
     return () => setUnauthorizedHandler(null);
   }, [logout]);
+
+  // Signing out in one tab signs out the others, cached notes included.
+  useEffect(() => onTokenRemovedElsewhere(logout), [logout]);
 
   useEffect(() => {
     if (!getToken()) return;
@@ -64,6 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login: async (email, password) => signedIn(await authApi.login(email, password)),
       register: async (name, email, password) => signedIn(await authApi.register(name, email, password)),
       logout,
+      updateUser: setUser,
+      renewSession: signedIn,
     }),
     [status, user, signedIn, logout],
   );

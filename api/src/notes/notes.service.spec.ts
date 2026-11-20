@@ -264,9 +264,23 @@ describe('NotesService', () => {
     });
 
     it('rewrites the links of the notes that point at the old title', async () => {
-      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toEqual({ updated: 2, title: 'Project Atlas' });
+      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toEqual({
+        updated: 2,
+        skipped: 0,
+        title: 'Project Atlas',
+        noteIds: ['n2', 'n3'],
+      });
 
-      expect(links.titleTaken).toHaveBeenCalledWith(USER, 'Atlas', expect.anything());
+      // The note is locked, and only then read, inside the transaction.
+      expect(prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.$queryRaw.mock.invocationCallOrder[0],
+      );
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.note.findFirst.mock.invocationCallOrder[0],
+      );
+      expect(String(prisma.$queryRaw.mock.calls[0][0])).toContain('FOR UPDATE');
+      expect(links.titleTaken).toHaveBeenCalledWith(USER, 'Atlas', { db: expect.anything() });
+      expect(links.titleTaken).toHaveBeenCalledWith(USER, 'Project Atlas', { db: expect.anything(), except: 'n1' });
       expect(prisma.note.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
@@ -294,7 +308,11 @@ describe('NotesService', () => {
 
     it('leaves a note alone that changed since it was read', async () => {
       prisma.note.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
-      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toMatchObject({ updated: 1 });
+      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toMatchObject({
+        updated: 1,
+        skipped: 1,
+        noteIds: ['n3'],
+      });
       expect(versions.snapshot).toHaveBeenCalledTimes(1);
       expect(versions.snapshot).toHaveBeenCalledWith(expect.anything(), ideas, expect.any(Date));
       expect(links.sync).toHaveBeenCalledTimes(1);
@@ -302,10 +320,29 @@ describe('NotesService', () => {
 
     it('rewrites nothing while a note still has the old title', async () => {
       links.titleTaken.mockResolvedValue(true);
-      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toEqual({ updated: 0, title: 'Project Atlas' });
+      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toEqual({
+        updated: 0,
+        skipped: 0,
+        title: 'Project Atlas',
+        noteIds: [],
+      });
       await expect(service.orphanedLinkCount(USER, 'n1', 'Atlas')).resolves.toBe(0);
       expect(prisma.note.findMany).not.toHaveBeenCalled();
       expect(prisma.note.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rewrites nothing when another note has the new title too', async () => {
+      links.titleTaken.mockImplementation((_user, title) => Promise.resolve(title === 'Project Atlas'));
+      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toMatchObject({ updated: 0, skipped: 0 });
+      await expect(service.orphanedLinkCount(USER, 'n1', 'Atlas')).resolves.toBe(0);
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rewrites nothing for a note without a title', async () => {
+      prisma.note.findFirst.mockResolvedValue(note({ title: 'Untitled' }));
+      await expect(service.orphanedLinkCount(USER, 'n1', 'Atlas')).resolves.toBe(0);
+      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toMatchObject({ updated: 0, noteIds: [] });
+      expect(links.titleTaken).not.toHaveBeenCalled();
     });
 
     it('rewrites nothing when the new title cannot be written as a link', async () => {
@@ -318,6 +355,12 @@ describe('NotesService', () => {
       const full = note({ id: 'n4', content: `[[Atlas]]${'x'.repeat(999_990)}` });
       prisma.note.findMany.mockResolvedValue([full, sync]);
       await expect(service.orphanedLinkCount(USER, 'n1', 'Atlas')).resolves.toBe(1);
+      // The count leaves it out, and the rewrite says that one note keeps its old link.
+      await expect(service.renameLinks(USER, 'n1', 'Atlas')).resolves.toMatchObject({
+        updated: 1,
+        skipped: 1,
+        noteIds: ['n2'],
+      });
     });
 
     it('counts the notes it would rewrite without writing', async () => {

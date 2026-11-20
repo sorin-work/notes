@@ -53,6 +53,10 @@ Markdown import/export.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+- **Account**: change your name, email and password in Settings, sign out
+  everywhere at once, or delete the account with everything in it. A
+  forgotten password can be reset through a link sent by mail, on servers
+  that have SMTP settings.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
@@ -99,11 +103,46 @@ shared notes. Set `SEED_DEMO=false` to start with an empty database.
 | web     | http://localhost:5181 | nginx, proxies `/api` to the API            |
 | api     | http://localhost:4401 | `GET /api/health` checks the database too   |
 | db      | `localhost:5441`      | Postgres 17, user/password/database `notes` |
+| mailpit | http://localhost:8041 | Shows the mail the API sends, delivers none |
 
-The ports can be changed with `WEB_PORT`, `API_PORT` and `DB_PORT`. The API
-container runs `prisma migrate deploy` before it starts. Data lives in the
-`db-data` volume; `docker compose down -v` removes it. The next section is
-about keeping a copy of it.
+The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
+`MAILPIT_UI_PORT`. The API container runs `prisma migrate deploy` before it
+starts. Data lives in the `db-data` volume; `docker compose down -v` removes
+it. [Backup and restore](#backup-and-restore) is about keeping a copy of it.
+
+### Mail
+
+The API sends one kind of mail: the link behind "Forgot password?" on the
+sign-in page. In the Compose stack that mail goes to
+[mailpit](https://mailpit.axllent.org), which keeps it and shows it at
+http://localhost:8041 instead of delivering it. So to try a reset with the
+demo account, ask for the link and pick it up there. The mailpit page is
+bound to `127.0.0.1` and its SMTP port is not published at all, because
+whoever can read that page can open every reset link.
+
+For real mail, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` and, if the server
+wants a login, `SMTP_USER` and `SMTP_PASSWORD` in `.env`, and set `APP_URL`
+to the address people open the app at, since the links in the mails start
+with it. Mail to a server of your own only goes out over TLS: from the first
+byte on port 465, through STARTTLS on any other port, and not at all if the
+server does not offer it. `SMTP_REQUIRE_TLS=false` lifts that, which is what
+the stack does for mailpit and nothing else should need. `SMTP_HOST=` with
+nothing after it switches mail off: the sign-in page then does not offer a
+reset.
+
+### Limits per visitor
+
+Logins, sign-ups, password resets and the account changes that ask for the
+password are limited per client address. The API sits behind nginx, so the
+stack sets `TRUST_PROXY=1`: the API then takes the address nginx reports in
+`X-Forwarded-For` instead of nginx's own, which would be the same for
+everyone and let one visitor use up the allowance of all.
+
+That header is only worth believing when it comes from nginx. The stack also
+publishes the API port itself (4401), and whoever talks to that port
+directly can put any address in the header and so get a fresh allowance for
+every request. On a machine that others can reach, take the `ports` entry out
+of the `api` service, or set `TRUST_PROXY=0`.
 
 ## Backup and restore
 
@@ -207,17 +246,30 @@ npm run dev
 
 ### Configuration
 
-| Variable               | Default    | Purpose                                                    |
-| ---------------------- | ---------- | ---------------------------------------------------------- |
-| `DATABASE_URL`         | (required) | Postgres connection string                                 |
-| `JWT_SECRET`           | (required) | Signs login tokens, at least 32 characters                 |
-| `JWT_EXPIRES_IN`       | `7d`       | How long a login lasts                                     |
-| `PORT`                 | `4401`     | API port                                                   |
-| `CORS_ORIGINS`         | (none)     | Comma-separated browser origins, only needed without nginx |
-| `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                         |
-| `SEED_DEMO`            | `false`    | Create the demo account on start-up                        |
-| `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good             |
-| `AUTH_THROTTLE_LIMIT`  | `10`       | Sign-up and login attempts per minute per client           |
+| Variable               | Default    | Purpose                                                                  |
+| ---------------------- | ---------- | ------------------------------------------------------------------------ |
+| `DATABASE_URL`         | (required) | Postgres connection string                                               |
+| `JWT_SECRET`           | (required) | Signs login tokens, at least 32 characters                               |
+| `JWT_EXPIRES_IN`       | `7d`       | How long a login lasts                                                   |
+| `PORT`                 | `4401`     | API port                                                                 |
+| `CORS_ORIGINS`         | (none)     | Comma-separated browser origins, only needed without nginx               |
+| `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                                       |
+| `SEED_DEMO`            | `false`    | Create the demo account on start-up                                      |
+| `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good                           |
+| `AUTH_THROTTLE_LIMIT`  | `10`       | Per-minute limit on the routes that take a password                      |
+| `SMTP_HOST`            | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
+| `SMTP_PORT`            | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
+| `SMTP_FROM`            | (none)     | Sender of the mails, required with `SMTP_HOST`                           |
+| `SMTP_USER`            | (none)     | Login for the SMTP server, if it wants one                               |
+| `SMTP_PASSWORD`        | (none)     | Password for that login                                                  |
+| `SMTP_REQUIRE_TLS`     | `true`     | `false` lets mail go out without TLS, for a test server like mailpit     |
+| `APP_URL`              | (none)     | Address of the web app for the links in mails, required with `SMTP_HOST` |
+| `TRUST_PROXY`          | `0`        | Reverse proxies in front of the API whose `X-Forwarded-For` counts       |
+
+The API on its own sends no mail unless `SMTP_HOST` is set, and mailpit's
+SMTP port is not reachable from outside the Compose network. To work on
+password reset with the API running locally, point `SMTP_HOST` at any SMTP
+server you can reach.
 
 ## Tests and checks
 
@@ -265,7 +317,7 @@ without a pause, or leaves fewer dumps behind than it should.
 api/
   prisma/               schema and migrations
   src/
-    auth/               sign-up, login, JWT guard, password changes
+    auth/               sign-up, login, JWT guard, account changes
     notebooks/          notebooks and their one level of nesting
     notes/              notes, filters and sorting, note export
     tags/               tag names, renaming and merging
@@ -275,6 +327,7 @@ api/
     search/             Postgres full-text search
     shares/             read-only share links
     transfer/           zip export, Markdown import, front matter
+    mail/               outgoing mail over SMTP
     seed/               demo account
     common/, config/    shared helpers and environment configuration
   test/                 end-to-end tests
@@ -302,16 +355,28 @@ title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
 
 When a rename leaves links dangling, the editor shows how many notes still
-link to the old title and offers to update them. Nothing is rewritten before
-you click, because the title saves while you are still typing it. The update
-changes only the title inside `[[ ]]`: a `#heading`, an `|alias` and links in
-code stay as they are. The rewritten notes keep their place in "last edited"
-lists, and each one gets a version first, so the change can be undone from
-its history. There is no offer while another note has the old title, since
-the links still lead somewhere, and none when the new title contains `[`,
-`]`, `|`, `#` or a backtick, which cannot be written as a link. Notes in the
-trash and the links a note has to itself are left alone. The offer is made in
-the editor where the rename happened and is gone once you leave the note.
+link to the old title and offers to update them, naming both titles. The
+offer waits until the new title is finished: the cursor has left the title
+field and the title is saved. Nothing is rewritten before you click. The
+update changes only the title inside `[[ ]]`: a `#heading`, an `|alias` and
+links in code stay as they are. The rewritten notes keep their place in "last
+edited" lists, and each one gets a version first, so the change can be undone
+from its history.
+
+There is no offer, and nothing is rewritten:
+
+- while another note has the old title, since the links still lead somewhere;
+- when another note has the new title as well, since the links could then
+  lead to that one;
+- for a note left without a title, which is stored as "Untitled";
+- when the new title contains `[`, `]`, `|`, `#` or a backtick, which cannot
+  be written as a link.
+
+Notes in the trash and the links a note has to itself are left alone. A note
+that is being saved at that very moment, or that would grow past the size
+limit, is left as it is. The editor then says how many were left and keeps
+the offer. The offer is made in the editor where the rename happened and is
+gone once you leave the note.
 
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
@@ -334,10 +399,38 @@ All endpoints are under `/api` and, apart from sign-up, login, the health
 check and shared notes, need an `Authorization: Bearer <token>` header.
 Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
 
+A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
+changes or `POST /auth/logout-all` is called. Each token carries the
+account's token version, and the API compares it with the database on every
+request, so those two end all sessions at once. `PATCH /auth/password`
+answers with a new token for the browser that made the change. Changing the
+email and deleting the account ask for the password again; a wrong one is a
+`403`, not a `401`, because the session itself is still good. The three
+routes that check the password count their requests twice against
+`AUTH_THROTTLE_LIMIT`: per client address on each route, and per account
+across all three, so a stolen login gets ten guesses a minute in total.
+
+`POST /auth/password-reset` with `{ email }` mails a link to
+`/reset-password#token=...` in the web app, and answers `204` whether or not
+the address has an account. The token is random, only its SHA-256 hash is
+stored, and it works once within an hour. It is in the fragment of the link,
+which browsers keep to themselves, so it does not show up in a server log.
+`POST /auth/password-reset/confirm` with `{ token, password }` sets the
+password, bumps the token version, so every session of the account ends, and
+ends the account's other links. Asking again does not cancel a link that is
+already out. An account has three of them at a time at most, which also
+means three mails an hour at most, and further requests do nothing until one
+runs out or is used. The mail holds fixed text and the link, nothing from
+the account. Without `SMTP_HOST` both routes answer `404`, and
+`GET /auth/password-reset` says `{ "enabled": false }`, which is how the
+sign-in page knows to hide the link.
+
 | Method & path                                                  | What it does                              |
 | -------------------------------------------------------------- | ----------------------------------------- |
 | `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
-| `GET /auth/me`, `PATCH /auth/password`                         | Current user, change password             |
+| `GET/PATCH/DELETE /auth/me`                                    | Read, change or delete the current user   |
+| `PATCH /auth/password`, `POST /auth/logout-all`                | Change password, sign out everywhere      |
+| `GET/POST /auth/password-reset`, `POST .../confirm`            | Reset a forgotten password by mail        |
 | `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |

@@ -9,7 +9,10 @@ describe('AuthController', () => {
     register: jest.fn(),
     login: jest.fn(),
     me: jest.fn(),
+    updateProfile: jest.fn(),
+    deleteAccount: jest.fn(),
     changePassword: jest.fn(),
+    logoutEverywhere: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -41,9 +44,23 @@ describe('AuthController', () => {
     expect(auth.me).toHaveBeenCalledWith('1');
   });
 
-  it('changes the password of the current user', async () => {
+  it('changes the password of the current user and hands back the new token', async () => {
+    auth.changePassword.mockResolvedValue({ token: 't2', user: { id: '1' } });
     const dto = { currentPassword: 'old-password', newPassword: 'new-password' };
-    await controller.changePassword({ id: '1', email: 'ada@example.com' }, dto);
+    await expect(controller.changePassword({ id: '1', email: 'ada@example.com' }, dto)).resolves.toEqual({
+      token: 't2',
+      user: { id: '1' },
+    });
     expect(auth.changePassword).toHaveBeenCalledWith('1', dto);
+  });
+
+  it('updates, signs out and deletes the current user', async () => {
+    const current = { id: '1', email: 'ada@example.com' };
+    await controller.updateProfile(current, { name: 'Ada L.' });
+    expect(auth.updateProfile).toHaveBeenCalledWith('1', { name: 'Ada L.' });
+    await controller.logoutEverywhere(current);
+    expect(auth.logoutEverywhere).toHaveBeenCalledWith('1');
+    await controller.deleteAccount(current, { password: 'pw' });
+    expect(auth.deleteAccount).toHaveBeenCalledWith('1', { password: 'pw' });
   });
 });

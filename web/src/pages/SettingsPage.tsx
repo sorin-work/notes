@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
-import { changePassword } from '../api/auth';
+import { changePassword, deleteAccount, logoutEverywhere, updateProfile } from '../api/auth';
 import { deleteTag, listTags, renameTag } from '../api/tags';
 import { exportAll, importFiles } from '../api/transfer';
-import type { Tag } from '../api/types';
+import type { Tag, User } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
-import { ConfirmDialog } from '../components/Modal';
+import { ConfirmDialog, Modal } from '../components/Modal';
 import { ErrorMessage } from '../components/States';
 import { Theme, useTheme } from '../hooks/useTheme';
 
@@ -16,10 +16,10 @@ export function SettingsPage() {
       <h1>Settings</h1>
       <section className="card">
         <h2>Account</h2>
-        <p>
-          {user?.name} · <span className="muted">{user?.email}</span>
-        </p>
+        {user && <ProfileForm user={user} />}
         <PasswordForm />
+        <SessionsSection />
+        {user && <DeleteAccountSection user={user} />}
       </section>
       <AppearanceSection />
       <ImportExportSection />
@@ -28,14 +28,86 @@ export function SettingsPage() {
   );
 }
 
+function ProfileForm({ user }: { user: User }) {
+  const { updateUser } = useAuth();
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [password, setPassword] = useState('');
+  const emailChanged = email.trim().toLowerCase() !== user.email;
+  const changed = emailChanged || name.trim() !== user.name;
+
+  const save = useMutation({
+    mutationFn: () => updateProfile({ name, email, ...(emailChanged && { currentPassword: password }) }),
+    onSuccess: (saved) => {
+      updateUser(saved);
+      setName(saved.name);
+      setEmail(saved.email);
+      setPassword('');
+    },
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    save.mutate();
+  };
+
+  return (
+    <form className="form narrow" onSubmit={submit}>
+      <h3>Name and email</h3>
+      <label className="field">
+        <span>Name</span>
+        <input
+          autoComplete="name"
+          maxLength={100}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          required
+        />
+      </label>
+      <label className="field">
+        <span>Email</span>
+        <input
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          required
+        />
+      </label>
+      {emailChanged && (
+        <label className="field">
+          <span>Password, to confirm the new email</span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </label>
+      )}
+      {save.error && <ErrorMessage error={save.error} />}
+      {save.isSuccess && !changed && <p className="success">Saved.</p>}
+      <div className="form-actions start">
+        <button type="submit" className="button button-primary" disabled={!changed || save.isPending}>
+          Save
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function PasswordForm() {
+  const { renewSession } = useAuth();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [repeat, setRepeat] = useState('');
   const [mismatch, setMismatch] = useState(false);
   const change = useMutation({
     mutationFn: () => changePassword(current, next),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // The old token died with the old password.
+      renewSession(result);
       setCurrent('');
       setNext('');
       setRepeat('');
@@ -84,13 +156,103 @@ function PasswordForm() {
       </label>
       {mismatch && <p className="field-error">The new passwords do not match.</p>}
       {change.error && <ErrorMessage error={change.error} />}
-      {change.isSuccess && <p className="success">Password changed.</p>}
+      {change.isSuccess && (
+        <p className="success">Password changed. Every other browser and device has been signed out.</p>
+      )}
       <div className="form-actions start">
         <button type="submit" className="button button-primary" disabled={change.isPending}>
           Change password
         </button>
       </div>
     </form>
+  );
+}
+
+function SessionsSection() {
+  const { logout } = useAuth();
+  const signOut = useMutation({ mutationFn: logoutEverywhere, onSuccess: logout });
+  return (
+    <div className="form narrow">
+      <h3>Sessions</h3>
+      <p className="muted">
+        A login lasts a week. If you left one open somewhere, this signs you out in every browser and on every device,
+        this one included.
+      </p>
+      {signOut.error && <ErrorMessage error={signOut.error} />}
+      <div className="form-actions start">
+        <button type="button" className="button" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
+          Sign out everywhere
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeleteAccountSection({ user }: { user: User }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="form narrow">
+      <h3>Delete account</h3>
+      <p className="muted">Removes the account and everything in it. This cannot be undone.</p>
+      <div className="form-actions start">
+        <button type="button" className="button button-danger-quiet" onClick={() => setOpen(true)}>
+          Delete account…
+        </button>
+      </div>
+      {open && <DeleteAccountDialog user={user} onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+function DeleteAccountDialog({ user, onClose }: { user: User; onClose(): void }) {
+  const { logout } = useAuth();
+  const [password, setPassword] = useState('');
+  const download = useMutation({ mutationFn: exportAll });
+  const remove = useMutation({ mutationFn: () => deleteAccount(password), onSuccess: logout });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    remove.mutate();
+  };
+
+  return (
+    <Modal title="Delete your account?" onClose={onClose}>
+      <form className="form" onSubmit={submit}>
+        <p>
+          Every notebook, note, tag, earlier version and share link of {user.email} is deleted for good, the trash
+          included. There is no way to get them back.
+        </p>
+        <p className="muted">
+          Want a copy first? The export is a zip of your notes as Markdown files. It leaves out the trash and earlier
+          versions.
+        </p>
+        <div className="form-actions start">
+          <button type="button" className="button" onClick={() => download.mutate()} disabled={download.isPending}>
+            {download.isPending ? 'Preparing…' : 'Export all notes'}
+          </button>
+        </div>
+        {download.error && <ErrorMessage error={download.error} />}
+        <label className="field">
+          <span>Password</span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </label>
+        {remove.error && <ErrorMessage error={remove.error} />}
+        <div className="form-actions">
+          <button type="button" className="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="button button-danger" disabled={!password || remove.isPending}>
+            Delete account
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
