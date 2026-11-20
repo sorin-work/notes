@@ -359,6 +359,67 @@ describe('orphans and unlinked mentions', () => {
   });
 });
 
+describe('graph', () => {
+  it('returns notes as nodes and resolved links as edges, narrowed by notebook and tag', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object, headers = auth) =>
+      (await request(server).post(path).set(headers).send(body).expect(201)).body.id as string;
+    const graph = async (query: Record<string, string> = {}) => {
+      const response = await request(server).get('/api/links/graph').query(query).set(auth).expect(200);
+      return response.body as { nodes: { id: string; title: string }[]; edges: object[]; total: number };
+    };
+
+    const work = await post('/api/notebooks', { name: 'Work' });
+    const inner = await post('/api/notebooks', { name: 'Atlas', parentId: work });
+    // Two notes share a title. Links go to the one edited last, as everywhere else.
+    const olderPlan = await post('/api/notes', { title: 'Plan', content: 'The first plan.' });
+    const plan = await post('/api/notes', {
+      title: 'plan',
+      content: 'See [[Hub]].',
+      notebookId: inner,
+      tags: ['atlas'],
+    });
+    const hub = await post('/api/notes', {
+      title: 'Hub',
+      content: 'Links to [[ PLAN ]], [[Plan|again]], [[Hub]], [[Missing]] and [[Gone]].',
+      notebookId: work,
+      tags: ['atlas'],
+    });
+    const alone = await post('/api/notes', { title: 'Alone', content: 'No links.' });
+    const gone = await post('/api/notes', { title: 'Gone', content: 'See [[Hub]].' });
+    await request(server).delete(`/api/notes/${gone}`).set(auth).expect(204);
+    await post('/api/notes', { title: 'Hub', content: 'See [[Plan]].' }, other.auth);
+
+    const all = await graph();
+    expect(all.total).toBe(4);
+    // Newest first.
+    expect(all.nodes.map((node) => node.id)).toEqual([alone, hub, plan, olderPlan]);
+    expect(all.nodes[1]).toEqual({ id: hub, title: 'Hub' });
+    // One edge each way between the hub and the newer plan. Nothing for the note linking to itself,
+    // the missing note, the note in the trash or the other account.
+    const edges = [
+      { source: hub, target: plan },
+      { source: plan, target: hub },
+    ].sort((a, b) => a.source.localeCompare(b.source));
+    expect(all.edges).toEqual(edges);
+
+    // A top-level notebook covers the notebooks inside it.
+    expect((await graph({ notebookId: work })).nodes.map((node) => node.id)).toEqual([hub, plan]);
+    const innerOnly = await graph({ notebookId: inner });
+    expect(innerOnly).toMatchObject({ total: 1, nodes: [{ id: plan, title: 'plan' }], edges: [] });
+    expect((await graph({ notebookId: 'none' })).nodes.map((node) => node.id)).toEqual([alone, olderPlan]);
+    expect((await graph({ tag: '#Atlas' })).edges).toHaveLength(2);
+    expect((await graph({ notebookId: 'none', tag: 'atlas' })).total).toBe(0);
+
+    const foreign = await post('/api/notebooks', { name: 'Theirs' }, other.auth);
+    await request(server).get('/api/links/graph').query({ notebookId: foreign }).set(auth).expect(404);
+    await request(server).get('/api/links/graph').query({ notebookId: 'NONE' }).set(auth).expect(400);
+    await request(server).get('/api/links/graph').expect(401);
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
