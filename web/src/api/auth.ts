@@ -21,3 +21,14 @@ export const changePassword = (currentPassword: string, newPassword: string) =>
 export const logoutEverywhere = () => api<void>('/auth/logout-all', json('POST'));
 
 export const deleteAccount = (password: string) => api<void>('/auth/me', json('DELETE', { password }));
+
+/** False when the server has no SMTP settings, and then the two calls below answer 404. */
+export const passwordResetEnabled = () =>
+  api<{ enabled: boolean }>('/auth/password-reset').then((status) => status.enabled);
+
+/** The answer is the same whether or not the address has an account. */
+export const requestPasswordReset = (email: string) => api<void>('/auth/password-reset', json('POST', { email }));
+
+/** `token` comes from the link in the mail. Ends every session of the account. */
+export const resetPassword = (token: string, password: string) =>
+  api<void>('/auth/password-reset/confirm', json('POST', { token, password }));

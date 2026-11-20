@@ -1,5 +1,7 @@
+import { useQuery } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
+import { passwordResetEnabled } from '../api/auth';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorMessage } from '../components/States';
 
@@ -11,6 +13,9 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  // Only servers that can send mail offer a reset. Until the answer is in,
+  // and if it never comes, the link stays hidden.
+  const canReset = useQuery({ queryKey: ['password-reset-enabled'], queryFn: passwordResetEnabled, retry: false });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -58,6 +63,11 @@ export function LoginPage() {
         <p className="muted">
           New here? <Link to="/register">Create an account</Link>
         </p>
+        {canReset.data === true && (
+          <p className="muted">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </p>
+        )}
       </form>
     </div>
   );
