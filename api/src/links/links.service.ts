@@ -43,8 +43,9 @@ export const MAX_GRAPH_NODES = 300;
 
 /**
  * How a title is turned into the key that links are matched by, in SQL. It
- * has to give what normalizeTitle gives, and it is the expression resolveKeys
- * uses. The column name is one of two fixed strings, never input.
+ * has to give what normalizeTitle gives. resolveKeys, the orphans and the
+ * graph all compare titles through it, and titleTaken spells the same
+ * expression out. The column name is one of two fixed strings, never input.
  */
 const titleKey = (column: 'title' | 'n.title') =>
   Prisma.raw(`lower(regexp_replace(btrim(${column}), '\\s+', ' ', 'g'))`);
@@ -227,7 +228,7 @@ export class LinksService {
     const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
       SELECT DISTINCT ON (key) id, key
       FROM (
-        SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at
+        SELECT id, ${titleKey('title')} AS key, updated_at
         FROM notes
         WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
       ) titled
