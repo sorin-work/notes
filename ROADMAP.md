@@ -466,10 +466,12 @@ mention it shows and the revision of the note. "Link" (`POST
 through `writeNoteText`, tied to that revision, so a note that has changed
 since is left alone. Before it writes, it parses the new text again and
 refuses unless the only change is one more `[[link]]` at that place. The list
-offers only what "Link" would take, with the same function, and parses at most
-1,000,000 characters or one second per request, skipping notes over 100,000
-characters. It saves the old text as a version, syncs the links and leaves
-`updatedAt` alone. Still open: a title of only very common words finds
-nothing, because the index drops those words. Common titles ("Ideas") are as
-noisy as predicted, and there is no way to dismiss a mention. Only the first
-mention in a note that can be linked is offered at a time.
+offers only what "Link" would take, with the same function. Every parse runs
+in a pool of two worker threads with half a second each, and its tree and
+verdict are kept by note and revision. A request parses at most 1,000,000
+characters or one second, skips notes over 100,000 characters, and one account
+runs two such requests at a time. It saves the old text as a version, syncs
+the links and leaves `updatedAt` alone. Still open: a title of only very
+common words finds nothing, because the index drops those words. Common titles
+("Ideas") are as noisy as predicted, and there is no way to dismiss a mention.
+Only the first mention in a note that can be linked is offered at a time.

@@ -453,25 +453,34 @@ search index picks the candidates, so a title made only of very common words
 ("The Who") finds nothing, and only the 200 notes edited last that match are
 read.
 
-The parser is slow on long notes, so there are limits. A note longer than
+The parser is slow on some notes, seconds or more for a small one built to
+trip it, so it never runs on the thread that answers requests. Two worker
+threads parse, and each parse gets half a second. A worker that takes longer
+is stopped and replaced, and the note offers no mentions until it is edited:
+the verdict is kept by note and revision, and so is the tree of a note that
+was parsed, so each revision is parsed once. Before that, a note longer than
 100,000 characters, with more than 2,000 closing brackets, or with quotes or
-lists nested more than 16 deep is not parsed and offers no mentions. A note
-that does not write the title at all is passed over without being parsed. One
-request parses at most 1,000,000 characters and spends at most a second on it.
-Past either limit the list stops and says it may be missing some notes. The
-list is loaded when a note is opened and after its title changes, not after
-every save.
+lists nested more than 16 deep is not parsed at all, and a note that does not
+write the title is passed over. One request parses at most 1,000,000
+characters and spends at most a second on it. Past either limit the list stops
+and says it may be missing some notes. One account runs two mention requests
+at a time, and a third answers 429. The list is loaded when a note is opened
+and after its title changes, not after every save.
 
 The list shows the line of the mention that the Link button will wrap, and
 only mentions that Link will take: the first one in each note for which it
 works. Link puts the brackets in, parses the new text again and writes it only
-when it holds exactly one `[[link]]` more, at that place, and every piece of
-code, HTML, every link, image, reference and definition exactly as before. The
-button changes the other note: its old text is saved as a version first, so
-the change can be undone from its history, and its "last edited" time stays as
-it was. The request names the revision of the note that the mention was found
-in. If the note has been edited since, nothing is changed and the list is
-loaded again.
+when it holds exactly one `[[link]]` more, at that place, every piece of code,
+HTML, every link, image, reference and definition exactly as before, and every
+emphasis, strong and strikethrough where it was. Brackets next to `*`, `_` or
+`~` can change how those pair up, so then there is no mention. Nor right after
+a `!`, where the brackets would open an image, nor in a table cell beyond the
+columns of the header, which the preview does not show. A note that Link
+cannot parse in time answers 400. The button changes the other note: its old
+text is saved as a version first, so the change can be undone from its
+history, and its "last edited" time stays as it was. The request names the
+revision of the note that the mention was found in. If the note has been
+edited since, nothing is changed and the list is loaded again.
 
 When a rename leaves links dangling, the editor shows how many notes still
 link to the old title and offers to update them, naming both titles. The
