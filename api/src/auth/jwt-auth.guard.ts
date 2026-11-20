@@ -1,10 +1,24 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
-import type { AuthenticatedRequest } from '../common/current-user.decorator';
+import type { Response } from 'express';
+import type { AuthenticatedRequest, AuthUser } from '../common/current-user.decorator';
 import { IS_PUBLIC } from '../common/public.decorator';
+import { SESSION_ONLY } from '../common/session-only.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApiTokensService, isApiToken } from './api-tokens.service';
 import type { TokenPayload } from './auth.service';
+
+/** What a read-only API token may send. */
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * Registered globally: every route needs a valid bearer token unless it is
@@ -14,6 +28,10 @@ import type { TokenPayload } from './auth.service';
  * tokenVersion, which is how a password change or "sign out everywhere"
  * ends sessions before their token expires. That costs one primary-key
  * lookup of two columns on every authenticated request.
+ *
+ * A bearer value that starts with "nt_" is a personal API token instead. It
+ * is looked up by its hash, and everything a token may not do is refused
+ * here, in one place, not controller by controller.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -21,6 +39,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwt: JwtService,
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
+    private readonly apiTokens: ApiTokensService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -33,6 +52,11 @@ export class JwtAuthGuard implements CanActivate {
     const token = bearerToken(request.headers.authorization);
     if (!token) {
       throw new UnauthorizedException('Missing bearer token');
+    }
+
+    if (isApiToken(token)) {
+      request.user = await this.withApiToken(token, context);
+      return true;
     }
 
     let payload: TokenPayload;
@@ -52,6 +76,33 @@ export class JwtAuthGuard implements CanActivate {
     }
     request.user = { id: payload.sub, email: user.email };
     return true;
+  }
+
+  private async withApiToken(token: string, context: ExecutionContext): Promise<AuthUser> {
+    const http = context.switchToHttp();
+    const identity = await this.apiTokens.identify(token);
+    if (!identity) {
+      throw new UnauthorizedException('Unknown or revoked API token');
+    }
+
+    // Counted before the checks below, so refused requests use up the allowance too.
+    const retryAfter = await this.apiTokens.throttle(identity.tokenId);
+    if (retryAfter > 0) {
+      http.getResponse<Response>().setHeader('Retry-After', retryAfter);
+      throw new HttpException('Too many requests with this API token', HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    const sessionOnly = this.reflector.getAllAndOverride<boolean>(SESSION_ONLY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (sessionOnly) {
+      throw new ForbiddenException('An API token cannot do this. Sign in instead.');
+    }
+    if (identity.readOnly && !READ_METHODS.has(http.getRequest<AuthenticatedRequest>().method)) {
+      throw new ForbiddenException('This API token is read-only');
+    }
+    return { id: identity.userId, email: identity.email };
   }
 }
 
