@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
@@ -941,6 +942,18 @@ describe('NoteEditor', () => {
     expect(screen.getByLabelText('Note content')).toHaveAttribute('readonly');
     expect(screen.getByRole('checkbox')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('says plainly that a note never opened here cannot be shown offline', async () => {
+    const calls = mockFetch(baseRoutes());
+    onlineManager.setOnline(false);
+    try {
+      renderEditor();
+      expect(await screen.findByText(/has not been opened on this device before/)).toBeInTheDocument();
+      expect(calls).toEqual([]);
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 
   it('explains when the note does not exist', async () => {

@@ -5,6 +5,7 @@ import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { expectNoAxeViolations } from '../test/axe';
 import { notebook, summary, user } from '../test/fixtures';
+import { keptUsers, seedOfflineCache } from '../test/offline';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SettingsPage } from './SettingsPage';
 
@@ -154,16 +155,18 @@ describe('SettingsPage', () => {
     expect(screen.queryByLabelText('Password, to confirm the new email')).not.toBeInTheDocument();
   });
 
-  it('signs out everywhere, this browser included', async () => {
+  it('signs out everywhere, this browser included, and drops the notes kept here', async () => {
     const calls = mockFetch({
       ...loaded,
       'POST /api/auth/logout-all': { status: 204 },
     });
+    await seedOfflineCache(user);
     renderSettings();
 
     await userEvent.click(screen.getByRole('button', { name: 'Sign out everywhere' }));
 
     await waitFor(() => expect(getToken()).toBeNull());
+    await waitFor(async () => expect(await keptUsers()).toEqual([]));
     expect(calls.some((call) => call.method === 'POST' && call.url === '/api/auth/logout-all')).toBe(true);
   });
 
@@ -172,6 +175,7 @@ describe('SettingsPage', () => {
       ...loaded,
       'DELETE /api/auth/me': { status: 204 },
     });
+    await seedOfflineCache(user);
     renderSettings();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Delete account…' }));
@@ -185,6 +189,8 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(getToken()).toBeNull());
     expect(calls.find((call) => call.method === 'DELETE')?.body).toEqual({ password: 'demo-password' });
+    // The notes this browser kept for reading offline go with the account.
+    await waitFor(async () => expect(await keptUsers()).toEqual([]));
   });
 
   it('shows a new API token once, with the name and the read-only choice sent along', async () => {
