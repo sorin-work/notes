@@ -58,7 +58,7 @@ Markdown import/export.
   forgotten password can be reset through a link sent by mail, on servers
   that have SMTP settings.
 - **Capture**: `/capture?title=...&url=...` opens a new note with a page's
-  title and a link to it, ready to save. A bookmarklet makes that one click
+  title and its address, ready to save. A bookmarklet makes that one click
   on any page, see [Saving a page from the browser](#saving-a-page-from-the-browser).
 - **API tokens** for scripts: made and revoked in Settings, shown once, and
   read-only if you want. A token stands in for a login on everything except
@@ -92,10 +92,16 @@ javascript:(()=>{window.open('http://localhost:5181/capture?title='+encodeURICom
 ```
 
 Clicking it on any page opens the notes app in a new tab, with a note that
-has the page's title and a link to the page as its first line. Nothing is
-saved until you press "Save note", and if you are not signed in you are
-asked to sign in first. It needs no API token and no CORS setting, because
-the note is made by the web app itself.
+has the page's title as its title and the page's address as its first line.
+Nothing is saved until you press "Save note", and if you are not signed in
+you are asked to sign in first. It needs no API token and no CORS setting,
+because the note is made by the web app itself.
+
+Any site can make such a link, so the draft takes little from it. The title
+is only ever the note's title, never part of its text. The address goes in
+as a plain link that shows exactly where it leads, and only if it is an
+ordinary `http` or `https` address. Anything else is left out, and the page
+says so.
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 
@@ -286,6 +292,7 @@ npm run dev
 | `TRASH_RETENTION_DAYS`     | `30`       | Days before trashed notes are deleted for good                           |
 | `AUTH_THROTTLE_LIMIT`      | `10`       | Per-minute limit on the routes that take a password                      |
 | `API_TOKEN_THROTTLE_LIMIT` | `120`      | Requests a minute that one API token may make                            |
+| `API_DOCS`                 | `true`     | `false` turns off the page and the document at `/api/docs`               |
 | `SMTP_HOST`                | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
 | `SMTP_PORT`                | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
 | `SMTP_FROM`                | (none)     | Sender of the mails, required with `SMTP_HOST`                           |
@@ -434,9 +441,10 @@ The API describes itself. With the stack running, http://localhost:5181/api/docs
 (port 4401 when the API runs by itself) is a page that lists every endpoint
 with its parameters, a line on what it does and the credentials it takes,
 and lets you try it. The OpenAPI document
-behind it is at `/api/docs-json`. Both need no login. The request side of
-the document is built from the classes the API validates with, so it cannot
-fall behind the code. The answers are not described in it yet.
+behind it is at `/api/docs-json`. Both need no login, and `API_DOCS=false`
+turns both off. The request side of the document is built from the classes
+the API validates with, so it cannot fall behind the code. The answers are
+not described in it yet. The page loads nothing from other hosts.
 
 What follows is what the document does not say, or what is worth knowing
 before opening it.

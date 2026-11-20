@@ -421,7 +421,9 @@ document from the DTO classes at build time and serves it, with a page to try
 it on, at `/api/docs`. It names the two credentials and says for every route
 which of them it takes, read from the same marks the guard goes by. The
 endpoint table in the README shrank to the few a script wants. And
-`/capture?title=&url=` in the web app opens a new note with a link to a page,
-which a bookmarklet from the README turns into one click. It saves nothing
-by itself, since any site can send a visitor there. Still open: the document
-describes requests but not answers.
+`/capture?title=&url=` in the web app opens a new note with the title and
+the address of a page, which a bookmarklet from the README turns into one
+click. Any site can send a visitor there, so it saves nothing by itself, the
+title stays out of the note's text, and only a plain web address is taken.
+`API_DOCS=false` turns the document off. Still open: the document describes
+requests but not answers.
