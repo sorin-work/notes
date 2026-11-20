@@ -34,7 +34,8 @@ Markdown import/export.
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
   bookmarked. The **Orphans** view lists the notes with no links in or out,
-  counting only links that lead to another note outside the trash.
+  counting only links between notes outside the trash that are not
+  templates.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
