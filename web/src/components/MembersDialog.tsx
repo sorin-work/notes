@@ -22,9 +22,12 @@ export function MembersDialog({ notebookId, name, onClose }: { notebookId: strin
     void queryClient.invalidateQueries({ queryKey: key });
     void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
   };
+  // Without mail, the link to accept with comes back once, here, for the owner to pass on.
+  const [handOut, setHandOut] = useState<{ email: string; link: string } | null>(null);
   const invite = useMutation({
     mutationFn: () => inviteMember(notebookId, email.trim(), role),
-    onSuccess: () => {
+    onSuccess: (sent) => {
+      setHandOut(sent.link ? { email: sent.email, link: sent.link } : null);
       setEmail('');
       refresh();
     },
@@ -44,9 +47,9 @@ export function MembersDialog({ notebookId, name, onClose }: { notebookId: strin
   return (
     <Modal title={`Share “${name}” with people`} onClose={onClose}>
       <p className="muted">
-        Members see this notebook and the notebooks inside it in their own sidebar. Readers can read the notes. Editors
-        can also change their text and tags and add notes, which stay yours. Your other notebooks, notes and tags stay
-        yours alone.
+        An invitation is accepted through the link it comes with, which works once, for a week. Members see this
+        notebook and the notebooks inside it in their own sidebar. Readers can read the notes. Editors can also change
+        their text and tags and add notes, which stay yours. Your other notebooks, notes and tags stay yours alone.
       </p>
       <form className="form invite-form" onSubmit={submit}>
         <label className="field">
@@ -66,6 +69,21 @@ export function MembersDialog({ notebookId, name, onClose }: { notebookId: strin
           </button>
         </div>
       </form>
+      {handOut && (
+        <div className="banner banner-info" role="status">
+          <p>
+            This server sends no mail. Send this link to {handOut.email} yourself. It is shown only now, and whoever
+            opens it while signed in joins the notebook:
+          </p>
+          <input
+            readOnly
+            aria-label="Invitation link"
+            value={handOut.link}
+            onFocus={(event) => event.target.select()}
+          />
+        </div>
+      )}
+      {invite.isSuccess && !handOut && <p className="muted">The invitation is on its way by mail.</p>}
       {[invite.error, change.error, remove.error, withdraw.error].map(
         (error, index) => error && <ErrorMessage key={index} error={error} />,
       )}
@@ -81,7 +99,7 @@ export function MembersDialog({ notebookId, name, onClose }: { notebookId: strin
               {members.data.members.map((member) => (
                 <li key={member.userId}>
                   <span>
-                    {member.name} <span className="muted">{member.email}</span>
+                    {member.name} {member.email && <span className="muted">{member.email}</span>}
                   </span>
                   <select
                     aria-label={`Role of ${member.name}`}

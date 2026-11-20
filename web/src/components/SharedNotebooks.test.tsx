@@ -45,7 +45,6 @@ describe('notebooks shared with other accounts', () => {
     const calls = mockFetch({
       ...signedIn,
       'GET /api/notebooks': { body: [notebook({ id: 'w', name: 'Work', memberCount: 2 }), shared] },
-      'GET /api/invites': { body: [] },
       [`DELETE /api/notebooks/k/members/${user.id}`]: { status: 204 },
     });
     renderSidebar();
@@ -72,22 +71,25 @@ describe('notebooks shared with other accounts', () => {
     );
   });
 
-  it('shows invitations to accept or decline, and opens the notebook once accepted', async () => {
-    const calls = mockFetch({
-      ...signedIn,
-      'GET /api/notebooks': { body: [] },
-      'GET /api/invites': {
-        body: [
-          { id: 'i1', notebook: { id: 'k', name: 'Kitchen' }, from: { name: 'Ada' }, role: 'read', expiresAt: '' },
-        ],
+  it('hands the owner the link once when the server sends no mail', async () => {
+    mockFetch({
+      'GET /api/notebooks/w/members': { body: { owner: { name: 'Demo User' }, members: [], invites: [] } },
+      'POST /api/notebooks/w/members/invites': {
+        status: 201,
+        body: {
+          id: 'i2',
+          email: 'dee@example.com',
+          role: 'read',
+          expiresAt: '',
+          link: 'http://notes.test/invites#token=abc',
+        },
       },
-      'POST /api/invites/i1/accept': { body: { notebookId: 'k' } },
     });
-    renderSidebar();
-    expect(await screen.findByText('Ada invited you to “Kitchen”, to read.')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Accept' }));
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/notes?notebook=k'));
-    expect(calls.some((call) => call.url === '/api/invites/i1/accept')).toBe(true);
+    renderWithProviders(<MembersDialog notebookId="w" name="Work" onClose={() => undefined} />);
+    await userEvent.type(await screen.findByLabelText('Invite by email'), 'dee@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Invite' }));
+    expect(await screen.findByLabelText('Invitation link')).toHaveValue('http://notes.test/invites#token=abc');
+    expect(screen.getByRole('status')).toHaveTextContent('It is shown only now');
   });
 
   it('lets the owner invite by email with a role, change roles and remove members', async () => {

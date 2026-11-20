@@ -5,7 +5,8 @@ export type Role = 'read' | 'edit';
 export interface Member {
   userId: string;
   name: string;
-  email: string;
+  /** Only for the owner. */
+  email?: string;
   role: Role;
   since: string;
 }
@@ -15,14 +16,8 @@ export interface SentInvite {
   email: string;
   role: Role;
   expiresAt: string;
-}
-
-export interface ReceivedInvite {
-  id: string;
-  notebook: { id: string; name: string };
-  from: { name: string };
-  role: Role;
-  expiresAt: string;
+  /** Only in the answer to the invitation, and only when the server sends no mail: the link to pass on, once. */
+  link?: string;
 }
 
 export interface Members {
@@ -49,11 +44,5 @@ export const changeRole = (notebookId: string, userId: string, role: Role) =>
 export const removeMember = (notebookId: string, userId: string) =>
   api<void>(`${base(notebookId)}/${userId}`, { method: 'DELETE' });
 
-export const receivedInvites = () => api<ReceivedInvite[]>('/invites');
-
-export const acceptInvite = (id: string) => api<{ notebookId: string }>(`/invites/${id}/accept`, { method: 'POST' });
-
 export const acceptInviteByToken = (token: string) =>
   api<{ notebookId: string }>('/invites/accept', json('POST', { token }));
-
-export const declineInvite = (id: string) => api<void>(`/invites/${id}`, { method: 'DELETE' });
