@@ -10,6 +10,7 @@ import JSZip from 'jszip';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { LinksService } from '../src/links/links.service';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
@@ -172,6 +173,169 @@ describe('links and search', () => {
     expect(search.body.items[0].snippet).toContain('\u0002dashboard\u0003');
 
     await request(server).get('/api/search?q=%22%26%7C!').set(auth).expect(200);
+  });
+});
+
+describe('renaming a note', () => {
+  type Auth = { Authorization: string };
+
+  async function createNote(auth: Auth, title: string, content = ''): Promise<{ id: string; updatedAt: string }> {
+    const response = await request(app.getHttpServer()).post('/api/notes').set(auth).send({ title, content });
+    expect(response.status).toBe(201);
+    return response.body;
+  }
+
+  const getNote = async (auth: Auth, id: string) =>
+    (await request(app.getHttpServer()).get(`/api/notes/${id}`).set(auth).expect(200)).body;
+
+  const orphaned = async (auth: Auth, id: string, from: string) =>
+    (await request(app.getHttpServer()).get(`/api/notes/${id}/rename-links`).query({ from }).set(auth).expect(200))
+      .body;
+
+  const renameLinks = (auth: Auth, id: string, body: object) =>
+    request(app.getHttpServer()).post(`/api/notes/${id}/rename-links`).set(auth).send(body);
+
+  it('points the links of the user’s notes at the new title, and nothing else', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+
+    const target = await createNote(auth, 'Atlas', 'Reporting dashboard');
+    const syncText = 'Talked about [[atlas]] and [[Atlas#Goals|the goals]].\r\n\r\n`[[Atlas]]` stays as it is.';
+    const sync = await createNote(auth, 'Weekly sync', syncText);
+    const ideas = await createNote(auth, 'Ideas', 'See [[Atlas]] and [[Other]].');
+    const plain = await createNote(auth, 'Plain', 'Atlas without a link');
+    const trashed = await createNote(auth, 'Thrown away', 'Was about [[Atlas]].');
+    await request(server).delete(`/api/notes/${trashed.id}`).set(auth).expect(204);
+    const theirs = await createNote(other.auth, 'Not mine', 'Another [[Atlas]] altogether.');
+
+    // The title autosaves while it is typed, so the rename arrives in steps.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project' }).expect(200);
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+
+    // The rename itself rewrote nothing: the links dangle.
+    expect((await getNote(auth, ideas.id)).content).toBe('See [[Atlas]] and [[Other]].');
+    const dangling = await request(server).get(`/api/notes/${target.id}/backlinks`).set(auth).expect(200);
+    expect(dangling.body).toEqual([]);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 2 });
+    expect(await orphaned(auth, target.id, 'Project')).toEqual({ count: 0 });
+
+    const renamed = await renameLinks(auth, target.id, { from: ' atlas ' }).expect(200);
+    expect(renamed.body).toEqual({ updated: 2, title: 'Project Atlas' });
+
+    const syncAfter = await getNote(auth, sync.id);
+    expect(syncAfter.content).toBe(
+      'Talked about [[Project Atlas]] and [[Project Atlas#Goals|the goals]].\r\n\r\n`[[Atlas]]` stays as it is.',
+    );
+    // Not an edit by the user: the note keeps its place in "last edited".
+    expect(syncAfter.updatedAt).toBe(sync.updatedAt);
+    const ideasAfter = await getNote(auth, ideas.id);
+    expect(ideasAfter.content).toBe('See [[Project Atlas]] and [[Other]].');
+    expect(ideasAfter.updatedAt).toBe(ideas.updatedAt);
+
+    // The old text is in the history, so the rewrite can be undone there.
+    const versions = await request(server).get(`/api/notes/${sync.id}/versions`).set(auth).expect(200);
+    expect(versions.body).toHaveLength(1);
+    const version = await request(server)
+      .get(`/api/notes/${sync.id}/versions/${versions.body[0].id}`)
+      .set(auth)
+      .expect(200);
+    expect(version.body.content).toBe(syncText);
+
+    // The links resolve again, and search finds the new text.
+    const backlinks = await request(server).get(`/api/notes/${target.id}/backlinks`).set(auth).expect(200);
+    expect(backlinks.body.map((link: { id: string }) => link.id).sort()).toEqual([sync.id, ideas.id].sort());
+    const search = await request(server).get('/api/search?q=project').set(auth).expect(200);
+    expect(search.body.items.map((hit: { id: string }) => hit.id)).toEqual(
+      expect.arrayContaining([target.id, sync.id, ideas.id]),
+    );
+    const links = await request(server).get(`/api/notes/${ideas.id}/links`).set(auth).expect(200);
+    expect(links.body).toEqual([
+      { title: 'Project Atlas', noteId: target.id },
+      { title: 'Other', noteId: null },
+    ]);
+
+    // Left alone: plain text, the trash, and other people's notes.
+    expect((await getNote(auth, plain.id)).content).toBe('Atlas without a link');
+    expect((await getNote(auth, trashed.id)).content).toBe('Was about [[Atlas]].');
+    expect((await getNote(other.auth, theirs.id)).content).toBe('Another [[Atlas]] altogether.');
+    await renameLinks(other.auth, target.id, { from: 'Atlas' }).expect(404);
+    await request(server).get(`/api/notes/${target.id}/rename-links?from=Atlas`).set(other.auth).expect(404);
+
+    // Nothing is left to do a second time.
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+  });
+
+  it('rewrites nothing while the links still lead somewhere or the new title cannot be linked', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const target = await createNote(auth, 'Atlas');
+    const source = await createNote(auth, 'Source', 'About [[Atlas]].');
+
+    // Only the case changed: the links still find the note.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'ATLAS' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+
+    // Another note has taken the old title.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+    const successor = await createNote(auth, 'atlas');
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+    expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+
+    // A note in the trash does not hold a title.
+    await request(server).delete(`/api/notes/${successor.id}`).set(auth).expect(204);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 1 });
+
+    // [[Atlas | v2]] would be read as a link to "Atlas" with other text.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Atlas | v2' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+    expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+
+    await renameLinks(auth, target.id, {}).expect(400);
+    await renameLinks(auth, target.id, { from: '   ' }).expect(400);
+    await renameLinks(auth, target.id, { from: 'Atlas', to: 'Elsewhere' }).expect(400);
+    await renameLinks(auth, 'not-a-uuid', { from: 'Atlas' }).expect(400);
+    await request(server).delete(`/api/notes/${target.id}`).set(auth).expect(204);
+    await renameLinks(auth, target.id, { from: 'Atlas' }).expect(409);
+  });
+
+  it('rewrites all the notes or none', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const target = await createNote(auth, 'Atlas');
+    const first = await createNote(auth, 'First', 'One [[Atlas]].');
+    const second = await createNote(auth, 'Second', 'Two [[Atlas]].');
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+
+    // The second note fails after the first one was already written inside the transaction.
+    const links = app.get(LinksService);
+    const sync = links.sync.bind(links);
+    let calls = 0;
+    const failing = jest.spyOn(links, 'sync').mockImplementation(async (...args) => {
+      if (++calls === 2) throw new Error('Simulated failure halfway through the rewrite');
+      return sync(...args);
+    });
+    try {
+      await renameLinks(auth, target.id, { from: 'Atlas' }).expect(500);
+    } finally {
+      failing.mockRestore();
+    }
+    expect(calls).toBe(2);
+
+    for (const note of [first, second]) {
+      expect((await getNote(auth, note.id)).content).toMatch(/\[\[Atlas\]\]/);
+      const versions = await request(server).get(`/api/notes/${note.id}/versions`).set(auth).expect(200);
+      expect(versions.body).toEqual([]);
+      const outgoing = await request(server).get(`/api/notes/${note.id}/links`).set(auth).expect(200);
+      expect(outgoing.body).toEqual([{ title: 'Atlas', noteId: null }]);
+    }
+
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(2);
+    expect((await getNote(auth, first.id)).content).toBe('One [[Project Atlas]].');
+    expect((await getNote(auth, second.id)).content).toBe('Two [[Project Atlas]].');
   });
 });
 
