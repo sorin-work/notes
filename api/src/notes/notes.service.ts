@@ -153,8 +153,9 @@ export class NotesService {
   ): Promise<NoteWithRelations> {
     const dailyDate = dayToDate(day);
     const marked = await tx.note.findFirst({ where: { userId, dailyDate }, include: noteInclude });
-    if (marked && !marked.deletedAt) return marked;
-    // The note of that day is in the trash. It stays there as an ordinary note, and the day gets a new one.
+    if (marked && !marked.deletedAt && !marked.isTemplate) return marked;
+    // The note of that day is in the trash, or was turned into a template. It
+    // stays what it is, without the day, and the day gets a new note.
     if (marked) await tx.note.update({ where: { id: marked.id }, data: { dailyDate: null } });
 
     // A note that is titled with the day, in whichever format, is the note of

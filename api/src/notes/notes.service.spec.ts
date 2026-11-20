@@ -347,6 +347,15 @@ describe('NotesService', () => {
       expect(prisma.note.create.mock.calls[0][0].data).toMatchObject({ dailyDate: day });
     });
 
+    it('does the same when the note of the day was turned into a template', async () => {
+      prisma.note.findFirst
+        .mockResolvedValueOnce(withRelations({ id: 'template-now', dailyDate: day, isTemplate: true }))
+        .mockResolvedValue(null);
+      await service.daily(USER, today);
+      expect(prisma.note.update).toHaveBeenCalledWith({ where: { id: 'template-now' }, data: { dailyDate: null } });
+      expect(prisma.note.create).toHaveBeenCalledTimes(1);
+    });
+
     it('asks again when another request made the note in the same moment', async () => {
       const taken = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
         code: 'P2002',
