@@ -30,7 +30,7 @@ describe('BacklinksPanel', () => {
               match: 'atlas',
               after: '.',
               offset: 10,
-              version: 'f'.repeat(64),
+              version: 3,
             },
           ],
           total: 1,

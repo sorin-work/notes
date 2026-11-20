@@ -1148,7 +1148,7 @@ describe('orphans and unlinked mentions', () => {
     const { auth } = await signUp();
     const other = await signUp();
     const server = app.getHttpServer();
-    type Found = { id: string; before: string; match: string; after: string; offset: number; version: string };
+    type Found = { id: string; before: string; match: string; after: string; offset: number; version: number };
     const post = async (body: object, headers = auth) =>
       (await request(server).post('/api/notes').set(headers).send(body).expect(201)).body.id as string;
     const mentions = async (id: string, query = '') => {
@@ -1218,8 +1218,10 @@ describe('orphans and unlinked mentions', () => {
     expect(after.body.content).toBe(
       'Intro.\n\n# Minutes\n\nIn `project atlas` code first. We agreed that [[project atlas]] ships in March.\n\nProject Atlas needs a budget.',
     );
-    // The app made this change, so the note keeps its place in "last edited".
+    // The app made this change, so the note keeps its place in "last edited". Its revision counts it all the same.
     expect(after.body.updatedAt).toBe(before.body.updatedAt);
+    expect(after.body.revision).toBe(before.body.revision + 1);
+    expect(again.version).toBe(before.body.revision);
 
     // It is a backlink now and no longer a mention, and the old text is in the history.
     const backlinks = await request(server).get(`/api/notes/${atlas}/backlinks`).set(auth).expect(200);

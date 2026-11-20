@@ -107,9 +107,9 @@ export interface Mention {
   before: string;
   match: string;
   after: string;
-  /** Where the mention starts in that note's text, and the state of the text it was found in. */
+  /** Where the mention starts in that note's text, and the revision of the note it was found in. */
   offset: number;
-  version: string;
+  version: number;
 }
 
 export interface MentionPage extends Page<Mention> {

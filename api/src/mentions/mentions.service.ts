@@ -1,10 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
-import { createHash } from 'node:crypto';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
 import { findMention, isMentionable, linkMention, normalizeTitle } from '../links/wikilinks';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
+import { writeNoteText } from '../notes/note-text';
 import { DEFAULT_TITLE } from '../notes/notes.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { VersionsService } from '../versions/versions.service';
@@ -19,8 +19,8 @@ export interface Mention {
   after: string;
   /** Where that mention starts in the note's text. */
   offset: number;
-  /** The state of the note the mention was found in. "Link" sends it back with the offset and the match. */
-  version: string;
+  /** The revision of the note the mention was found in. "Link" sends it back with the offset and the match. */
+  version: number;
 }
 
 export interface MentionPage extends Page<Mention> {
@@ -34,15 +34,6 @@ export const MAX_CANDIDATES = 200;
 const BATCH = 25;
 /** How much of the line is shown on each side of a mention. */
 const SNIPPET_LENGTH = 80;
-
-/**
- * Stands for one exact text of a note: two texts with the same version are
- * the same text. When notes carry a revision number, that is the better
- * version to hand out here.
- */
-export function versionOf(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
 
 /**
  * Notes that mention another note's title without linking to it, and the
@@ -77,7 +68,7 @@ export class MentionsService {
       const ids = candidates.slice(from, Math.min(from + BATCH, MAX_CANDIDATES));
       const notes = await this.prisma.note.findMany({
         where: { id: { in: ids }, userId, deletedAt: null },
-        select: { id: true, title: true, content: true, updatedAt: true },
+        select: { id: true, title: true, content: true, updatedAt: true, revision: true },
       });
       // findMany does not promise the order of the ids it was given.
       const byId = new Map(notes.map((note) => [note.id, note]));
@@ -91,7 +82,7 @@ export class MentionsService {
             updatedAt: note.updatedAt,
             ...lineAround(note.content, mention.start, mention.end),
             offset: mention.start,
-            version: versionOf(note.content),
+            version: note.revision,
           });
         }
       }
@@ -109,10 +100,12 @@ export class MentionsService {
 
   /**
    * Wraps one mention of `noteId`'s title in the note `sourceId` in [[ ]]:
-   * the one that starts at `at.offset` and reads `at.text`, in the text that
-   * has the version `at.version`. That is what the list showed, so what was
-   * shown is what gets linked. If the note has changed since, nothing is
-   * written and the answer is 409.
+   * the one that starts at `at.offset` and reads `at.text`, in the text the
+   * note had at revision `at.version`. That is what the list showed, so what
+   * was shown is what gets linked. If the note has changed since, nothing is
+   * written and the answer is 409. The write goes through writeNoteText
+   * with that revision, like every other change to a note's text, so an
+   * edit that lands in between cannot be overwritten either.
    *
    * The text that is replaced is saved as a version first, so the change can
    * be undone from the history of that note. Its "last edited" time stays
@@ -123,13 +116,12 @@ export class MentionsService {
     userId: string,
     noteId: string,
     sourceId: string,
-    at: { offset: number; text: string; version: string },
+    at: { offset: number; text: string; version: number },
   ): Promise<void> {
     const target = await this.findNote(userId, noteId);
 
+    const changed = () => new ConflictException('That note has changed since its mention was listed');
     await this.prisma.$transaction(async (tx) => {
-      // The row is locked so that the text read here is the text that gets rewritten.
-      await tx.$queryRaw`SELECT id FROM notes WHERE id = ${sourceId}::uuid AND user_id = ${userId}::uuid FOR UPDATE`;
       const source = await tx.note.findFirst({ where: { id: sourceId, userId, deletedAt: null } });
       if (!source || source.id === target.id) {
         throw new NotFoundException('Note not found');
@@ -138,8 +130,8 @@ export class MentionsService {
       if (refused) {
         throw new ConflictException(refused);
       }
-      if (versionOf(source.content) !== at.version) {
-        throw new ConflictException('That note has changed since its mention was listed');
+      if (source.revision !== at.version) {
+        throw changed();
       }
       const linked = linkMention(source.content, target.title, at);
       if (linked === null) {
@@ -148,8 +140,11 @@ export class MentionsService {
       if (linked.length > MAX_CONTENT_LENGTH) {
         throw new BadRequestException('That note is too long to take the four characters of a link');
       }
+      // Tied to the revision that was read: a save that got in between makes this fail instead of being lost.
+      if (!(await writeNoteText(tx, { id: source.id, userId, revision: source.revision }, { content: linked }))) {
+        throw changed();
+      }
       await this.versions.snapshot(tx, source);
-      await tx.note.update({ where: { id: source.id }, data: { content: linked } });
       await this.links.sync(tx, source.id, linked);
     });
   }

@@ -17,7 +17,7 @@ const mention = (id: string, title: string) => ({
   match: 'atlas',
   after: ' at length.',
   offset: 40,
-  version: 'a'.repeat(64),
+  version: 7,
 });
 const page = (items: object[], total = items.length, number = 1, capped = false) => ({
   items,
@@ -54,7 +54,7 @@ describe('UnlinkedMentions', () => {
     // "Link" names the mention that was shown: where it is, how it reads and the text it was found in.
     expect(calls.find((call) => call.method === 'POST')).toMatchObject({
       url: '/api/notes/n1/mentions/n2/link',
-      body: { offset: 40, text: 'atlas', version: 'a'.repeat(64) },
+      body: { offset: 40, text: 'atlas', version: 7 },
     });
     for (const queryKey of [['backlinks'], ['notes'], ['links', 'n2'], ['versions', 'n2']]) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey });

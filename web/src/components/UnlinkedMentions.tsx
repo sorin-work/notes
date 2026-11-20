@@ -29,8 +29,9 @@ export function UnlinkedMentions({ noteId }: { noteId: string }) {
     // Also after a refusal: the other note has changed since it was listed, and the list has to be asked for again.
     onSettled: (_result, _error, mention) => {
       // The other note has new text. Its copy here is thrown away, not just
-      // marked old: the editor starts from the copy it finds, and one key
-      // pressed in it would save the text from before the link.
+      // marked old: the editor starts from the copy it finds. A save from the
+      // old copy would be refused for its revision, but it should not come
+      // to that.
       queryClient.removeQueries({ queryKey: ['note', mention.id] });
       // This note has a backlink more and a mention less. The other one has a new link and its old text in the history.
       for (const key of [['backlinks'], ['notes'], ['links', mention.id], ['versions', mention.id]]) {

@@ -4,7 +4,7 @@ import { LinksService } from '../links/links.service';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { VersionsService } from '../versions/versions.service';
-import { lineAround, MAX_CANDIDATES, MentionsService, versionOf } from './mentions.service';
+import { lineAround, MAX_CANDIDATES, MentionsService } from './mentions.service';
 
 const USER = 'user-1';
 const updatedAt = new Date('2026-01-10T09:00:00Z');
@@ -17,8 +17,8 @@ const target = {
   updatedAt,
 };
 
-function source(id: string, content: string) {
-  return { id, userId: USER, title: `Note ${id}`, content, deletedAt: null, updatedAt };
+function source(id: string, content: string, revision = 7) {
+  return { id, userId: USER, title: `Note ${id}`, content, deletedAt: null, updatedAt, revision };
 }
 
 function page(overrides: Partial<PaginationQuery> = {}): PaginationQuery {
@@ -41,6 +41,8 @@ describe('MentionsService', () => {
       versions as unknown as VersionsService,
     );
     prisma.note.findFirst.mockResolvedValue(target);
+    // writeNoteText is an updateMany that says whether it found the note at the revision it was given.
+    prisma.note.updateMany.mockResolvedValue({ count: 1 });
   });
 
   describe('list', () => {
@@ -66,7 +68,7 @@ describe('MentionsService', () => {
           match: 'Project Atlas',
           after: ' ships in March.',
           offset: notes[2].content.indexOf('Project Atlas'),
-          version: versionOf(notes[2].content),
+          version: 7,
         },
         {
           id: 'a',
@@ -76,7 +78,7 @@ describe('MentionsService', () => {
           match: 'project atlas',
           after: '.',
           offset: 16,
-          version: versionOf(notes[0].content),
+          version: 7,
         },
       ]);
       // The title and its key are parameters of the candidate query, and the notes are read as this user.
@@ -146,19 +148,19 @@ describe('MentionsService', () => {
 
   describe('link', () => {
     const text = 'Intro.\n\nWe talked about project atlas, and Project Atlas again.';
-    const first = { offset: text.indexOf('project atlas'), text: 'project atlas', version: versionOf(text) };
-    const second = { offset: text.indexOf('Project Atlas'), text: 'Project Atlas', version: versionOf(text) };
+    const first = { offset: text.indexOf('project atlas'), text: 'project atlas', version: 7 };
+    const second = { offset: text.indexOf('Project Atlas'), text: 'Project Atlas', version: 7 };
 
     function given(other: ReturnType<typeof source> | null, note = target) {
       prisma.note.findFirst.mockResolvedValueOnce(note).mockResolvedValueOnce(other);
     }
     const untouched = () => {
       expect(versions.snapshot).not.toHaveBeenCalled();
-      expect(prisma.note.update).not.toHaveBeenCalled();
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
       expect(links.sync).not.toHaveBeenCalled();
     };
 
-    it('wraps the mention it is given, saves a version first and leaves the edit time alone', async () => {
+    it('wraps the mention it is given, tied to the revision it read, and saves the old text as a version', async () => {
       const other = source('a', text);
       given(other);
 
@@ -166,29 +168,36 @@ describe('MentionsService', () => {
 
       const linked = 'Intro.\n\nWe talked about [[project atlas]], and Project Atlas again.';
       expect(prisma.note.findFirst).toHaveBeenLastCalledWith({ where: { id: 'a', userId: USER, deletedAt: null } });
+      // Only the text is written, so the edit time stays, and only while the note is still at that revision.
+      expect(prisma.note.updateMany).toHaveBeenCalledWith({
+        where: { id: 'a', userId: USER, revision: 7, deletedAt: null },
+        data: { content: linked },
+      });
       expect(versions.snapshot).toHaveBeenCalledWith(expect.anything(), other);
-      expect(prisma.note.update).toHaveBeenCalledWith({ where: { id: 'a' }, data: { content: linked } });
       expect(links.sync).toHaveBeenCalledWith(expect.anything(), 'a', linked);
-      // All of it inside one transaction, after the row was locked.
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(prisma.$queryRaw.mock.calls[0][0].join('?')).toContain('FOR UPDATE');
-      expect(versions.snapshot.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.note.update.mock.invocationCallOrder[0],
-      );
     });
 
     it('wraps the second mention when that is the one that was shown', async () => {
       given(source('a', text));
       await service.link(USER, 'target', 'a', second);
-      expect(prisma.note.update.mock.calls[0][0].data.content).toBe(
+      expect(prisma.note.updateMany.mock.calls[0][0].data.content).toBe(
         'Intro.\n\nWe talked about project atlas, and [[Project Atlas]] again.',
       );
     });
 
-    it('answers 409 and changes nothing when the note has been edited since', async () => {
-      given(source('a', `${text} More was added.`));
+    it('answers 409 and changes nothing when the note has another revision than the list saw', async () => {
+      given(source('a', text, 8));
       await expect(service.link(USER, 'target', 'a', first)).rejects.toThrow('has changed since');
       untouched();
+    });
+
+    it('answers 409 when a save gets in between reading the note and writing the link', async () => {
+      given(source('a', text));
+      prisma.note.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.link(USER, 'target', 'a', first)).rejects.toThrow('has changed since');
+      expect(versions.snapshot).not.toHaveBeenCalled();
+      expect(links.sync).not.toHaveBeenCalled();
     });
 
     it('answers 409 when the place does not hold that mention, even for the right version', async () => {
@@ -214,7 +223,7 @@ describe('MentionsService', () => {
       const untitled = 'A note called Untitled is mentioned.';
       given(source('a', untitled), { ...target, title: 'Untitled' });
       await expect(
-        service.link(USER, 'target', 'a', { offset: 14, text: 'Untitled', version: versionOf(untitled) }),
+        service.link(USER, 'target', 'a', { offset: 14, text: 'Untitled', version: 7 }),
       ).rejects.toBeInstanceOf(ConflictException);
       untouched();
     });
@@ -224,7 +233,7 @@ describe('MentionsService', () => {
       expect(full.length).toBe(MAX_CONTENT_LENGTH - 2);
       given(source('a', full));
       await expect(
-        service.link(USER, 'target', 'a', { offset: 0, text: 'Project Atlas', version: versionOf(full) }),
+        service.link(USER, 'target', 'a', { offset: 0, text: 'Project Atlas', version: 7 }),
       ).rejects.toBeInstanceOf(BadRequestException);
       untouched();
     });
@@ -279,13 +288,5 @@ describe('lineAround', () => {
     expect(after).toMatch(/^( more)+…$/);
     expect(before.length).toBeLessThanOrEqual(81);
     expect(after.length).toBeLessThanOrEqual(81);
-  });
-});
-
-describe('versionOf', () => {
-  it('is the same for the same text and different for any other', () => {
-    expect(versionOf('abc')).toBe(versionOf('abc'));
-    expect(versionOf('abc')).not.toBe(versionOf('abc '));
-    expect(versionOf('')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
