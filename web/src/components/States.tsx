@@ -53,3 +53,18 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
     </div>
   );
 }
+
+/** Said where something cannot be shown without a connection. */
+export function NeedsConnection({ children }: { children: ReactNode }) {
+  return <p className="muted needs-connection">{children}</p>;
+}
+
+/** The line at the top of the app while there is no connection. */
+export function OfflineBanner() {
+  return (
+    <div className="offline-banner" role="status">
+      You are offline. Notes you have opened on this device can still be read, but what you see may be out of date.
+      Search, backlinks and history need a connection.
+    </div>
+  );
+}
