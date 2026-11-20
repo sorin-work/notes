@@ -1,10 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { expectNoAxeViolations } from '../test/axe';
 import { notebook, summary, user } from '../test/fixtures';
+import { keptUsers, seedOfflineCache } from '../test/offline';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SettingsPage } from './SettingsPage';
 
@@ -30,18 +31,104 @@ describe('SettingsPage', () => {
       ...loaded,
       'POST /api/import': {
         status: 201,
-        body: { imported: 2, notebooksCreated: 1, skipped: [{ file: 'photo.jpg', reason: 'Not a Markdown file' }] },
+        body: {
+          imported: 2,
+          notebooksCreated: 1,
+          duplicates: 3,
+          attachmentsSkipped: 1,
+          skipped: [{ file: 'photo.jpg', reason: 'Not a Markdown file' }],
+        },
       },
     });
     renderSettings();
 
     const file = new File(['# Hello'], 'hello.md', { type: 'text/markdown' });
     await userEvent.upload(screen.getByLabelText('Files to import'), file);
+    expect(screen.getByRole('checkbox', { name: /Leave out notes that are here already/ })).toBeChecked();
     await userEvent.click(screen.getByRole('button', { name: 'Import' }));
 
     expect(await screen.findByText(/Imported 2 notes and created 1 notebooks/)).toBeInTheDocument();
+    expect(screen.getByText('Left out 3 notes that were here already.')).toBeInTheDocument();
+    expect(screen.getByText(/1 attachment was not imported/)).toBeInTheDocument();
     expect(screen.getByText('1 files skipped')).toBeInTheDocument();
-    expect(calls.find((call) => call.method === 'POST')?.body).toBeInstanceOf(FormData);
+    const body = calls.find((call) => call.method === 'POST')?.body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    expect(body.get('skipExisting')).toBe('true');
+  });
+
+  it('imports everything again when told not to leave out what is there', async () => {
+    const calls = mockFetch({
+      ...loaded,
+      'POST /api/import': {
+        status: 201,
+        body: { imported: 1, notebooksCreated: 0, duplicates: 0, attachmentsSkipped: 0, skipped: [] },
+      },
+    });
+    renderSettings();
+
+    await userEvent.upload(screen.getByLabelText('Files to import'), new File(['x'], 'Notes.enex'));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Leave out notes that are here already/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(await screen.findByText(/Imported 1 note/)).toBeInTheDocument();
+    expect((calls.find((call) => call.method === 'POST')?.body as FormData).get('skipExisting')).toBe('false');
+  });
+
+  it('restores a backup and says what came back, and what did not', async () => {
+    const calls = mockFetch({
+      ...loaded,
+      'POST /api/import/backup': {
+        status: 201,
+        body: { notes: 12, notebooks: 1, tags: 3, versions: 40, shareLinksNotRestored: 2 },
+      },
+    });
+    renderSettings();
+
+    const restore = screen.getByRole('button', { name: 'Restore' });
+    expect(restore).toBeDisabled();
+    await userEvent.upload(screen.getByLabelText('Backup to restore'), new File(['{}'], 'notes-backup.json'));
+    await userEvent.click(restore);
+
+    expect(
+      await screen.findByText(
+        'Restored 12 notes in 1 notebook, with 40 older versions. 2 shared links were not made again.',
+      ),
+    ).toBeInTheDocument();
+    const call = calls.find((item) => item.url.endsWith('/import/backup'));
+    expect((call?.body as File).name).toBe('notes-backup.json');
+  });
+
+  it('downloads the backup through a one-time link the browser follows itself', async () => {
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.getAttribute('href') ?? '');
+    });
+    const calls = mockFetch({
+      ...loaded,
+      'POST /api/export/backup/link': { status: 201, body: { url: '/api/export/backup/download?ticket=t1' } },
+    });
+    renderSettings();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Download a full backup' }));
+    await waitFor(() => expect(clicked).toEqual(['/api/export/backup/download?ticket=t1']));
+    // The file itself is not fetched by the page.
+    expect(calls.some((call) => call.url.includes('/export/backup/download'))).toBe(false);
+    click.mockRestore();
+  });
+
+  it('shows why a backup was not restored', async () => {
+    mockFetch({
+      ...loaded,
+      'POST /api/import/backup': {
+        status: 409,
+        body: { statusCode: 409, message: 'A backup is restored into an empty account.' },
+      },
+    });
+    renderSettings();
+
+    await userEvent.upload(screen.getByLabelText('Backup to restore'), new File(['{}'], 'b.json'));
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    expect(await screen.findByText(/restored into an empty account/)).toBeInTheDocument();
   });
 
   it('checks that the new passwords match before sending them', async () => {
@@ -154,16 +241,18 @@ describe('SettingsPage', () => {
     expect(screen.queryByLabelText('Password, to confirm the new email')).not.toBeInTheDocument();
   });
 
-  it('signs out everywhere, this browser included', async () => {
+  it('signs out everywhere, this browser included, and drops the notes kept here', async () => {
     const calls = mockFetch({
       ...loaded,
       'POST /api/auth/logout-all': { status: 204 },
     });
+    await seedOfflineCache(user);
     renderSettings();
 
     await userEvent.click(screen.getByRole('button', { name: 'Sign out everywhere' }));
 
     await waitFor(() => expect(getToken()).toBeNull());
+    await waitFor(async () => expect(await keptUsers()).toEqual([]));
     expect(calls.some((call) => call.method === 'POST' && call.url === '/api/auth/logout-all')).toBe(true);
   });
 
@@ -172,6 +261,7 @@ describe('SettingsPage', () => {
       ...loaded,
       'DELETE /api/auth/me': { status: 204 },
     });
+    await seedOfflineCache(user);
     renderSettings();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Delete account…' }));
@@ -185,6 +275,8 @@ describe('SettingsPage', () => {
 
     await waitFor(() => expect(getToken()).toBeNull());
     expect(calls.find((call) => call.method === 'DELETE')?.body).toEqual({ password: 'demo-password' });
+    // The notes this browser kept for reading offline go with the account.
+    await waitFor(async () => expect(await keptUsers()).toEqual([]));
   });
 
   it('shows a new API token once, with the name and the read-only choice sent along', async () => {

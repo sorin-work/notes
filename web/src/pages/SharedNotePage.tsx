@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ApiError } from '../api/client';
-import { getShared, getSharedNoteIn, unlockShared } from '../api/shares';
+import { getShared, getSharedAttachments, getSharedNoteIn, unlockShared } from '../api/shares';
 import type { SharedNote, SharedNotebook } from '../api/types';
 import { MarkdownPreview } from '../components/MarkdownPreview';
 import { ErrorMessage, FullPageSpinner } from '../components/States';
@@ -101,15 +101,41 @@ function SharedLink({ token, noteId }: { token: string; noteId: string | undefin
         // Not once something is shown: the 403 that asked for the password is not news after it.
         !content && shared.error && <ErrorMessage error={shared.error} />
       )}
-      {content?.kind === 'note' && <SharedNoteView note={content} indexPath={noteId ? `/s/${token}` : null} />}
+      {content?.kind === 'note' && (
+        <SharedNoteView note={content} indexPath={noteId ? `/s/${token}` : null} token={token} noteId={noteId} />
+      )}
       {content?.kind === 'notebook' && <SharedNotebookView notebook={content} token={token} />}
       <footer className="shared-footer muted">Shared read-only from Notes</footer>
     </main>
   );
 }
 
-function SharedNoteView({ note, indexPath }: { note: SharedNote; indexPath: string | null }) {
+/** How often a shared page asks for new addresses of its files, before the five minutes they work run out. */
+export const ATTACHMENT_REFRESH_MS = 4 * 60 * 1000;
+
+function SharedNoteView({
+  note,
+  indexPath,
+  token,
+  noteId,
+}: {
+  note: SharedNote;
+  indexPath: string | null;
+  token: string;
+  noteId?: string;
+}) {
   const navigate = useNavigate();
+  // The addresses that came with the note run out; images further down load late, so they are renewed.
+  const files = useQuery({
+    queryKey: ['shared-attachments', token, noteId ?? null],
+    queryFn: () => getSharedAttachments(token, noteId),
+    initialData: note.attachments ?? {},
+    staleTime: ATTACHMENT_REFRESH_MS,
+    // A note without files has nothing to renew.
+    enabled: Object.keys(note.attachments ?? {}).length > 0,
+    refetchInterval: ATTACHMENT_REFRESH_MS,
+    retry: false,
+  });
   // The API leaves [[links]] in the text only where they lead somewhere this
   // reader may go, and says where. Anything else stays plain text here too.
   const linked = useMemo(() => new Set(Object.keys(note.links)), [note.links]);
@@ -132,7 +158,12 @@ function SharedNoteView({ note, indexPath }: { note: SharedNote; indexPath: stri
           {note.tags.map((tag) => `#${tag}`).join(' ')}
         </p>
       </header>
-      <MarkdownPreview content={note.content} onWikiLink={follow} linkedTitles={linked} />
+      <MarkdownPreview
+        content={note.content}
+        onWikiLink={follow}
+        linkedTitles={linked}
+        attachmentUrls={files.data ?? note.attachments}
+      />
     </article>
   );
 }

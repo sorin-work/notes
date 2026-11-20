@@ -394,4 +394,187 @@ BACKUP_DIR="$work/no-such-folder" run_restore "$STATE/elsewhere.dump"
 [ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
 echo "ok: $case_name"
 
+# The files of attachments, beside the dumps.
+A1=00000000-0000-4000-8000-000000000001
+A2=00000000-0000-4000-8000-000000000002
+A3=00000000-0000-4000-8000-000000000003
+
+files_begin() {
+  begin "$1"
+  FILES="$work/files"
+  rm -rf "$FILES"
+  mkdir "$FILES"
+  export ATTACHMENTS_DIR="$FILES"
+}
+
+archive_of() {
+  echo "$BACKUP_DIR/${1%.dump}.files.tar"
+}
+
+files_begin "files: archived beside the dump, attachment files only, no links"
+echo one >"$FILES/$A1"
+echo two >"$FILES/$A2"
+echo "not ours" >"$FILES/README"
+echo half >"$FILES/.$A3.partial"
+ln -s /etc/passwd "$FILES/$A3"
+PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "once failed"
+dump=$(ls "$BACKUP_DIR" | grep '\.dump$')
+[ -f "$(archive_of "$dump")" ] || fail "no files archive beside $dump"
+listed=$(tar -tf "$(archive_of "$dump")" | grep -v '^\./*$' | sort | tr '\n' ' ')
+[ "$listed" = "$A1 $A2 " ] || fail "the archive holds: $listed"
+echo "ok: $case_name"
+
+files_begin "files: an empty folder still gives an archive, and pruning takes the archive with its dump"
+oldest=$(old_dump $((-4 * DAY)))
+: >"$(archive_of "$oldest")"
+old_dump $((-3 * DAY)) >/dev/null
+old_dump $((-2 * DAY)) >/dev/null
+PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "once failed"
+[ ! -e "$BACKUP_DIR/$oldest" ] || fail "the oldest dump was kept"
+[ ! -e "$(archive_of "$oldest")" ] || fail "the archive of the pruned dump was kept"
+newest=$(ls "$BACKUP_DIR" | grep '\.dump$' | sort | tail -n 1)
+tar -tf "$(archive_of "$newest")" >/dev/null || fail "the archive of an empty folder is not an archive"
+echo "ok: $case_name"
+
+# An archive the way the backup makes it, from what is in $work/source.
+make_archive() {
+  tar -cf "$1" -C "$work/source" --no-recursion . $(ls -A "$work/source")
+}
+
+files_begin "files: a restore puts the archived files in place of the ones in use, after the database"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+rm -rf "$work/source" && mkdir "$work/source"
+echo restored >"$work/source/$A1"
+make_archive "$(archive_of "$dump")"
+echo "in use" >"$FILES/$A2"
+echo "not ours" >"$FILES/README"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
+[ "$(cat "$FILES/$A1" 2>/dev/null)" = restored ] || fail "the archived file is not in place"
+[ ! -e "$FILES/$A2" ] || fail "a file from after the dump was kept"
+[ "$(cat "$FILES/README")" = "not ours" ] || fail "a file that is no attachment was touched"
+[ ! -e "$FILES/.restoring" ] && [ ! -e "$FILES/.replaced" ] || fail "staging folders were left behind"
+echo "ok: $case_name"
+
+files_begin "files: refused while the API is running, and nothing is touched"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+rm -rf "$work/source" && mkdir "$work/source"
+echo restored >"$work/source/$A1"
+make_archive "$(archive_of "$dump")"
+echo "in use" >"$FILES/$A2"
+printf 'notes-api (3)\n' >"$STATE/connected"
+run_restore "$dump"
+[ "$status" -ne 0 ] || fail "the restore went ahead while the API was running"
+[ "$(database notes)" = original ] || fail "notes holds '$(database notes)'"
+[ "$(cat "$FILES/$A2")" = "in use" ] && [ ! -e "$FILES/$A1" ] || fail "the files were touched"
+if grep -q "createdb" "$STATE/calls"; then fail "the database restore was started"; fi
+grep -q "the API is running" "$STATE/log" || fail "the message does not say why"
+echo "ok: $case_name"
+
+for bad in link name folder; do
+  files_begin "files: an archive with a $bad in it is refused, and nothing is touched"
+  dump=$(old_dump -3600)
+  echo original >"$STATE/dbs/notes"
+  rm -rf "$work/source" && mkdir "$work/source"
+  echo restored >"$work/source/$A1"
+  case $bad in
+    link) ln -s /etc/passwd "$work/source/$A3" ;;
+    name) echo x >"$work/source/evil.sh" ;;
+    folder) mkdir "$work/source/$A3" ;;
+  esac
+  make_archive "$(archive_of "$dump")"
+  echo "in use" >"$FILES/$A2"
+  run_restore "$dump"
+  [ "$status" -ne 0 ] || fail "the archive was taken"
+  [ "$(database notes)" = original ] || fail "notes holds '$(database notes)'"
+  [ "$(ls -A "$FILES")" = "$A2" ] || fail "the folder holds: $(ls -A "$FILES" | tr '\n' ' ')"
+  grep -q "holds something other than attachment files" "$STATE/log" || fail "the message does not say why"
+  echo "ok: $case_name"
+done
+
+# A tar archive with one hard link entry, named $2, to $3, written byte by
+# byte, since no tar here makes one that points out of its folder.
+field() {
+  printf '%s' "$1"
+  head -c $(($2 - ${#1})) /dev/zero
+}
+link_archive() {
+  {
+    field "$2" 100
+    field 0000644 8
+    field 0000000 8
+    field 0000000 8
+    field 00000000000 12
+    field 00000000000 12
+    printf '        '
+    printf '1'
+    field "$3" 100
+    printf 'ustar\00000'
+    head -c 247 /dev/zero
+  } >"$1"
+  sum=$(od -An -tu1 -v "$1" | awk '{ for (i = 1; i <= NF; i++) s += $i } END { print s }')
+  printf '%06o\0 ' "$sum" | dd of="$1" bs=1 seek=148 conv=notrunc 2>/dev/null
+  head -c 1024 /dev/zero >>"$1"
+}
+
+files_begin "files: an archive with a hard link to a file outside is refused, and the file outside is untouched"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+mkdir -p "$work/out"
+echo victim >"$work/out/victim"
+before=$(stat -c '%u:%g %h' "$work/out/victim")
+# The way the files folder and the outside file sit next to each other: <work>/files/.restoring/<id> -> ../../out/victim.
+link_archive "$(archive_of "$dump")" "$A1" ../../out/victim
+echo "in use" >"$FILES/$A2"
+run_restore "$dump"
+[ "$status" -ne 0 ] || fail "the archive was taken"
+[ "$(database notes)" = original ] || fail "notes holds '$(database notes)'"
+[ "$(ls -A "$FILES")" = "$A2" ] || fail "the folder holds: $(ls -A "$FILES" | tr '\n' ' ')"
+[ "$(stat -c '%u:%g %h' "$work/out/victim")" = "$before" ] || fail "the file outside changed: $(stat -c '%u:%g %h' "$work/out/victim")"
+[ "$(cat "$work/out/victim")" = victim ] || fail "the file outside was written to"
+echo "ok: $case_name"
+
+files_begin "files: a .replaced left by an earlier restore is moved aside, not removed"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+rm -rf "$work/source" && mkdir "$work/source"
+echo restored >"$work/source/$A1"
+make_archive "$(archive_of "$dump")"
+mkdir "$FILES/.replaced"
+echo "kept from before" >"$FILES/.replaced/$A3"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+kept=$(ls -d "$FILES"/.replaced-* 2>/dev/null | head -n 1)
+[ -n "$kept" ] && [ "$(cat "$kept/$A3")" = "kept from before" ] || fail "the earlier .replaced is gone"
+grep -q "was moved to" "$STATE/log" || fail "the log does not say where it went"
+echo "ok: $case_name"
+
+files_begin "files: the database does not load: the files are untouched"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+rm -rf "$work/source" && mkdir "$work/source"
+echo restored >"$work/source/$A1"
+make_archive "$(archive_of "$dump")"
+echo "in use" >"$FILES/$A2"
+touch "$STATE/restore-fails"
+run_restore "$dump"
+[ "$status" -ne 0 ] || fail "the restore reported success"
+[ "$(ls -A "$FILES")" = "$A2" ] || fail "the folder holds: $(ls -A "$FILES" | tr '\n' ' ')"
+echo "ok: $case_name"
+
+files_begin "files: a dump from before there were archives restores the database and says the files stay"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+echo "in use" >"$FILES/$A2"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
+[ "$(cat "$FILES/$A2")" = "in use" ] || fail "the files were touched"
+grep -q "files of attachments are left as they are" "$STATE/log" || fail "no warning about the files"
+echo "ok: $case_name"
+unset ATTACHMENTS_DIR
+
 echo "OK: the loop, the pruning and the restore held in every case"

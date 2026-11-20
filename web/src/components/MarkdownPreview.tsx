@@ -22,14 +22,32 @@ interface MarkdownPreviewProps {
    * ticked. Without it, boxes are read-only.
    */
   onToggleTask?: (line: number, checked: boolean) => void;
+  /**
+   * Where the note's `attachment:<id>` links and images load from: signed
+   * addresses by attachment id. An id it does not hold shows as unavailable.
+   */
+  attachmentUrls?: Record<string, string>;
 }
 
 type HastElement = NonNullable<ExtraProps['node']>;
 
 const remarkPlugins = [remarkGfm];
 
-function urlTransform(url: string): string {
-  return url.startsWith(WIKI_PROTOCOL) ? url : defaultUrlTransform(url);
+const ATTACHMENT_PROTOCOL = 'attachment:';
+
+function urlTransformFor(attachmentUrls: Record<string, string> | undefined) {
+  return (url: string): string => {
+    if (url.startsWith(WIKI_PROTOCOL)) return url;
+    // The app's own files: the signed address, which is a path on this site, or nothing.
+    if (url.startsWith(ATTACHMENT_PROTOCOL)) return attachmentUrls?.[url.slice(ATTACHMENT_PROTOCOL.length)] ?? '';
+    return defaultUrlTransform(url);
+  };
+}
+
+/** An image whose address is gone or not known shows its words, not a broken picture. */
+function Image({ node: _node, src, alt, ...props }: ComponentProps<'img'> & ExtraProps) {
+  if (!src) return <span className="attachment-missing">{alt || 'Image'} (not available)</span>;
+  return <img src={src} alt={alt ?? ''} loading="lazy" {...props} />;
 }
 
 /** What to call when a task box is clicked. Not set where the preview is read-only. */
@@ -88,6 +106,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   missingTitles,
   linkedTitles,
   onToggleTask,
+  attachmentUrls,
 }: MarkdownPreviewProps) {
   if (!content.trim()) {
     return <p className="preview-empty">Nothing to preview yet.</p>;
@@ -101,11 +120,12 @@ export const MarkdownPreview = memo(function MarkdownPreview({
       <ToggleTaskContext value={sameLines ? onToggleTask : undefined}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          urlTransform={urlTransform}
+          urlTransform={urlTransformFor(attachmentUrls)}
           components={{
             a({ href, children }) {
               const target = wikiTarget(href);
               if (target === null) {
+                if (!href) return <span className="attachment-missing">{children}</span>;
                 return (
                   <a href={href} target="_blank" rel="noreferrer noopener">
                     {children}
@@ -132,6 +152,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
             },
             li: ListItem,
             input: TaskBox,
+            img: Image,
           }}
         >
           {linkified}

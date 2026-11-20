@@ -210,6 +210,25 @@ export class NotebooksService {
   }
 
   /**
+   * The notebook at `path`, a list of names from the top down, matched the
+   * way findOrCreatePath matches them but without making anything and
+   * without the lock: null for an empty path, undefined when some level is
+   * not there.
+   */
+  async findPath(userId: string, path: string[]): Promise<string | null | undefined> {
+    let parentId: string | null = null;
+    for (const name of path) {
+      const found: { id: string } | null = await this.prisma.notebook.findFirst({
+        where: { userId, parentId, name: { equals: name, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (!found) return undefined;
+      parentId = found.id;
+    }
+    return parentId;
+  }
+
+  /**
    * The notebook at `path`, a list of names from the top down, made where it
    * is missing: what an import needs for each folder. Names match the way
    * they are kept unique, ignoring case. It runs inside the caller's
@@ -239,7 +258,7 @@ export class NotebooksService {
       if (existing) {
         parentId = existing.id;
       } else {
-        parentId = (await tx.notebook.create({ data: { userId, parentId, name }, select: { id: true } })).id;
+        parentId = (await tx.notebook.create({ data: { userId, parentId, name } })).id;
         created++;
       }
     }

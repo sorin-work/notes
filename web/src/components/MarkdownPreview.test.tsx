@@ -31,6 +31,32 @@ async function clickBox(text: string, name: string): Promise<string> {
 }
 
 describe('MarkdownPreview', () => {
+  it("loads the note's own files from their signed addresses, and says when one is not there", () => {
+    const id = '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e';
+    const gone = '00000000-0000-4000-8000-000000000001';
+    render(
+      <MarkdownPreview
+        content={`![Beach](attachment:${id}) ![Lost](attachment:${gone}) [The plan](attachment:${id})`}
+        attachmentUrls={{ [id]: `/api/attachments/${id}?expires=1&signature=s` }}
+      />,
+    );
+    expect(screen.getByRole('img', { name: 'Beach' })).toHaveAttribute(
+      'src',
+      `/api/attachments/${id}?expires=1&signature=s`,
+    );
+    expect(screen.queryByRole('img', { name: 'Lost' })).not.toBeInTheDocument();
+    expect(screen.getByText('Lost (not available)')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'The plan' })).toHaveAttribute(
+      'href',
+      `/api/attachments/${id}?expires=1&signature=s`,
+    );
+  });
+
+  it('never loads an attachment: address without a signed one, nor any other odd scheme', () => {
+    render(<MarkdownPreview content="![x](attachment:nope) ![y](javascript:alert(1))" />);
+    expect(screen.queryAllByRole('img')).toEqual([]);
+  });
+
   it('renders Markdown with GitHub extensions', () => {
     render(<MarkdownPreview content={'# Plan\n\n- [x] done\n\n| a | b |\n| - | - |\n| 1 | 2 |'} />);
     expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();

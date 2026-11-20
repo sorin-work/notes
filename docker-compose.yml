@@ -50,6 +50,12 @@ services:
       # nginx in the web service is the one proxy in front of the API. With
       # this the throttles count per client, not once for everybody.
       TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Pasted images and attached files, on the attachments volume below.
+      ATTACHMENTS_DIR: /data/attachments
+      ATTACHMENT_MAX_MB: ${ATTACHMENT_MAX_MB:-10}
+      ATTACHMENT_ACCOUNT_MB: ${ATTACHMENT_ACCOUNT_MB:-500}
+    volumes:
+      - attachments:/data/attachments
     depends_on:
       db:
         condition: service_healthy
@@ -103,12 +109,17 @@ services:
       PGDATABASE: notes
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      # The files of attachments, archived beside each dump and put back with it.
+      ATTACHMENTS_DIR: /attachments
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./scripts:/scripts:ro
       - ${BACKUP_DIR:-./backups}:/backups
+      # Written to only by a restore, which refuses to run while the API does.
+      - attachments:/attachments
 
 volumes:
   db-data:
+  attachments:

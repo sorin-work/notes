@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
@@ -7,6 +8,7 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
@@ -92,6 +94,55 @@ describe('NoteEditor', () => {
     expect(
       await screen.findByText('Anyone with the link to the shared notebook “Recipes” can read this note.'),
     ).toBeInTheDocument();
+  });
+
+  it('puts the preview on the page while printing in "Edit", and only then', async () => {
+    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ content: '# Printed heading' }) } }));
+    renderEditor(undefined, 'edit');
+    await screen.findByLabelText('Note content');
+    expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument();
+
+    fireEvent(window, new Event('beforeprint'));
+    expect(screen.getByRole('heading', { name: 'Printed heading' })).toBeInTheDocument();
+    fireEvent(window, new Event('afterprint'));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument());
+  });
+
+  it('uploads a pasted image, puts its link where the cursor is, and lists it to remove', async () => {
+    const id = '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e';
+    const added = {
+      id,
+      noteId: 'n1',
+      fileName: 'shot.png',
+      contentType: 'image/png',
+      size: 2048,
+      createdAt: '2026-01-02T10:00:00Z',
+      url: `/api/attachments/${id}?expires=1&signature=s`,
+      markdown: `![shot.png](attachment:${id})`,
+    };
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': { body: note({ content: 'Before' }) },
+        'GET /api/notes/n1/attachments': { body: [] },
+        'POST /api/notes/n1/attachments': { status: 201, body: added },
+        [`DELETE /api/attachments/${id}`]: { status: 204 },
+      }),
+    );
+    renderEditor();
+    const textarea = (await screen.findByLabelText('Note content')) as HTMLTextAreaElement;
+    textarea.setSelectionRange(6, 6);
+
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(textarea, { clipboardData: { files: [file], types: ['Files'] } });
+
+    await waitFor(() => expect(textarea).toHaveValue(`Before\n![shot.png](attachment:${id})\n`));
+    const upload = calls.find((call) => call.method === 'POST' && call.url.endsWith('/attachments'));
+    expect((upload?.body as FormData).get('file')).toBe(file);
+    // The preview shows it from its signed address.
+    expect(await screen.findByRole('img', { name: 'shot.png' })).toHaveAttribute('src', added.url);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove shot.png' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE')).toBe(true));
   });
 
   it('autosaves edits to the title and content', async () => {
@@ -716,6 +767,19 @@ describe('NoteEditor', () => {
       );
     }
 
+    it('puts the draft aside when the tab has to reload into a new version without saving it', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': { status: 500, body: { message: 'Down' } },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed before the reload.' } });
+      putUnsavedWorkAside();
+      expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed before the reload.', revision: 3 });
+    });
+
     it('keeps the draft in the tab, says so, and offers it when the note is opened again', async () => {
       let online = false;
       let saved = note();
@@ -968,6 +1032,18 @@ describe('NoteEditor', () => {
     expect(screen.getByLabelText('Note content')).toHaveAttribute('readonly');
     expect(screen.getByRole('checkbox')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('says plainly that a note never opened here cannot be shown offline', async () => {
+    const calls = mockFetch(baseRoutes());
+    onlineManager.setOnline(false);
+    try {
+      renderEditor();
+      expect(await screen.findByText(/has not been opened on this device before/)).toBeInTheDocument();
+      expect(calls).toEqual([]);
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 
   it('explains when the note does not exist', async () => {
