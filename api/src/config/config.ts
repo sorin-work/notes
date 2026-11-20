@@ -2,6 +2,15 @@ import type { LogLevel } from '@nestjs/common';
 
 export const APP_CONFIG = Symbol('APP_CONFIG');
 
+export interface MailConfig {
+  host: string;
+  port: number;
+  /** The From header, e.g. "Notes <notes@example.com>". */
+  from: string;
+  user?: string;
+  password?: string;
+}
+
 export interface AppConfig {
   port: number;
   databaseUrl: string;
@@ -12,6 +21,10 @@ export interface AppConfig {
   seedDemo: boolean;
   trashRetentionDays: number;
   authThrottleLimit: number;
+  /** Null without SMTP_HOST: no mail is sent and password reset is off. */
+  mail: MailConfig | null;
+  /** Where people reach the web app, for the links in mails. No trailing slash. */
+  appUrl: string;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -44,6 +57,37 @@ export function logLevelsFrom(value: string | undefined): LogLevel[] {
   return LEVELS.slice(0, index + 1);
 }
 
+function mailFrom(env: NodeJS.ProcessEnv): MailConfig | null {
+  const host = env.SMTP_HOST?.trim();
+  if (!host) return null;
+  const from = env.SMTP_FROM?.trim();
+  if (!from) {
+    throw new ConfigError('SMTP_FROM is required when SMTP_HOST is set');
+  }
+  return {
+    host,
+    port: toInt('SMTP_PORT', env.SMTP_PORT, 587, 1),
+    from,
+    user: env.SMTP_USER || undefined,
+    password: env.SMTP_PASSWORD || undefined,
+  };
+}
+
+/** Links in mails must not depend on what a request claims its host is. */
+function appUrlFrom(value: string | undefined): string {
+  const raw = (value ?? '').trim() || 'http://localhost:5181';
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ConfigError(`APP_URL must be a URL such as https://notes.example.com, got "${raw}"`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new ConfigError(`APP_URL must start with http:// or https://, got "${raw}"`);
+  }
+  return raw.replace(/\/+$/, '');
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) {
@@ -67,5 +111,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     seedDemo: toBool(env.SEED_DEMO, false),
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
     authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
+    mail: mailFrom(env),
+    appUrl: appUrlFrom(env.APP_URL),
   };
 }
