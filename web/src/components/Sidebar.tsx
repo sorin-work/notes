@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
+import { removeMember } from '../api/members';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
 import { createNote, listNotes, openDailyNote } from '../api/notes';
 import { listTags } from '../api/tags';
@@ -9,7 +10,7 @@ import { useAuth } from '../auth/AuthContext';
 import { todaysNote } from '../lib/days';
 import { dropStashes } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
-import { notebookTree, totalNotes, trashedWith } from '../lib/notebooks';
+import { notebookTree, ownNotebooks, totalNotes, trashedWith } from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
 import {
   cannotReachServer,
@@ -19,7 +20,9 @@ import {
   unsentAfterTrying,
 } from '../lib/outbox';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
-import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
+import { LinkIcon, PencilIcon, PeopleIcon, TrashIcon } from './Icons';
+import { Invitations } from './Invitations';
+import { MembersDialog, MembersList } from './MembersDialog';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
 import { ShareDialog } from './ShareDialog';
@@ -29,6 +32,8 @@ type NotebookAction =
   | { kind: 'create'; parentId: string | null }
   | { kind: 'edit'; notebook: Notebook }
   | { kind: 'share'; notebook: Notebook }
+  | { kind: 'members'; notebook: Notebook }
+  | { kind: 'leave'; notebook: Notebook }
   | { kind: 'delete'; notebook: Notebook };
 
 /** Why anyone with a link can read the notes of a notebook, or null when nobody can. */
@@ -65,7 +70,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
-  const tree = notebookTree(notebooks.data ?? []);
+  // Your own notebooks, and apart from them those other accounts share with you.
+  const own = ownNotebooks(notebooks.data ?? []);
+  const tree = notebookTree(own);
+  const sharedTree = notebookTree((notebooks.data ?? []).filter((notebook) => !own.includes(notebook)));
 
   // Only the note list is filtered. On the other pages nothing in here is the current place.
   const onNotes = location.pathname.startsWith('/notes');
@@ -121,6 +129,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     },
   });
 
+  const leave = useMutation({
+    mutationFn: (notebookId: string) => removeMember(notebookId, user?.id ?? ''),
+    onSuccess: (_result, notebookId) => {
+      setAction(null);
+      void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
+      if (activeNotebook === notebookId) navigate('/notes');
+    },
+  });
+
   const removeNotebook = useMutation({
     mutationFn: (id: string) => deleteNotebook(id),
     onSuccess: (_result, id) => {
@@ -170,6 +187,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="sidebar" aria-label="Main">
       <div className="sidebar-top">
+        <Invitations />
         <Link to="/notes" className="brand" onClick={onNavigate}>
           <img src="/favicon.svg" alt="" width={22} height={22} /> Notes
         </Link>
@@ -307,6 +325,69 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </ul>
         </div>
 
+        {sharedTree.length > 0 && (
+          <div className="nav-section">
+            <div className="nav-heading">
+              <span>Shared with me</span>
+            </div>
+            <ul className="notebook-tree">
+              {sharedTree.map((parent) => (
+                <li key={parent.id}>
+                  <div className="nav-row">
+                    {filterLink(
+                      `?notebook=${parent.id}`,
+                      activeNotebook === parent.id,
+                      parent.name,
+                      totalNotes(parent),
+                    )}
+                    <span
+                      className="role-mark"
+                      title={`${parent.owner?.name ?? 'Someone'} shares this with you to ${parent.access === 'edit' ? 'edit' : 'read'}`}
+                    >
+                      {parent.access === 'edit' ? 'edit' : 'read'}
+                    </span>
+                    <span className="nav-actions">
+                      <button
+                        type="button"
+                        className="icon-button small"
+                        aria-label={`Who has ${parent.name}`}
+                        title="Who has it"
+                        onClick={() => setAction({ kind: 'members', notebook: parent })}
+                      >
+                        <PeopleIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button small"
+                        aria-label={`Leave ${parent.name}`}
+                        title="Leave"
+                        onClick={() => setAction({ kind: 'leave', notebook: parent })}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  </div>
+                  {parent.children.length > 0 && (
+                    <ul>
+                      {parent.children.map((child) => (
+                        <li key={child.id} className="nav-row">
+                          {filterLink(
+                            `?notebook=${child.id}`,
+                            activeNotebook === child.id,
+                            child.name,
+                            child.noteCount,
+                            'nested',
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {tags.data && tags.data.length > 0 && (
           <div className="nav-section">
             <div className="nav-heading">
@@ -372,7 +453,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       )}
       {(action?.kind === 'create' || action?.kind === 'edit') && (
         <NotebookDialog
-          notebooks={notebooks.data ?? []}
+          notebooks={own}
           notebook={action.kind === 'edit' ? action.notebook : undefined}
           parentId={action.kind === 'create' ? action.parentId : undefined}
           onClose={() => setAction(null)}
@@ -382,6 +463,23 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         />
       )}
       {action?.kind === 'share' && <ShareDialog notebookId={action.notebook.id} onClose={() => setAction(null)} />}
+      {action?.kind === 'members' &&
+        ((action.notebook.access ?? 'owner') === 'owner' ? (
+          <MembersDialog notebookId={action.notebook.id} name={action.notebook.name} onClose={() => setAction(null)} />
+        ) : (
+          <MembersList notebook={action.notebook} onClose={() => setAction(null)} />
+        ))}
+      {action?.kind === 'leave' && user && (
+        <ConfirmDialog
+          title={`Leave “${action.notebook.name}”?`}
+          message={<p>You will no longer see its notes. To come back, its owner has to invite you again.</p>}
+          confirmLabel="Leave"
+          danger
+          busy={leave.isPending}
+          onConfirm={() => leave.mutate(action.notebook.id)}
+          onCancel={() => setAction(null)}
+        />
+      )}
       {action?.kind === 'delete' && (
         <ConfirmDialog
           title={`Delete “${action.notebook.name}”?`}
@@ -390,7 +488,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               The notebook
               {tree.some((n) => n.id === action.notebook.id && n.children.length > 0) &&
                 ' and the notebooks inside it'}{' '}
-              will be deleted. {trashedWith(notebooks.data ?? [], action.notebook.id)}
+              will be deleted. {trashedWith(own, action.notebook.id)}
             </p>
           }
           confirmLabel="Delete notebook"
@@ -411,7 +509,7 @@ function NotebookMenu({
 }: {
   notebook: Notebook;
   canNest?: boolean;
-  onAction(kind: 'create' | 'edit' | 'share' | 'delete'): void;
+  onAction(kind: 'create' | 'edit' | 'share' | 'members' | 'delete'): void;
 }) {
   return (
     <span className="nav-actions">
@@ -443,6 +541,19 @@ function NotebookMenu({
         onClick={() => onAction('share')}
       >
         <LinkIcon />
+      </button>
+      <button
+        type="button"
+        className={notebook.memberCount ? 'icon-button small toggled' : 'icon-button small'}
+        aria-label={`Share ${notebook.name} with people`}
+        title={
+          notebook.memberCount
+            ? `Shared with ${notebook.memberCount} ${notebook.memberCount === 1 ? 'person' : 'people'}`
+            : 'Share with people'
+        }
+        onClick={() => onAction('members')}
+      >
+        <PeopleIcon />
       </button>
       <button
         type="button"

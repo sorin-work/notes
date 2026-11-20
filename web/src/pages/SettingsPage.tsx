@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
 import { changePassword, deleteAccount, logoutEverywhere, updatePreferences, updateProfile } from '../api/auth';
+import { ownNotebooks } from '../lib/notebooks';
 import { dropOutbox } from '../lib/outbox';
 import { listNotebooks } from '../api/notebooks';
 import { listNotes } from '../api/notes';
@@ -320,7 +321,7 @@ function DailyNoteSection({ user }: { user: User }) {
             onChange={(event) => save.mutate({ notebookId: event.target.value || null })}
           >
             <option value="">No notebook</option>
-            <NotebookOptions notebooks={notebooks.data ?? []} />
+            <NotebookOptions notebooks={ownNotebooks(notebooks.data ?? [])} />
           </select>
         </label>
         <label className="field">

@@ -16,6 +16,11 @@ export function notebookTree(notebooks: Notebook[]): NotebookNode[] {
     }));
 }
 
+/** Your own notebooks, without those other accounts share with you. */
+export function ownNotebooks(notebooks: Notebook[]): Notebook[] {
+  return notebooks.filter((notebook) => (notebook.access ?? 'owner') === 'owner');
+}
+
 /** Notes in a notebook plus those in the notebooks inside it. */
 export function totalNotes(node: NotebookNode): number {
   return node.noteCount + node.children.reduce((sum, child) => sum + child.noteCount, 0);

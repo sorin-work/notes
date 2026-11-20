@@ -1927,3 +1927,50 @@ ul.error-box {
     word-break: break-all;
   }
 }
+
+/* Notebooks shared with people. */
+.role-mark {
+  align-self: center;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.invitations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.invitation {
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.invitation p {
+  margin: 0 0 0.5rem;
+}
+
+.member-list {
+  margin: 0.5rem 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.member-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-list li > span:first-child {
+  flex: 1;
+  min-width: 10rem;
+}
