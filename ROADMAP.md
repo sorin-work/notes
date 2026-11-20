@@ -314,7 +314,8 @@ shows up in their sidebar. Depends on item 8.
   `where: { id, userId }`. That has to become one shared access check: the
   owner, or a member of the note's notebook.
 - `NotebookMember` model with a role (read or edit). Inviting an address that
-  has no account yet needs outgoing mail.
+  has no account yet needs a mail, which `MailService` can send since the
+  password reset.
 - Tricky: tags belong to a user (`@@unique([userId, name])`) and `[[links]]`
   resolve by title among one user's notes (`LinksService.resolveKeys`). In a
   shared notebook, whose tags and whose titles? The simplest rule is that
@@ -385,5 +386,14 @@ through a `tokenVersion` on `User` that every token carries and
 request. Changing the password bumps it too and gives the browser that made
 the change a new token. Different from the design: a wrong password on these
 routes answers `403` instead of `401`, because the web app signs out on any
-`401`, and the routes are throttled like login. Still open: password reset
-by email, which needs outgoing mail, and a new email address is not verified.
+`401`, and the routes are throttled like login.
+
+Password reset by email came last, as planned. "Forgot password?" on the
+sign-in page mails a link that works once, for an hour. Only a hash of its
+token is stored, using it signs the account out everywhere, and the request
+answers the same whether or not the address has an account. Mail goes out
+through nodemailer over plain SMTP (`SMTP_HOST` and friends), with mailpit in
+`docker-compose.yml` to catch it during development. Without SMTP settings
+the reset is off and the link is hidden. Still open: a new email address is
+not verified, the mail is plain text in English only, and nothing but the API
+log tells me when a mail could not be sent.
