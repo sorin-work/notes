@@ -8,7 +8,7 @@ export interface ListFilters {
   /** A notebook id, or NO_NOTEBOOK. */
   notebook: string | null;
   tag: string | null;
-  view: 'pinned' | 'favorites' | null;
+  view: 'pinned' | 'favorites' | 'orphans' | null;
 }
 
 export function readFilters(params: URLSearchParams): ListFilters {
@@ -17,7 +17,7 @@ export function readFilters(params: URLSearchParams): ListFilters {
     // "?view=unfiled" is the older address of "?notebook=none" and still works.
     notebook: params.get('notebook') || (view === 'unfiled' ? NO_NOTEBOOK : null),
     tag: params.get('tag') || null,
-    view: view === 'pinned' || view === 'favorites' ? view : null,
+    view: view === 'pinned' || view === 'favorites' || view === 'orphans' ? view : null,
   };
 }
 

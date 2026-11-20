@@ -9,6 +9,11 @@ describe('readFilters', () => {
     expect(read('')).toEqual({ notebook: null, tag: null, view: null });
   });
 
+  it('knows the view of the notes without links', () => {
+    expect(read('view=orphans&notebook=w')).toEqual({ notebook: 'w', tag: null, view: 'orphans' });
+    expect(newNoteFor(read('view=orphans'))).toEqual({ notebookId: null });
+  });
+
   it('still understands the old address of the notes without a notebook', () => {
     expect(read('view=unfiled&tag=atlas')).toEqual({ notebook: 'none', tag: 'atlas', view: null });
   });

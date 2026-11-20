@@ -113,6 +113,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           {filterLink('?view=pinned', view === 'pinned', 'Pinned')}
           {filterLink('?view=favorites', view === 'favorites', 'Favourites')}
           {filterLink(`?notebook=${NO_NOTEBOOK}`, activeNotebook === NO_NOTEBOOK, 'Not in a notebook')}
+          {filterLink('?view=orphans', view === 'orphans', 'Orphans')}
         </div>
 
         <div className="nav-section">

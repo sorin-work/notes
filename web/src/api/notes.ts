@@ -1,5 +1,5 @@
 import { api, download, json, withQuery } from './client';
-import type { Backlink, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
+import type { Backlink, MentionPage, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
 
 export type NoteSort = 'updated' | 'created' | 'title';
 
@@ -8,6 +8,8 @@ export interface NoteFilters {
   tag?: string;
   pinned?: boolean;
   favorite?: boolean;
+  /** Only notes with no links in or out. */
+  orphans?: boolean;
   sort?: NoteSort;
   page?: number;
   pageSize?: number;
@@ -26,6 +28,14 @@ export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DE
 export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks`);
 
 export const outgoingLinks = (id: string) => api<OutgoingLink[]>(`/notes/${id}/links`);
+
+/** Notes that mention this note's title without linking to it. */
+export const mentions = (id: string, page: number, pageSize: number) =>
+  api<MentionPage>(withQuery(`/notes/${id}/mentions`, { page, pageSize }));
+
+/** Wraps the first such mention in the note `sourceId` in [[ ]]. */
+export const linkMention = (id: string, sourceId: string) =>
+  api<void>(`/notes/${id}/mentions/${sourceId}/link`, { method: 'POST' });
 
 export const noteTitles = (q: string, limit = 8) =>
   api<{ id: string; title: string }[]>(withQuery('/notes/titles', { q, limit }));

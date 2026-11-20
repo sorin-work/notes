@@ -36,6 +36,9 @@ export function NotesPage() {
   } else if (view === 'favorites') {
     filters.favorite = true;
     names.push('Favourites');
+  } else if (view === 'orphans') {
+    filters.orphans = true;
+    names.push('Orphans');
   }
   if (notebook) {
     filters.notebookId = notebook;
