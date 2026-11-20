@@ -19,6 +19,7 @@ describe('loadConfig', () => {
       mail: null,
       appUrl: 'http://localhost:5181',
       trustProxy: 0,
+      apiDocs: true,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
   });
@@ -88,6 +89,12 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'a@b.c' })).toThrow(
       'APP_URL is required when SMTP_HOST is set',
     );
+  });
+
+  it('serves the API document unless API_DOCS says no', () => {
+    expect(loadConfig({ ...base, API_DOCS: 'true' }).apiDocs).toBe(true);
+    expect(loadConfig({ ...base, API_DOCS: 'false' }).apiDocs).toBe(false);
+    expect(loadConfig({ ...base, API_DOCS: '0' }).apiDocs).toBe(false);
   });
 
   it('counts no proxy as trusted unless TRUST_PROXY gives a number of hops', () => {

@@ -33,6 +33,8 @@ export interface AppConfig {
   mail: MailConfig | null;
   /** Where people reach the web app, for the links in mails. No trailing slash. */
   appUrl: string;
+  /** Whether /api/docs and /api/docs-json are served. On unless API_DOCS says no. */
+  apiDocs: boolean;
   /**
    * How many reverse proxies stand between the clients and the API. With 0
    * the address of the connection counts as the client, which behind a proxy
@@ -143,6 +145,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     apiTokenThrottleLimit: toInt('API_TOKEN_THROTTLE_LIMIT', env.API_TOKEN_THROTTLE_LIMIT, 120, 1),
     mail,
     appUrl: appUrlFrom(env.APP_URL, mail !== null),
+    apiDocs: !saysNo(env.API_DOCS),
     trustProxy: toInt('TRUST_PROXY', env.TRUST_PROXY, 0, 0),
   };
 }

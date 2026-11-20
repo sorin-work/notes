@@ -1,6 +1,7 @@
 import { INestApplication, Type } from '@nestjs/common';
 import { DiscoveryService, Reflector } from '@nestjs/core';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
+import type { NextFunction, Request, Response } from 'express';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALLOW_API_TOKEN } from './common/allow-api-token.decorator';
@@ -119,6 +120,32 @@ function describeCredentials(
   }
 }
 
+/** What the page at /api/docs loads, and with the page itself all that is served under that path. */
+const PAGE_FILES = new Set([
+  '/swagger-ui.css',
+  '/swagger-ui-bundle.js',
+  '/swagger-ui-standalone-preset.js',
+  '/swagger-ui-init.js',
+  '/favicon-16x16.png',
+  '/favicon-32x32.png',
+]);
+
 export function setupDocs(app: INestApplication): void {
-  SwaggerModule.setup(DOCS_PATH, app, buildApiDocument(app), { customSiteTitle: 'Notes API' });
+  // SwaggerModule hands out the whole swagger-ui-dist folder under the docs
+  // path, twice. In it is the stock index.html, reachable as
+  // /api/docs/docs/ and /api/docs/index.html, whose script loads a sample
+  // document from petstore.swagger.io. Nothing of that is wanted: only the
+  // page made here and the files it asks for get through.
+  app.use(`/${DOCS_PATH}`, (request: Request, response: Response, next: NextFunction) => {
+    if (request.path === '/' || PAGE_FILES.has(request.path)) {
+      next();
+      return;
+    }
+    response.status(404).json({ statusCode: 404, message: 'Not found', error: 'Not Found' });
+  });
+  SwaggerModule.setup(DOCS_PATH, app, buildApiDocument(app), {
+    customSiteTitle: 'Notes API',
+    // The page shows the document it was built with. It asks no validator and no other host about it.
+    swaggerOptions: { validatorUrl: null },
+  });
 }

@@ -14,7 +14,9 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('json', { limit: '5mb' });
   app.disable('x-powered-by');
   setupApp(app, { corsOrigins: config.corsOrigins, trustProxy: config.trustProxy });
-  setupDocs(app);
+  if (config.apiDocs) {
+    setupDocs(app);
+  }
   await app.listen(config.port);
   Logger.log(`API listening on :${config.port}`, 'Bootstrap');
 }
