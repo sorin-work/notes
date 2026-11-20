@@ -1457,6 +1457,18 @@ describe('sharing a notebook', () => {
     expect(shared.body.content.match(/Private plan/g)).toHaveLength(1);
   });
 
+  it('looks up titles among the shared notes, so a newer private note of the same title changes nothing', async () => {
+    const { server, auth, soup, rye, link, token } = await kitchen();
+    const before = await request(server).get(`${link}/${rye}`).expect(200);
+
+    // In the app [[soup]] now leads to this one, the newest. Readers must not see a difference.
+    await request(server).post('/api/notes').set(auth).send({ title: 'Soup', content: 'Private.' }).expect(201);
+
+    const after = await request(server).get(`${link}/${rye}`).expect(200);
+    expect(after.body).toEqual(before.body);
+    expect(after.body.links).toEqual({ soup: `/s/${token}/${soup}` });
+  });
+
   it('stops serving a note the moment it is moved out or put in the trash', async () => {
     const { server, auth, soup, rye, link } = await kitchen();
     const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
@@ -1554,11 +1566,52 @@ describe('links between shared notes', () => {
       links: { starter: `/s/${other.body.token as string}` },
     });
 
+    // A newer private note of the same title does not take the link's place.
+    await request(server).post('/api/notes').set(auth).send({ title: 'Starter', content: 'Private.' }).expect(201);
+    expect((await request(server).get(link).expect(200)).body).toEqual(both.body);
+
+    // Behind a password, the other note is no place to follow to: neither its token nor its title get out.
+    const starterShare = `/api/notes/${starter.body.id}/share`;
+    await request(server).patch(starterShare).set(auth).send({ password: 'open sesame' }).expect(200);
+    const locked = await request(server).get(link).expect(200);
+    expect(locked.body).toMatchObject({ content: 'Feed the starter culture first.', links: {} });
+    expect(JSON.stringify(locked.body)).not.toContain('Starter');
+    expect(JSON.stringify(locked.body)).not.toContain(other.body.token as string);
+    await request(server).patch(starterShare).set(auth).send({ password: null }).expect(200);
+
     await prisma.shareLink.update({
       where: { noteId: starter.body.id },
       data: { expiresAt: new Date(Date.now() - 1000) },
     });
-    expect((await request(server).get(link).expect(200)).body).toMatchObject({ links: {} });
+    expect((await request(server).get(link).expect(200)).body).toMatchObject({
+      content: 'Feed the starter culture first.',
+      links: {},
+    });
+  });
+
+  it('leads from a single shared note to a note that only a shared notebook covers: it does not', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const notebook = await request(server).post('/api/notebooks').set(auth).send({ name: 'Kitchen' }).expect(201);
+    await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Starter', notebookId: notebook.body.id })
+      .expect(201);
+    await request(server)
+      .post(`/api/notebooks/${notebook.body.id as string}/share`)
+      .set(auth)
+      .expect(200);
+    const bread = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Bread', content: 'See [[Starter]].' });
+    const shared = await request(server).post(`/api/notes/${bread.body.id}/share`).set(auth).expect(200);
+
+    const read = await request(server)
+      .get(`/api/public/notes/${shared.body.token as string}`)
+      .expect(200);
+    expect(read.body).toMatchObject({ content: 'See Starter.', links: {} });
   });
 });
 

@@ -349,47 +349,66 @@ describe('SharesService', () => {
 
       beforeEach(() => {
         prisma.note.findFirst.mockResolvedValue(linking);
-        links.resolveKeys.mockResolvedValue(
-          new Map([
-            ['starter', 'n-starter'],
-            ['flour', 'n-flour'],
-            ['secret plan', 'n-secret'],
-          ]),
-        );
       });
 
-      it('keeps a link only where the target has a live link of its own, and hides every other title behind its text', async () => {
+      it('follows a link only to a note whose own link is open to anyone, and hides every other title behind its text', async () => {
         prisma.shareLink.findMany.mockResolvedValue([
-          { noteId: 'n-starter', token: 'tok-starter', expiresAt: null },
-          { noteId: 'n-flour', token: 'tok-flour', expiresAt: new Date(now.getTime() - 1) },
+          { noteId: 'n-starter', token: 'tok-starter' },
+          { noteId: 'n-other', token: 'tok-other' },
         ]);
+        links.resolveKeys.mockResolvedValue(new Map([['starter', 'n-starter']]));
 
         const shared = await service.view('tok', {}, now);
 
-        expect(links.resolveKeys).toHaveBeenCalledWith(OWNER, ['starter', 'flour', 'secret plan', 'nothing here']);
+        // Only links without a password that have not run out, of the owner's notes outside the trash.
+        expect(prisma.shareLink.findMany.mock.calls[0][0].where).toEqual({
+          passwordHash: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          note: { userId: OWNER, deletedAt: null },
+        });
+        // Titles are looked up among those notes only, not among all of the owner's.
+        expect(links.resolveKeys).toHaveBeenCalledTimes(1);
+        expect(links.resolveKeys).toHaveBeenCalledWith(OWNER, ['starter', 'flour', 'secret plan', 'nothing here'], {
+          noteIds: ['n-starter', 'n-other'],
+        });
         expect(shared).toMatchObject({
           content: 'See [[Starter]], the flour note, a plan and Nothing here.',
           links: { starter: '/s/tok-starter' },
         });
-        // Neither the private note nor the one that does not exist is told apart, or named beyond what is written.
         expect(JSON.stringify(shared)).not.toContain('Secret plan');
-        expect(JSON.stringify(shared)).not.toContain('n-secret');
       });
 
-      it('leads to notes of the same shared notebook inside that notebook', async () => {
+      it('asks nothing more when the owner has no open link at all', async () => {
+        prisma.shareLink.findMany.mockResolvedValue([]);
+        const shared = await service.view('tok', {}, now);
+        expect(links.resolveKeys).not.toHaveBeenCalled();
+        expect(shared).toMatchObject({ links: {}, content: 'See Starter, the flour note, a plan and Nothing here.' });
+      });
+
+      it('looks inside the shared notebook first, and outside it only for what is left', async () => {
         prisma.shareLink.findUnique.mockResolvedValue(notebookLink);
-        prisma.note.findMany.mockResolvedValue([{ id: 'n-starter' }, { id: 'n-flour' }]);
-        prisma.shareLink.findMany.mockResolvedValue([{ noteId: 'n-starter', token: 'tok-starter', expiresAt: null }]);
+        links.resolveKeys
+          .mockResolvedValueOnce(
+            new Map([
+              ['starter', 'n-starter'],
+              ['flour', 'n-flour'],
+            ]),
+          )
+          .mockResolvedValueOnce(new Map([['nothing here', 'n-open']]));
+        prisma.shareLink.findMany.mockResolvedValue([{ noteId: 'n-open', token: 'tok-open' }]);
 
         const shared = await service.viewNote('tok', 'n1', {}, now);
 
-        expect(shared.links).toEqual({ starter: '/s/tok/n-starter', flour: '/s/tok/n-flour' });
-        expect(shared.content).toBe('See [[Starter]], [[Flour|the flour note]], a plan and Nothing here.');
-        expect(prisma.note.findMany.mock.calls[0][0].where).toEqual({
-          id: { in: ['n-starter', 'n-flour', 'n-secret'] },
-          deletedAt: null,
-          notebookId: { in: ['nb1', 'nb2'] },
+        expect(links.resolveKeys.mock.calls).toEqual([
+          [OWNER, ['starter', 'flour', 'secret plan', 'nothing here'], { notebookIds: ['nb1', 'nb2'] }],
+          [OWNER, ['secret plan', 'nothing here'], { noteIds: ['n-open'] }],
+        ]);
+        expect(shared.links).toEqual({
+          starter: '/s/tok/n-starter',
+          flour: '/s/tok/n-flour',
+          'nothing here': '/s/tok-open',
         });
+        expect(shared.content).toBe('See [[Starter]], [[Flour|the flour note]], a plan and [[Nothing here]].');
       });
     });
 

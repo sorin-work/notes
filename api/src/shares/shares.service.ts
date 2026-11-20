@@ -276,9 +276,18 @@ export class SharesService {
 
   /**
    * Which of a note's [[links]] a reader of this link may follow, and where
-   * to: to a note in the same shared notebook, or to a note that has a live
-   * link of its own. Nothing is said about any other target, so a link to a
-   * private note and a link to a note that does not exist look the same.
+   * to. A title is looked up among what the reader may open, never among
+   * all the owner's notes, so a private note can neither take a link's place
+   * nor show that it exists:
+   *
+   * 1. The notes of the same shared notebook, newest first when several
+   *    share the title. The reader stays inside the notebook.
+   * 2. Otherwise the notes whose own link is open to anyone: not run out and
+   *    without a password. A link to a note behind a password would hand out
+   *    its title and its token, enough to use up its password allowance.
+   *
+   * Every other link becomes the words the author wrote, so a link to a
+   * private note, a protected one and one that does not exist look the same.
    */
   private async readableLinks(
     open: OpenShare,
@@ -287,34 +296,28 @@ export class SharesService {
     now: Date,
   ): Promise<Map<string, string>> {
     const keys = [...new Set(extractWikiLinks(content).map((link) => normalizeTitle(link.title)))];
-    const targets = await this.links.resolveKeys(open.ownerId, keys);
-    const ids = [...new Set(targets.values())];
     const paths = new Map<string, string>();
-    if (ids.length === 0) return paths;
+    if (keys.length === 0) return paths;
 
-    const [inNotebook, withOwnLink] = await Promise.all([
-      open.notebookIds
-        ? this.prisma.note.findMany({
-            where: { id: { in: ids }, deletedAt: null, notebookId: { in: open.notebookIds } },
-            select: { id: true },
-          })
-        : [],
-      this.prisma.shareLink.findMany({
-        where: { noteId: { in: ids } },
-        select: { noteId: true, token: true, expiresAt: true },
-      }),
-    ]);
-    const pathById = new Map<string, string>();
-    for (const link of withOwnLink) {
-      if (link.noteId && !isExpired(link, now)) pathById.set(link.noteId, `/s/${link.token}`);
+    if (open.notebookIds) {
+      const inNotebook = await this.links.resolveKeys(open.ownerId, keys, { notebookIds: open.notebookIds });
+      for (const [key, id] of inNotebook) paths.set(key, `/s/${token}/${id}`);
     }
-    // Staying inside the notebook wins over a note's own link: the reader keeps their place.
-    for (const note of inNotebook) pathById.set(note.id, `/s/${token}/${note.id}`);
+    const rest = keys.filter((key) => !paths.has(key));
+    if (rest.length === 0) return paths;
 
-    for (const [key, id] of targets) {
-      const path = pathById.get(id);
-      if (path) paths.set(key, path);
-    }
+    const openLinks = await this.prisma.shareLink.findMany({
+      where: {
+        passwordHash: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        note: { userId: open.ownerId, deletedAt: null },
+      },
+      select: { noteId: true, token: true },
+    });
+    const tokenOf = new Map(openLinks.flatMap((link) => (link.noteId ? [[link.noteId, link.token] as const] : [])));
+    if (tokenOf.size === 0) return paths;
+    const withOwnLink = await this.links.resolveKeys(open.ownerId, rest, { noteIds: [...tokenOf.keys()] });
+    for (const [key, id] of withOwnLink) paths.set(key, `/s/${tokenOf.get(id)}`);
     return paths;
   }
 
