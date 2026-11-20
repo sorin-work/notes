@@ -825,9 +825,10 @@ describe('links and search', () => {
       .expect(201);
 
     const links = await request(server).get(`/api/notes/${source.body.id}/links`).set(auth).expect(200);
+    // In the order of their title keys.
     expect(links.body).toEqual([
-      { title: 'project atlas', noteId: target.body.id },
       { title: 'Missing note', noteId: null },
+      { title: 'project atlas', noteId: target.body.id },
     ]);
 
     const backlinks = await request(server).get(`/api/notes/${target.body.id}/backlinks`).set(auth).expect(200);
@@ -1016,8 +1017,8 @@ describe('renaming a note', () => {
     );
     const links = await request(server).get(`/api/notes/${ideas.id}/links`).set(auth).expect(200);
     expect(links.body).toEqual([
-      { title: 'Project Atlas', noteId: target.id },
       { title: 'Other', noteId: null },
+      { title: 'Project Atlas', noteId: target.id },
     ]);
 
     // Left alone: plain text, the trash, and other people's notes.
