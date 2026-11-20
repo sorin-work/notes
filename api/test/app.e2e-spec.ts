@@ -267,6 +267,98 @@ describe('links and search', () => {
   });
 });
 
+describe('orphans and unlinked mentions', () => {
+  it('lists the notes with no links in or out', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body.id as string;
+
+    const linker = await post({ title: 'Hub', content: 'See [[ atlas  PLAN ]] and [[Nowhere]].' });
+    const linked = await post({ title: 'Atlas plan', content: 'No links here.' });
+    const alone = await post({ title: 'Alone', content: 'Mentions Hub in plain words only.', tags: ['solo'] });
+    const trashed = await post({ title: 'Gone', content: 'See [[Stray]].' });
+    const stray = await post({ title: 'Stray', content: 'Only linked from the trash.' });
+    await request(server).delete(`/api/notes/${trashed}`).set(auth).expect(204);
+
+    const orphans = async (query = '') => {
+      const response = await request(server).get(`/api/notes?orphans=true&sort=title${query}`).set(auth).expect(200);
+      return response.body.items.map((note: { id: string }) => note.id) as string[];
+    };
+    // "Hub" links out, "Atlas plan" is linked to, and a link from the trash does not count.
+    expect(await orphans()).toEqual([alone, stray]);
+    expect(await orphans('&tag=solo')).toEqual([alone]);
+    const all = await request(server).get('/api/notes?orphans=false').set(auth).expect(200);
+    expect(all.body.total).toBe(4);
+    expect([linker, linked]).toHaveLength(2);
+  });
+
+  it('finds unlinked mentions and turns one into a link that can be undone', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object, headers = auth) =>
+      (await request(server).post('/api/notes').set(headers).send(body).expect(201)).body.id as string;
+    const mentions = async (id: string, query = '') => {
+      const response = await request(server).get(`/api/notes/${id}/mentions${query}`).set(auth).expect(200);
+      return response.body as { items: { id: string; context: string }[]; total: number; capped: boolean };
+    };
+
+    const atlas = await post({ title: 'Project Atlas', content: 'The plan.' });
+    const plain = await post({
+      title: 'Minutes',
+      content: '# Minutes\n\nWe agreed that project atlas ships in March.\n\nProject Atlas needs a budget.',
+    });
+    await post({ title: 'Linked', content: 'Already links to [[Project Atlas]], and names Project Atlas again.' });
+    await post({ title: 'Code', content: 'Only in code: `Project Atlas`\n\n```\nProject Atlas\n```' });
+    await post({ title: 'Stems', content: 'Projects and atlases, but never the two words together.' });
+    await post({ title: 'Project Atlas notes', content: 'The title has the words, the text does not.' });
+    const trashed = await post({ title: 'Old', content: 'Project Atlas, from the trash.' });
+    await request(server).delete(`/api/notes/${trashed}`).set(auth).expect(204);
+    await post({ title: 'Theirs', content: 'Project Atlas in another account.' }, other.auth);
+
+    const found = await mentions(atlas);
+    expect(found).toMatchObject({ total: 1, capped: false });
+    expect(found.items).toEqual([
+      expect.objectContaining({ id: plain, title: 'Minutes', context: 'We agreed that project atlas ships in March.' }),
+    ]);
+    expect((await mentions(atlas, '?page=2&pageSize=1')).items).toEqual([]);
+
+    // Short titles, notes of other accounts and unknown notes get nothing.
+    const short = await post({ title: 'We', content: 'x' });
+    expect((await mentions(short)).total).toBe(0);
+    await request(server).get(`/api/notes/${atlas}/mentions`).set(other.auth).expect(404);
+    await request(server).post(`/api/notes/${atlas}/mentions/${plain}/link`).set(other.auth).expect(404);
+
+    const before = await request(server).get(`/api/notes/${plain}`).set(auth).expect(200);
+    await request(server).post(`/api/notes/${atlas}/mentions/${plain}/link`).set(auth).expect(204);
+    const after = await request(server).get(`/api/notes/${plain}`).set(auth).expect(200);
+    expect(after.body.content).toBe(
+      '# Minutes\n\nWe agreed that [[project atlas]] ships in March.\n\nProject Atlas needs a budget.',
+    );
+    // The app made this change, so the note keeps its place in "last edited".
+    expect(after.body.updatedAt).toBe(before.body.updatedAt);
+
+    // It is a backlink now and no longer a mention, and the old text is in the history.
+    const backlinks = await request(server).get(`/api/notes/${atlas}/backlinks`).set(auth).expect(200);
+    expect(backlinks.body.map((link: { id: string }) => link.id)).toContain(plain);
+    expect((await mentions(atlas)).total).toBe(0);
+    const versions = await request(server).get(`/api/notes/${plain}/versions`).set(auth).expect(200);
+    expect(versions.body).toHaveLength(1);
+    const version = await request(server).get(`/api/notes/${plain}/versions/${versions.body[0].id}`).set(auth);
+    expect(version.body.content).toBe(before.body.content);
+
+    // Asked again, it links the next mention. When none is left it says so and changes nothing.
+    await request(server).post(`/api/notes/${atlas}/mentions/${plain}/link`).set(auth).expect(204);
+    const twice = await request(server).get(`/api/notes/${plain}`).set(auth).expect(200);
+    expect(twice.body.content).toContain('[[Project Atlas]] needs a budget.');
+    await request(server).post(`/api/notes/${atlas}/mentions/${plain}/link`).set(auth).expect(409);
+    // The search index follows the new text.
+    const search = await request(server).get('/api/search').query({ q: '"project atlas ships"' }).set(auth);
+    expect(search.body.items.map((hit: { id: string }) => hit.id)).toEqual([plain]);
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
