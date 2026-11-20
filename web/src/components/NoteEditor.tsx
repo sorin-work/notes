@@ -31,6 +31,18 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { notify } from '../lib/notices';
+import {
+  cannotReachServer,
+  createOffline,
+  offlineWritingAvailable,
+  onSent,
+  onSentElsewhere,
+  openEntryFor,
+  QueuedElsewhere,
+  queueText,
+  resolveEntry,
+  useOutbox,
+} from '../lib/outbox';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { fromTemplate } from '../lib/templates';
@@ -83,6 +95,21 @@ export function NoteEditor({ noteId }: { noteId: string }) {
   return <LoadedEditor note={note.data} />;
 }
 
+/**
+ * One id per waiting entry and version of it: the note "keep both" or leaving
+ * makes from it, so asking again, or retrying, never queues a second copy.
+ */
+const keptIds = new Map<string, string>();
+function keepBothId(entry: { seq?: number; version: number; noteId: string }, whose: 'mine' | 'theirs'): string {
+  const key = `${whose}:${entry.noteId}:${entry.seq}:${entry.version}`;
+  let id = keptIds.get(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    keptIds.set(key, id);
+  }
+  return id;
+}
+
 function LoadedEditor({ note }: { note: Note }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -91,8 +118,10 @@ function LoadedEditor({ note }: { note: Note }) {
   const titleRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
-  const [title, setTitle] = useState(note.title);
-  const [content, setContent] = useState(note.content);
+  // Text kept on this device that the server has not seen yet is newer than the note it came with.
+  const [queuedAtOpen] = useState(() => openEntryFor(note.id));
+  const [title, setTitle] = useState(queuedAtOpen?.title ?? note.title);
+  const [content, setContent] = useState(queuedAtOpen?.content ?? note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
   // In "Edit" there is no preview on the page, and printing is about the preview. One is put
@@ -122,7 +151,7 @@ function LoadedEditor({ note }: { note: Note }) {
   // The revision the text in this editor is based on. `note.revision` will
   // not do: the cached note is refreshed and changed by other things, while
   // the text here only moves on with a save, a restore or a settled conflict.
-  const revision = useRef(note.revision);
+  const revision = useRef(queuedAtOpen?.baseRevision ?? note.revision);
   // Set by "keep mine, put theirs in the history" for the save that follows.
   const keepTheirs = useRef(false);
 
@@ -142,10 +171,14 @@ function LoadedEditor({ note }: { note: Note }) {
   const offeredStash = useRef(stashed !== null);
   // What this tab sent in saves that were never answered. One of them may have been written all the same.
   const unanswered = useRef<Draft[]>([]);
+  // The text this editor's changes are made on: what it opened with, or last
+  // saved, queued or took over. A change is only queued on top of that.
+  const parent = useRef<Draft>({ title: title, content: content });
 
   const adopt = useCallback(
     (saved: Note) => {
       revision.current = saved.revision;
+      parent.current = { title: saved.title, content: saved.content };
       if (ownerId && stashInEditor.current) {
         dropStash(ownerId, note.id);
         stashInEditor.current = false;
@@ -167,12 +200,29 @@ function LoadedEditor({ note }: { note: Note }) {
     async (draft: Draft) => {
       const isText = (server: Note, sent: Draft) =>
         server.title === savedTitle(sent.title) && server.content === sent.content;
+      // While this note has text waiting on the device, newer text joins it
+      // there, so that the changes to the note reach the server in order.
+      if (ownerId && openEntryFor(note.id)) {
+        // Thrown as a conflict when another tab queued text this editor never saw.
+        await queueText(ownerId, note.id, draft, revision.current, [], parent.current);
+        parent.current = draft;
+        return;
+      }
       for (;;) {
         const changes = { ...draft, revision: revision.current, keepVersion: keepTheirs.current || undefined };
         try {
           adopt(await updateNote(note.id, changes));
           break;
         } catch (error) {
+          if (ownerId && cannotReachServer(error) && offlineWritingAvailable()) {
+            // Kept on the device and sent when the server can be reached. The
+            // text may have arrived all the same; the outbox will recognise it.
+            await queueText(ownerId, note.id, draft, revision.current, [...unanswered.current, draft], parent.current);
+            parent.current = draft;
+            unanswered.current = [];
+            keepTheirs.current = false;
+            return;
+          }
           const theirs = staleNote(error);
           if (theirs && isText(theirs, draft)) {
             // The server already holds exactly this text. There is nothing to decide.
@@ -196,7 +246,7 @@ function LoadedEditor({ note }: { note: Note }) {
       unanswered.current = [];
       keepTheirs.current = false;
     },
-    [note.id, adopt],
+    [note.id, adopt, ownerId],
   );
 
   // Leaving the note with a conflict still open must not drop anything, and
@@ -205,6 +255,17 @@ function LoadedEditor({ note }: { note: Note }) {
   // Nobody watched it happen, so a notice says what was done.
   const saveOverConflict = useCallback(
     async (draft: Draft, conflict: unknown) => {
+      if (conflict instanceof QueuedElsewhere && ownerId) {
+        // Nobody left to ask. The other tab's waiting text is not touched at
+        // all; this tab's text becomes a note of its own, and only once that
+        // create is safely queued does the draft count as saved.
+        const title = `${savedTitle(draft.title)} (kept when leaving)`;
+        await createOffline(ownerId, { title, content: draft.content }, keepBothId(conflict.queued, 'mine'));
+        notify(
+          `“${savedTitle(draft.title)}” had changes waiting from another tab when you left it. The note keeps that tab's text, and yours is in a new note, “${title}”.`,
+        );
+        return;
+      }
       let theirs = staleNote(conflict);
       for (let attempt = 0; ; attempt++) {
         try {
@@ -219,7 +280,7 @@ function LoadedEditor({ note }: { note: Note }) {
         `“${savedTitle(draft.title)}” had been changed somewhere else when you left it. Your text was saved, and the other version was moved to the history of the note.`,
       );
     },
-    [note.id, adopt],
+    [note.id, adopt, ownerId],
   );
 
   // A draft that is still unsaved when the editor closes is put aside in this
@@ -255,13 +316,50 @@ function LoadedEditor({ note }: { note: Note }) {
     saveDraft,
     undefined,
     {
-      isConflict: (error) => staleNote(error) !== null,
+      isConflict: (error) => staleNote(error) !== null || error instanceof QueuedElsewhere,
       onConflict: () => setDialog('conflict'),
       saveOver: saveOverConflict,
     },
     farewell,
   );
-  const theirs = staleNote(autosave.conflict);
+  // Another tab of this browser queued text of this note that this editor never saw.
+  const elsewhere = autosave.conflict instanceof QueuedElsewhere ? autosave.conflict.queued : null;
+  const theirs =
+    staleNote(autosave.conflict) ??
+    (elsewhere ? ({ ...note, title: savedTitle(elsewhere.title), content: elsewhere.content } as Note) : null);
+
+  // Another tab sent a change of this note: what is on screen here is older.
+  const [savedElsewhere, setSavedElsewhere] = useState(false);
+  useEffect(() => onSentElsewhere((noteId) => noteId === note.id && setSavedElsewhere(true)), [note.id]);
+
+  // What this note has waiting on the device. When the outbox sends it, the
+  // text here is on the server, at the revision the answer names.
+  const queued = useOutbox().find((entry) => entry.noteId === note.id) ?? null;
+  useEffect(
+    () =>
+      onSent((saved) => {
+        if (saved.id !== note.id) return;
+        revision.current = saved.revision;
+        unanswered.current = [];
+      }),
+    [note.id],
+  );
+  // The outbox met a newer note on the server. It keeps the text and asks, here, the usual question.
+  const [queuedQuestionClosed, setQueuedQuestionClosed] = useState(false);
+  const takeTheirsQueued = useMutation({
+    mutationFn: async () => {
+      const current = await getNote(note.id).catch(() => queued?.theirs ?? null);
+      await resolveEntry(note.id, 'theirs');
+      return current;
+    },
+    onSuccess: (current) => {
+      if (!current) return;
+      autosave.discard();
+      setTitle(current.title);
+      setContent(current.content);
+      adopt(current);
+    },
+  });
 
   // Signing out asks whether everything is saved, and can give the draft up.
   useEffect(
@@ -282,25 +380,59 @@ function LoadedEditor({ note }: { note: Note }) {
   );
 
   // "Keep mine" and "keep mine, put theirs in the history": save again, on the revision of the conflict.
-  const keepMine = (withTheirsInHistory: boolean) => {
+  // A "keep both" whose copy could not be made (storage full, say) leaves the question open and says why.
+  const [keepError, setKeepError] = useState<unknown>(null);
+  const keepMine = async (withTheirsInHistory: boolean) => {
     if (!theirs) return;
+    setKeepError(null);
+    if (elsewhere && ownerId) {
+      // "Keep mine" replaces the other tab's text only if it is still exactly
+      // what the question showed: queued with that text as the parent, any
+      // later change there raises the question again. "Keep both" first keeps
+      // that text as a note of its own, under an id that stays the same if
+      // this is tried again, so a retry makes no second copy.
+      const other = elsewhere;
+      try {
+        if (withTheirsInHistory) {
+          await createOffline(
+            ownerId,
+            { title: `${savedTitle(other.title)} (from another tab)`, content: other.content },
+            keepBothId(other, 'theirs'),
+          );
+        }
+      } catch (error) {
+        setKeepError(
+          new Error(
+            `The other tab's text could not be kept as a note of its own, so nothing was changed. ${error instanceof Error ? error.message : ''}`.trim(),
+          ),
+        );
+        return;
+      }
+      setDialog(null);
+      parent.current = { title: other.title, content: other.content };
+      await autosave.retry();
+      return;
+    }
     setDialog(null);
     revision.current = theirs.revision;
     keepTheirs.current = withTheirsInHistory;
-    void autosave.retry();
+    await autosave.retry();
   };
 
   // "Take theirs" fetches the note as it is now. The copy that came with the
   // refused save may be old by the time the choice is made.
   const takeTheirs = useMutation({
-    mutationFn: () => getNote(note.id),
+    // The other tab's queued text is the newest there is; otherwise the note as the server has it now.
+    mutationFn: async (): Promise<Note> =>
+      elsewhere ? { ...note, title: savedTitle(elsewhere.title), content: elsewhere.content } : getNote(note.id),
     onSuccess: (current) => {
       keepTheirs.current = false;
       unanswered.current = [];
       autosave.discard();
       setTitle(current.title);
       setContent(current.content);
-      adopt(current);
+      if (elsewhere) parent.current = { title: elsewhere.title, content: elsewhere.content };
+      else adopt(current);
       setDialog(null);
     },
   });
@@ -492,6 +624,20 @@ function LoadedEditor({ note }: { note: Note }) {
   const attachFiles = async (files: File[]) => {
     if (readOnly || files.length === 0) return;
     setUploadError(null);
+    // A file goes to the server at once; it is never queued. Without a
+    // connection, or for a note that is not on the server yet, nothing is
+    // added to the text, so no link is left pointing at a file that is not there.
+    const waitingCreate = openEntryFor(note.id)?.kind === 'create';
+    if (!navigator.onLine || waitingCreate) {
+      setUploadError(
+        new Error(
+          waitingCreate
+            ? 'Files can be attached once this note has reached the server. Nothing was added to the note.'
+            : 'Files cannot be attached without a connection. Nothing was added to the note.',
+        ),
+      );
+      return;
+    }
     setUploading((count) => count + files.length);
     for (const file of files) {
       try {
@@ -508,7 +654,11 @@ function LoadedEditor({ note }: { note: Note }) {
           requestAnimationFrame(() => textarea.setSelectionRange(position, position));
         }
       } catch (error) {
-        setUploadError(error);
+        setUploadError(
+          cannotReachServer(error)
+            ? new Error('The connection went while the file was being attached. Nothing was added to the note.')
+            : error,
+        );
       } finally {
         setUploading((count) => count - 1);
       }
@@ -652,7 +802,9 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const words = countWords(content);
   const statusText = {
-    saved: `Saved ${formatRelative(note.updatedAt)}`,
+    saved: queued
+      ? 'Kept on this device, to be sent when the server can be reached'
+      : `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
     saving: 'Saving…',
     error: 'Could not save. Retrying on the next change.',
@@ -983,13 +1135,46 @@ function LoadedEditor({ note }: { note: Note }) {
           }}
         />
       )}
+      {savedElsewhere && !readOnly && (
+        <div className="banner banner-info" role="status">
+          <span>
+            Another tab sent changes to this note that are not shown here. Your next change asks before it replaces
+            anything.
+          </span>
+        </div>
+      )}
+      {queued?.state === 'conflict' && !queuedQuestionClosed && (
+        <ConflictDialog
+          onKeepBoth={() => void resolveEntry(note.id, 'both')}
+          onKeepMine={() => void resolveEntry(note.id, 'mine')}
+          onTakeTheirs={() => takeTheirsQueued.mutate()}
+          busy={takeTheirsQueued.isPending}
+          error={takeTheirsQueued.error}
+          onClose={() => setQueuedQuestionClosed(true)}
+        />
+      )}
+      {queued?.state === 'conflict' && queuedQuestionClosed && (
+        <div className="banner banner-info" role="alert">
+          <span>
+            Changes made here without a connection meet a newer version of this note. Nothing is sent until you decide.
+          </span>
+          <button type="button" className="button button-primary" onClick={() => setQueuedQuestionClosed(false)}>
+            Decide what to keep
+          </button>
+        </div>
+      )}
+      {queued?.state === 'stuck' && (
+        <div className="banner banner-info" role="alert">
+          <span>Changes made here without a connection could not be sent: {queued.problem}</span>
+        </div>
+      )}
       {dialog === 'conflict' && theirs && (
         <ConflictDialog
-          onKeepBoth={() => keepMine(true)}
-          onKeepMine={() => keepMine(false)}
+          onKeepBoth={() => void keepMine(true)}
+          onKeepMine={() => void keepMine(false)}
           onTakeTheirs={() => takeTheirs.mutate()}
           busy={takeTheirs.isPending}
-          error={takeTheirs.error}
+          error={keepError ?? takeTheirs.error}
           onClose={() => setDialog(null)}
         />
       )}

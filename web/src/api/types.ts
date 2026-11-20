@@ -106,6 +106,8 @@ export interface Note {
 }
 
 export interface NoteChanges {
+  /** For a new note made offline: its id, a random UUID made in the browser. */
+  id?: string;
   title?: string;
   content?: string;
   /**

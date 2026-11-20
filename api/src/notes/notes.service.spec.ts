@@ -6,7 +6,7 @@ import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma
 import { TagsService } from '../tags/tags.service';
 import { VersionsService } from '../versions/versions.service';
 import { ListNotesQuery } from './dto/note.dto';
-import { NotesService } from './notes.service';
+import { isIdTaken, NotesService } from './notes.service';
 
 const USER = 'user-1';
 const NOTEBOOK = '11111111-1111-4111-8111-111111111111';
@@ -727,5 +727,22 @@ describe('NotesService', () => {
         take: 4,
       });
     });
+  });
+});
+
+describe('isIdTaken', () => {
+  const unique = (target: unknown) =>
+    new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+      meta: { target },
+    });
+
+  it('is the primary key of notes only', () => {
+    expect(isIdTaken(unique(['id']))).toBe(true);
+    expect(isIdTaken(unique('notes_pkey'))).toBe(true);
+    expect(isIdTaken(unique(['user_id', 'daily_date']))).toBe(false);
+    expect(isIdTaken(unique('notes_user_id_daily_date_key'))).toBe(false);
+    expect(isIdTaken(new Error('other'))).toBe(false);
   });
 });

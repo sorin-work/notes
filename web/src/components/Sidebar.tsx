@@ -11,6 +11,13 @@ import { dropStashes } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { notebookTree, totalNotes, trashedWith } from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
+import {
+  cannotReachServer,
+  createOffline,
+  dropOutbox,
+  offlineWritingAvailable,
+  unsentAfterTrying,
+} from '../lib/outbox';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
@@ -40,15 +47,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const [action, setAction] = useState<NotebookAction | null>(null);
-  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  // When signing out would throw something away: how many offline changes are still unsent.
+  const [confirmingSignOut, setConfirmingSignOut] = useState<{ unsent: number } | null>(null);
   const [chosenTemplate, setChosenTemplate] = useState('');
 
   // Once the session has ended nothing can be saved, so what is unsaved goes
   // first. If that does not work, signing out would throw it away, and that
   // is for the user to decide.
+  // Changes made offline that are still not sent count the same: they are tried first, then asked about.
   const signOut = async () => {
-    if (await saveUnsavedWork()) logout();
-    else setConfirmingSignOut(true);
+    const saved = await saveUnsavedWork();
+    const unsent = user ? await unsentAfterTrying(user.id) : 0;
+    if (saved && unsent === 0) logout();
+    else setConfirmingSignOut({ unsent });
   };
   const [query, setQuery] = useState('');
 
@@ -69,7 +80,21 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   });
 
   const newNote = useMutation({
-    mutationFn: (start: NoteChanges | void) => createNote(start ?? newNoteFor(shown)),
+    // Not paused without a connection: then the note is made here, see below.
+    networkMode: 'always',
+    mutationFn: async (start: NoteChanges | void) => {
+      const changes = start ?? newNoteFor(shown);
+      try {
+        return await createNote(changes);
+      } catch (error) {
+        // Without a connection a plain new note is made here and sent later. A
+        // note from a template needs the template, which is on the server.
+        if (!user || !cannotReachServer(error) || changes.templateId || !offlineWritingAvailable()) throw error;
+        const note = await createOffline(user.id, { notebookId: changes.notebookId ?? null });
+        queryClient.setQueryData(['note', note.id], note);
+        return note;
+      }
+    },
     onSuccess: (note, start) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
@@ -330,18 +355,23 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           title="Sign out without saving?"
           message={
             <p>
-              Your latest changes to the open note could not be saved. If you sign out now, they are thrown away. Stay
-              signed in to try again.
+              {confirmingSignOut.unsent > 0
+                ? `${confirmingSignOut.unsent === 1 ? '1 change' : `${confirmingSignOut.unsent} changes`} made without a connection ${confirmingSignOut.unsent === 1 ? 'has' : 'have'} not reached the server yet. `
+                : 'Your latest changes to the open note could not be saved. '}
+              If you sign out now, they are thrown away. Stay signed in to try again.
             </p>
           }
           confirmLabel="Sign out and discard"
           danger
           onConfirm={() => {
             discardUnsavedWork();
-            if (user) dropStashes(user.id);
+            if (user) {
+              dropStashes(user.id);
+              void dropOutbox(user.id);
+            }
             logout();
           }}
-          onCancel={() => setConfirmingSignOut(false)}
+          onCancel={() => setConfirmingSignOut(null)}
         />
       )}
       {(action?.kind === 'create' || action?.kind === 'edit') && (

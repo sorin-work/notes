@@ -7,6 +7,19 @@ export const IN_TRASH = 'This note is in the trash. Restore it before changing i
 /** Tells a refused save from the other 409s, such as changing a note in the trash. */
 export const STALE_REVISION = 'stale_revision';
 
+/**
+ * What a create gets back when its id is taken. It is the same answer
+ * whoever has the note, so it says nothing about other people's notes: a
+ * client that wants to know whether the note is its own asks for it by id.
+ */
+export const NOTE_EXISTS = 'note_exists';
+
+export class NoteExistsException extends ConflictException {
+  constructor() {
+    super({ statusCode: 409, error: 'Conflict', message: 'A note with this id already exists.', code: NOTE_EXISTS });
+  }
+}
+
 /** What a save gets back when the note has changed since the revision it was based on. */
 export interface NoteConflictBody {
   statusCode: 409;
