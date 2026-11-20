@@ -3,7 +3,7 @@ import type { Notebook } from '../api/types';
 import { notebookLabel, notebookTree, totalNotes } from './notebooks';
 
 function nb(id: string, name: string, parentId: string | null = null, noteCount = 0): Notebook {
-  return { id, name, parentId, noteCount, createdAt: '', updatedAt: '' };
+  return { id, name, parentId, noteCount, shared: false, sharedThrough: null, createdAt: '', updatedAt: '' };
 }
 
 const notebooks = [

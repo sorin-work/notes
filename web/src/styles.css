@@ -417,6 +417,17 @@ mark {
   white-space: nowrap;
 }
 
+.shared-through {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+}
+
+.public-mark {
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-left: 0.3rem;
+}
+
 .count {
   font-size: 0.75rem;
   color: var(--muted);

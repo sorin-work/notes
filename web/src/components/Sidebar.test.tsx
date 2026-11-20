@@ -80,6 +80,47 @@ describe('Sidebar', () => {
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ name: 'Ideas', parentId: 'p' });
   });
 
+  it('marks what a notebook link makes public, and asks before a notebook is moved into a shared one', async () => {
+    const recipes = { id: 'r', name: 'Recipes' };
+    const calls = mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': {
+        body: [
+          notebook({ id: 'r', name: 'Recipes', shared: true, sharedThrough: recipes }),
+          notebook({ id: 'b', name: 'Bread', parentId: 'r', sharedThrough: recipes }),
+          notebook({ id: 'p', name: 'Personal' }),
+        ],
+      },
+      'GET /api/tags': { body: [] },
+      'PATCH /api/notebooks/p': {
+        body: notebook({ id: 'p', name: 'Personal', parentId: 'r', sharedThrough: recipes }),
+      },
+    });
+    renderSidebar();
+
+    const recipesLink = await screen.findByRole('link', { name: /Recipes/ });
+    expect(within(recipesLink).getByText('public')).toHaveAttribute(
+      'title',
+      'Shared with a link: anyone who has it can read the notes in here',
+    );
+    expect(within(screen.getByRole('link', { name: /Bread/ })).getByText('public')).toHaveAttribute(
+      'title',
+      'Public through the shared notebook “Recipes”',
+    );
+    expect(within(screen.getByRole('link', { name: /Personal/ })).queryByText('public')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit Personal' }));
+    await userEvent.selectOptions(screen.getByLabelText('Inside'), 'r');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('can be read by anyone who has that link');
+    expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Move it and make it public' }));
+    await waitFor(() =>
+      expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({ name: 'Personal', parentId: 'r' }),
+    );
+  });
+
   it('opens the share dialog for a notebook', async () => {
     mockFetch({
       'GET /api/auth/me': { body: user },

@@ -30,6 +30,11 @@ export function ShareDialog({
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: shareKey });
     if (noteId) void queryClient.invalidateQueries({ queryKey: ['note', noteId] });
+    // What a notebook link covers shows on the notebooks and on every note inside them.
+    if (notebookId) {
+      void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
+      void queryClient.invalidateQueries({ queryKey: ['note'] });
+    }
   };
   const create = useMutation({ mutationFn: () => createShare(subject), onSuccess: refresh });
   const revoke = useMutation({ mutationFn: () => revokeShare(subject), onSuccess: refresh });

@@ -31,11 +31,21 @@ export interface Page<T> {
   pageSize: number;
 }
 
+/** A shared notebook whose link makes something public. */
+export interface SharedThrough {
+  id: string;
+  name: string;
+}
+
 export interface Notebook {
   id: string;
   name: string;
   parentId: string | null;
   noteCount: number;
+  /** Whether the notebook has a share link of its own. */
+  shared: boolean;
+  /** The shared notebook that makes this one public: itself, or the one it is inside. */
+  sharedThrough: SharedThrough | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,7 +79,10 @@ export interface Note {
   tags: string[];
   pinned: boolean;
   favorite: boolean;
+  /** Whether the note has a share link of its own. */
   shared: boolean;
+  /** The shared notebook that makes the note public, if one does. */
+  sharedThrough: SharedThrough | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

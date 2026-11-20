@@ -21,6 +21,15 @@ type NotebookAction =
   | { kind: 'share'; notebook: Notebook }
   | { kind: 'delete'; notebook: Notebook };
 
+/** Why anyone with a link can read the notes of a notebook, or null when nobody can. */
+function publicBecause(notebook: Notebook): string | null {
+  const through = notebook.sharedThrough;
+  if (!through) return null;
+  return through.id === notebook.id
+    ? 'Shared with a link: anyone who has it can read the notes in here'
+    : `Public through the shared notebook “${through.name}”`;
+}
+
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -80,7 +89,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.();
   };
 
-  const filterLink = (search: string, active: boolean, label: string, count?: number, className = '') => (
+  const filterLink = (
+    search: string,
+    active: boolean,
+    label: string,
+    count?: number,
+    className = '',
+    /** Why the notebook is public, when it is. */
+    publicTitle: string | null = null,
+  ) => (
     <Link
       to={`/notes${search}`}
       className={`nav-item ${className} ${active ? 'active' : ''}`.trim()}
@@ -88,6 +105,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       onClick={onNavigate}
     >
       <span className="nav-label">{label}</span>
+      {publicTitle && (
+        <span className="public-mark" title={publicTitle}>
+          public
+        </span>
+      )}
       {count !== undefined && count > 0 && <span className="count">{count}</span>}
     </Link>
   );
@@ -146,7 +168,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             {tree.map((parent) => (
               <li key={parent.id}>
                 <div className="nav-row">
-                  {filterLink(`?notebook=${parent.id}`, activeNotebook === parent.id, parent.name, totalNotes(parent))}
+                  {filterLink(
+                    `?notebook=${parent.id}`,
+                    activeNotebook === parent.id,
+                    parent.name,
+                    totalNotes(parent),
+                    '',
+                    publicBecause(parent),
+                  )}
                   <NotebookMenu
                     notebook={parent}
                     canNest
@@ -165,6 +194,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                           child.name,
                           child.noteCount,
                           'nested',
+                          publicBecause(child),
                         )}
                         <NotebookMenu
                           notebook={child}
