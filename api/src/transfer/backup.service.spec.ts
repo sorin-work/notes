@@ -1,4 +1,4 @@
-import { readBackup } from './backup-check';
+import { notebookDepths, readBackup } from './backup-check';
 
 const at = '2026-01-01T00:00:00.000Z';
 const note = (overrides: object = {}) => ({
@@ -72,6 +72,7 @@ describe('readBackup', () => {
         /notebooks\[4\] is nested deeper/,
       ],
       [{ notebooks: [notebook('a', 'b'), notebook('b', 'a')] }, /notebooks\[0\] is inside itself/],
+      [{ notebooks: Array.from({ length: 10_001 }, (_, i) => notebook(`n${i}`)) }, /notebooks has more than 10000/],
       [{ notebooks: [notebook('a', null, 'Work'), notebook('b', null, 'work')] }, /taken by another notebook/],
       [{ notebooks: [notebook('a', 'nowhere')] }, /parentId names no notebook/],
       [
@@ -88,5 +89,31 @@ describe('readBackup', () => {
     for (const [change, message] of cases) {
       expect(() => readBackup(backup(change))).toThrow(message);
     }
+  });
+});
+
+describe('notebookDepths', () => {
+  it('gives each notebook its level, and none to a notebook in a loop or below one', () => {
+    const depths = notebookDepths([
+      { id: 'd', parentId: 'c' },
+      { id: 'a', parentId: null },
+      { id: 'b', parentId: 'a' },
+      { id: 'c', parentId: 'b' },
+      { id: 'x', parentId: 'y' },
+      { id: 'y', parentId: 'x' },
+      { id: 'z', parentId: 'x' },
+    ]);
+    expect(Object.fromEntries(depths)).toEqual({ a: 1, b: 2, c: 3, d: 4 });
+  });
+
+  it('takes one pass however the parents are made up, so a long loop is quick', () => {
+    const count = 10_000;
+    const loop = Array.from({ length: count }, (_, i) => ({ id: `n${i}`, parentId: `n${(i + 1) % count}` }));
+    const chain = Array.from({ length: count }, (_, i) => ({ id: `c${i}`, parentId: i === 0 ? null : `c${i - 1}` }));
+    const started = Date.now();
+    expect(notebookDepths(loop).size).toBe(0);
+    // A chain listed from the bottom up, the worst order for a walk that starts again from each one.
+    expect(notebookDepths([...chain].reverse()).get(`c${count - 1}`)).toBe(count);
+    expect(Date.now() - started).toBeLessThan(500);
   });
 });

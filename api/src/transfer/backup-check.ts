@@ -79,9 +79,12 @@ export function readExportedAt(value: unknown): string {
   return date(value, 'exportedAt');
 }
 
+/** How many notebooks one backup may hold. The checks below are linear, this keeps them short too. */
+export const MAX_BACKUP_NOTEBOOKS = 10_000;
+
 /** All notebooks, checked together: ids, names in their place, and nesting as deep as notebooks go, without loops. */
 export function readNotebooks(value: unknown): BackupNotebook[] {
-  const notebooks = list(value, 'notebooks').map((entry, index): BackupNotebook => {
+  const notebooks = list(value, 'notebooks', MAX_BACKUP_NOTEBOOKS).map((entry, index): BackupNotebook => {
     const where = `notebooks[${index}]`;
     if (!isObject(entry)) invalid(where, 'is not an object');
     return {
@@ -117,30 +120,38 @@ export function readNotebooks(value: unknown): BackupNotebook[] {
 /**
  * The level of each notebook, 1 at the top, from the parents in the list.
  * A notebook in a loop, or below one, gets no level. Notebooks whose parent
- * is not in the list count as at the top.
+ * is not in the list count as at the top. One pass: each notebook is
+ * walked up from only until a notebook whose level, or whose being in a
+ * loop, is known already, so the work grows with the number of notebooks
+ * and not faster, however the parents are made up.
  */
 export function notebookDepths(notebooks: { id: string; parentId: string | null }[]): Map<string, number> {
   const parents = new Map(notebooks.map((notebook) => [notebook.id, notebook.parentId]));
-  const depths = new Map<string, number>();
+  const known = new Map<string, number | 'loop'>();
   for (const notebook of notebooks) {
-    const chain: string[] = [];
-    let at: string | null | undefined = notebook.id;
-    let base = 0;
-    while (at && parents.has(at)) {
-      const known = depths.get(at);
-      if (known !== undefined) {
-        base = known;
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let base: number | 'loop' = 0;
+    for (let at: string | null | undefined = notebook.id; at && parents.has(at); at = parents.get(at)) {
+      const level = known.get(at);
+      if (level !== undefined) {
+        base = level;
         break;
       }
-      if (chain.includes(at)) {
-        chain.length = 0;
+      if (onPath.has(at)) {
+        base = 'loop';
         break;
       }
-      chain.push(at);
-      at = parents.get(at);
+      path.push(at);
+      onPath.add(at);
     }
-    chain.reverse().forEach((id, index) => depths.set(id, base + index + 1));
+    for (let index = path.length - 1; index >= 0; index--) {
+      if (base !== 'loop') base += 1;
+      known.set(path[index], base);
+    }
   }
+  const depths = new Map<string, number>();
+  for (const [id, level] of known) if (level !== 'loop') depths.set(id, level);
   return depths;
 }
 
