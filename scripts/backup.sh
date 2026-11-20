@@ -119,12 +119,13 @@ warn_about_future_dumps() {
 #     yesterday's. They do not count towards $keep either.
 #   - The dump that was just written ($1), whatever the clock makes of it.
 prune() {
-  now=$(date +%s)
-  present_dumps "$now" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
+  # Not "now": that is the loop's, which goes by when a dump was started.
+  pruned_at=$(date +%s)
+  present_dumps "$pruned_at" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
     rm -f "$dir/$old"
     log "removed $old"
   done
-  warn_about_future_dumps "$now"
+  warn_about_future_dumps "$pruned_at"
 }
 
 # pg_dump writes to a hidden .partial file that is renamed when it is

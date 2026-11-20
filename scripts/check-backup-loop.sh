@@ -16,6 +16,8 @@ trap 'rm -rf "$work"' EXIT
 
 ROUNDS=12
 DAY=86400
+# The real one, for a case that needs time to pass. "sleep" is replaced below.
+REAL_SLEEP=$(command -v sleep)
 now=$(date +%s)
 # Two days from now, in the form touch takes.
 AHEAD=$(date -u -d "@$((now + 2 * DAY))" '+%Y-%m-%d %H:%M:%S')
@@ -24,11 +26,13 @@ mkdir "$work/bin"
 
 # Writes the file pg_dump was asked for, unless the case wants it to fail.
 # With "fast-clock" the file gets a modification time in the future, as if
-# the folder were on a machine whose clock runs ahead.
+# the folder were on a machine whose clock runs ahead. With "slow" it takes
+# as many seconds as that file says.
 cat >"$work/bin/pg_dump" <<'STUB'
 #!/bin/sh
 echo attempt >>"$STATE/attempts"
 [ ! -e "$STATE/fail" ] || exit 1
+[ ! -e "$STATE/slow" ] || "$REAL_SLEEP" "$(cat "$STATE/slow")"
 for arg in "$@"; do
   case $arg in
     --file=*)
@@ -136,7 +140,7 @@ begin() {
   : >"$STATE/attempts"
   : >"$STATE/naps"
   : >"$STATE/calls"
-  export STATE BACKUP_DIR ROUNDS AHEAD
+  export STATE BACKUP_DIR ROUNDS AHEAD REAL_SLEEP
   export BACKUP_KEEP=3 BACKUP_INTERVAL_SECONDS=$DAY PGDATABASE=notes
 }
 
@@ -255,6 +259,21 @@ grep -lq new "$BACKUP_DIR"/*.dump || fail "the dump that was just written was pr
 sleep 1
 PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "the second once failed"
 grep -q "warning: dated in the future" "$STATE/log" || fail "the warning was not repeated on the next run"
+echo "ok: $case_name"
+
+begin "a dump that takes a while: the next one is due an interval after it started, not after it ended"
+# Counted from the end, every dump would come later than the one before by
+# the time a dump takes, until the service is restarted.
+export BACKUP_INTERVAL_SECONDS=10
+echo 2 >"$STATE/slow"
+ROUNDS=2
+run_loop
+ROUNDS=12
+# The first pause follows the dump. The second is what is left of the interval.
+left=$(sed -n 2p "$STATE/naps")
+if [ "$(count "$STATE/attempts")" -eq 1 ]; then
+  [ "$left" -le 8 ] || fail "after a dump of 2s the next was due in ${left}s of 10, so the interval was counted from the end of the dump"
+fi
 echo "ok: $case_name"
 
 begin "a dump named for 31 February: no such day, so it is kept and named in the warning"
