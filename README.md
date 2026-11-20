@@ -45,6 +45,9 @@ Markdown import/export.
   previewed and restored; restoring saves the current text first. The Changes
   view shows line by line what differs between a version and the note as it
   is now, with a changed title above it.
+- **Edit conflicts**: with a note open in two tabs or on two devices, a save
+  that would overwrite the other one is held back, and the editor asks what
+  to keep: your text, theirs, or yours with theirs saved in the history.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
 - **Share links**: a read-only public page for a single note at `/s/<token>`,
@@ -393,11 +396,33 @@ out, and past that the view says so and shows no diff. A single block that
 was only added or only removed is shown whatever its size. The view lists
 2,000 rows at most and then says how many more lines changed.
 
+Every note has a revision, a number that goes up by one whenever its title or
+text changes: a save, a restored version, links rewritten after a rename.
+Pinning, favourites, tags, moving a note and the trash leave it alone. The
+editor sends the revision its text is based on with every save. When the note
+has moved on since, the save is refused and the editor asks what to keep.
+Closing that question decides nothing: the text stays in the editor, unsaved,
+and the browser warns before the tab is closed. Leaving the note with the
+question still open saves your text and puts the other one into the history,
+so neither is lost. Restoring a version first saves what is typed, and does
+not go ahead if that fails. A save that names no revision, as from a tab that
+was loaded before this existed or from a script, is never refused: the last
+write wins, as it always did.
+
 ## API overview
 
 All endpoints are under `/api` and, apart from sign-up, login, the health
 check and shared notes, need an `Authorization: Bearer <token>` header.
 Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
+
+`GET /notes/:id` returns the note's `revision`. `PATCH /notes/:id` takes it
+back as `revision`, the one the new title or content was based on. If the
+note has changed since, nothing is written and the answer is a `409` that
+carries the note as it is now:
+`{"statusCode": 409, "error": "Conflict", "code": "stale_revision", "message": "...", "note": {...}}`.
+The check only applies when `title` or `content` is sent, and a request
+without `revision` is never refused. With `"keepVersion": true` the text that
+a save replaces is kept as a version whatever the usual interval.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
