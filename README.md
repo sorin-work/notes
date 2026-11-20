@@ -597,9 +597,12 @@ What can be read offline is kept apart from the worker, in IndexedDB
 a second, one record per user under the user's id. Only notes, note lists,
 notebooks, tags and the links of a note are written. Search results,
 backlinks, history, the settings pages, share links and the login token never
-are. The token stays in `localStorage`, where it always was. A copy older than
-seven days is thrown away rather than shown, and past 5 MB the queries loaded
-longest ago are left out.
+are. The token stays in `localStorage`, where it always was. Each note or
+list carries the time it was fetched, and one fetched more than seven days ago
+is left out, however often the copy is written since. Past 5 MB the queries
+loaded longest ago are left out too. A refetch that fails because there is no
+connection, or because the server has a problem, keeps what was there. Only a
+404 or a 403 for a note takes it out.
 
 Started without a connection, the app reads the user id from the token and
 opens that user's copy, with no request to the server. If there is none, it
@@ -609,8 +612,11 @@ server who is signed in, as usual.
 The copy is deleted when you sign out, when the server answers 401 (the
 session ended, the password changed, or "Sign out everywhere" was used on
 another device), when another tab of this browser signs out, when the account
-is deleted, and when a different user signs in on the same browser. A device
-that never comes back online keeps its copy until then, up to its seven days.
+is deleted, and when a different user signs in on the same browser. A tab
+that sees another user signed in from another tab puts its open draft aside,
+lets go of what it holds and starts again as that user. A copy is only ever
+written while the token names its user. A device that never comes back online
+keeps its copy until then, up to seven days per note.
 
 ## API overview
 
