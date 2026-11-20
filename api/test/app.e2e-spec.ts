@@ -104,6 +104,18 @@ async function mailTo(address: string): Promise<OutgoingMail & { from: string }>
   throw new Error(`No mail to ${address}`);
 }
 
+/** The token in the newest invitation mail to `address`, once more of them have come than `seen`. */
+async function inviteTokenTo(address: string, seen: number): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const mails = outbox.filter((message) => message.to === address);
+    if (mails.length > seen) return /#token=([\w-]+)/.exec(mails[mails.length - 1]!.text)?.[1] ?? '';
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`No new mail to ${address}`);
+}
+
+const mailsTo = (address: string) => outbox.filter((message) => message.to === address).length;
+
 async function signUp(): Promise<{ token: string; auth: { Authorization: string } }> {
   const email = `e2e-${Date.now()}-${++counter}@example.com`;
   const response = await request(app.getHttpServer())
@@ -702,10 +714,7 @@ describe('api tokens', () => {
       'AuthController.logoutEverywhere',
       'AuthController.updatePreferences',
       'AuthController.updateProfile',
-      'InvitesController.accept',
       'InvitesController.acceptByToken',
-      'InvitesController.decline',
-      'InvitesController.received',
       'MembersController.changeRole',
       'MembersController.invite',
       'MembersController.list',
@@ -2368,6 +2377,7 @@ describe('notebooks shared with other accounts', () => {
     const bodies: Record<string, object> = {
       'NotesController.update': { title: 'Taken' },
       'NotesController.renameLinks': { from: 'Old' },
+      'MentionsController.link': { offset: 0, text: 'Soup', version: 0 },
     };
     const routes = registeredRoutes(app).filter(
       (route) =>
@@ -2380,7 +2390,8 @@ describe('notebooks shared with other accounts', () => {
         const path = route.documented
           .replace('{id}', noteId)
           .replace('{noteId}', noteId)
-          .replace('{versionId}', version.id);
+          .replace('{versionId}', version.id)
+          .replace('{sourceId}', noteId);
         const query = route.name === 'NotesController.orphanedLinks' ? '?from=Old' : '';
         const agent = request(server());
         const response = await agent[route.verb](path + query)
@@ -2417,8 +2428,8 @@ describe('notebooks shared with other accounts', () => {
     expect((await get('/api/notes')).items).toEqual([]);
     // Links lead only to what they may read: the private plan reads as missing.
     expect(await get(`/api/notes/${soup.id}/links`)).toEqual([
-      { title: 'Rye', noteId: rye.id },
       { title: 'Private plan', noteId: null },
+      { title: 'Rye', noteId: rye.id },
     ]);
     expect((await get(`/api/notes/${soup.id}/backlinks`)).map((b: { id: string }) => b.id)).toEqual([rye.id]);
     expect((await get(`/api/notes/titles?notebookId=${book}`)).map((n: { title: string }) => n.title).sort()).toEqual([
@@ -2449,6 +2460,10 @@ describe('notebooks shared with other accounts', () => {
     // The owner sees who is in.
     const members = await get(`/api/notebooks/${book}/members`, owner.auth);
     expect(members.members).toMatchObject([{ email: member.email, role: 'read' }]);
+    // A member sees who else is in by name, not by address.
+    const asMember = await get(`/api/notebooks/${book}/members`);
+    expect(asMember.members[0]).not.toHaveProperty('email');
+    expect(asMember.invites).toEqual([]);
   });
 
   it('lets an editor change text and tags as the owner’s, with the usual conflicts, and add notes', async () => {
@@ -2507,40 +2522,128 @@ describe('notebooks shared with other accounts', () => {
     await request(server()).get(`/api/notes/${rye.id}`).set(member.auth).expect(404);
     expect((await request(server()).get('/api/notebooks').set(member.auth)).body).toEqual([]);
 
-    // Invited again, accepted in the app this time, then left.
+    // Invited again, accepted by the new link, then left.
+    const seen = mailsTo(member.email);
     await request(server())
       .post(`/api/notebooks/${book}/members/invites`)
       .set(owner.auth)
       .send({ email: member.email, role: 'read' })
       .expect(201);
-    const [invite] = (await request(server()).get('/api/invites').set(member.auth).expect(200)).body;
-    expect(invite).toMatchObject({ notebook: { id: book, name: 'Kitchen' }, role: 'read' });
-    await request(server()).post(`/api/invites/${invite.id}/accept`).set(member.auth).expect(200);
+    const again = await inviteTokenTo(member.email, seen);
+    await request(server()).post('/api/invites/accept').set(member.auth).send({ token: again }).expect(200);
     await request(server()).get(`/api/notes/${rye.id}`).set(member.auth).expect(200);
     await request(server()).delete(`/api/notebooks/${book}/members/${member.id}`).set(member.auth).expect(204);
     await request(server()).get(`/api/notes/${rye.id}`).set(member.auth).expect(404);
   });
 
-  it('takes an invitation only from the invited address, once, and only while it is open', async () => {
+  it('covers every level of a shared notebook, with lists, search, links, titles, mentions and graph agreeing', async () => {
+    const owner = await account();
+    const member = await account();
+    const top = await post(owner.auth, '/api/notebooks', { name: 'Kitchen' });
+    const two = await post(owner.auth, '/api/notebooks', { name: 'Stews', parentId: top.id });
+    const three = await post(owner.auth, '/api/notebooks', { name: 'Winter', parentId: two.id });
+    const four = await post(owner.auth, '/api/notebooks', { name: 'Old', parentId: three.id });
+    const soup = await post(owner.auth, '/api/notes', { title: 'Soup', content: 'Leeks.', notebookId: top.id });
+    const deep = await post(owner.auth, '/api/notes', {
+      title: 'Deep stew',
+      content: 'Goes with [[Soup]] and [[Private soup]].',
+      notebookId: four.id,
+    });
+    const mentioning = await post(owner.auth, '/api/notes', {
+      title: 'Bread',
+      content: 'Dip it in the soup, or in a stew.',
+      notebookId: three.id,
+    });
+    const secret = await post(owner.auth, '/api/notes', {
+      title: 'Private soup',
+      content: 'Soup for me, linking [[Deep stew]].',
+    });
+    await request(server())
+      .post(`/api/notebooks/${top.id}/members/invites`)
+      .set(owner.auth)
+      .send({ email: member.email, role: 'read' })
+      .expect(201);
+    const token = /#token=([\w-]+)/.exec((await mailTo(member.email)).text)?.[1] ?? '';
+    await request(server()).post('/api/invites/accept').set(member.auth).send({ token }).expect(200);
+    const get = async (path: string) => (await request(server()).get(path).set(member.auth).expect(200)).body;
+    const shared = [soup.id, deep.id, mentioning.id].sort();
+
+    expect((await get(`/api/notes/${deep.id}`)).title).toBe('Deep stew');
+    expect((await get(`/api/notebooks`)).map((n: { name: string }) => n.name).sort()).toEqual([
+      'Kitchen',
+      'Old',
+      'Stews',
+      'Winter',
+    ]);
+    expect((await get(`/api/notes?notebookId=${top.id}`)).items.map((n: { id: string }) => n.id).sort()).toEqual(
+      shared,
+    );
+    expect((await get(`/api/notes?notebookId=${four.id}`)).items.map((n: { id: string }) => n.id)).toEqual([deep.id]);
+    expect(
+      (await get(`/api/search?q=soup&notebookId=${top.id}`)).items.map((h: { id: string }) => h.id).sort(),
+    ).toEqual(expect.arrayContaining([soup.id]));
+    expect((await get(`/api/search?q=soup&notebookId=${top.id}`)).items.map((h: { id: string }) => h.id)).not.toContain(
+      secret.id,
+    );
+    expect(await get(`/api/notes/${deep.id}/links`)).toEqual([
+      { title: 'Private soup', noteId: null },
+      { title: 'Soup', noteId: soup.id },
+    ]);
+    expect((await get(`/api/notes/titles?notebookId=${top.id}&q=s`)).map((n: { id: string }) => n.id).sort()).toEqual(
+      [soup.id, deep.id].sort(),
+    );
+    // Backlinks of the deep note: the private note links to it, and is not shown.
+    expect(await get(`/api/notes/${deep.id}/backlinks`)).toEqual([]);
+    // Mentions of "Soup": the bread note three levels down, never the private one.
+    const mentions = await get(`/api/notes/${soup.id}/mentions`);
+    expect(mentions.items.map((m: { id: string }) => m.id)).toEqual([mentioning.id]);
+    await request(server())
+      .post(`/api/notes/${soup.id}/mentions/${mentioning.id}/link`)
+      .set(member.auth)
+      .send({ offset: 0, text: 'soup', version: 0 })
+      .expect(403);
+    // The graph of the shared notebook: its notes, its links, and no trace of the private note.
+    const graph = await get(`/api/links/graph?notebookId=${top.id}`);
+    expect(graph.nodes.map((n: { id: string }) => n.id).sort()).toEqual(shared);
+    expect(graph.edges).toEqual([{ source: deep.id, target: soup.id }]);
+    const deepNode = graph.nodes.find((n: { id: string }) => n.id === deep.id);
+    expect(deepNode.links).toBe(1);
+    // Without the notebook, the graph is the member's own, and empty.
+    expect((await get('/api/links/graph')).nodes).toEqual([]);
+  });
+
+  it('takes an invitation only by its token, once, and only while it is open', async () => {
     const owner = await account();
     const invited = await account();
-    const stranger = await account();
     const book = await post(owner.auth, '/api/notebooks', { name: 'Secrets' });
     const invites = `/api/notebooks/${book.id}/members/invites`;
     await request(server()).post(invites).set(owner.auth).send({ email: owner.email, role: 'read' }).expect(400);
-    await request(server()).post(invites).set(stranger.auth).send({ email: invited.email, role: 'read' }).expect(404);
+    await request(server()).post(invites).set(invited.auth).send({ email: invited.email, role: 'read' }).expect(404);
     await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'own' }).expect(400);
-    await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'edit' }).expect(201);
+    const sent = await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'edit' });
+    expect(sent.status).toBe(201);
+    // With mail on, the link goes by mail and never comes back in an answer.
+    expect(sent.body).not.toHaveProperty('link');
     const token = /#token=([\w-]+)/.exec((await mailTo(invited.email)).text)?.[1] ?? '';
 
-    // Forwarded to someone else, the link is no use to them.
-    await request(server()).post('/api/invites/accept').set(stranger.auth).send({ token }).expect(403);
-    const [received] = (await request(server()).get('/api/invites').set(invited.auth)).body;
-    await request(server()).post(`/api/invites/${received.id}/accept`).set(stranger.auth).expect(403);
-    expect((await request(server()).get('/api/invites').set(stranger.auth)).body).toEqual([]);
+    // Having the invited address is not enough. Someone who registers with
+    // an invited address nobody had yet gets nothing: nothing lists
+    // invitations by address, and there is no accepting without the token.
+    const fresh = `fresh-${Date.now()}@example.com`;
+    const open = await request(server()).post(invites).set(owner.auth).send({ email: fresh, role: 'edit' }).expect(201);
+    const squatter = await request(server())
+      .post('/api/auth/register')
+      .send({ email: fresh, name: 'Squatter', password: 'password123' })
+      .expect(201);
+    const squatterAuth = { Authorization: `Bearer ${squatter.body.token}` };
+    await request(server()).get('/api/invites').set(squatterAuth).expect(404);
+    await request(server()).post(`/api/invites/${open.body.id}/accept`).set(squatterAuth).expect(404);
+    await request(server()).post('/api/invites/accept').set(squatterAuth).send({ token: 'made-up' }).expect(404);
+    expect((await request(server()).get('/api/notebooks').set(squatterAuth)).body).toEqual([]);
 
+    // The token is the proof: whoever presents it joins, as themselves, once.
     await request(server()).post('/api/invites/accept').set(invited.auth).send({ token }).expect(200);
-    await request(server()).post('/api/invites/accept').set(invited.auth).send({ token }).expect(404);
+    await request(server()).post('/api/invites/accept').set(squatterAuth).send({ token }).expect(404);
     await request(server()).post(invites).set(owner.auth).send({ email: invited.email, role: 'read' }).expect(409);
 
     // Run out: an invitation a week old works no more.
@@ -2551,14 +2654,43 @@ describe('notebooks shared with other accounts', () => {
       .get(PrismaService)
       .notebookInvite.updateMany({ where: { email: late.email }, data: { expiresAt: new Date(Date.now() - 1000) } });
     await request(server()).post('/api/invites/accept').set(late.auth).send({ token: lateToken }).expect(404);
-    expect((await request(server()).get('/api/invites').set(late.auth)).body).toEqual([]);
+  });
 
-    // Declined, it is gone.
+  it('counts invitations sent, so that withdrawing or renewing them makes no room for more mail', async () => {
+    const owner = await account();
+    const book = await post(owner.auth, '/api/notebooks', { name: 'Many' });
+    const invites = `/api/notebooks/${book.id}/members/invites`;
+    const target = `flood-${Date.now()}@example.com`;
+    // Three a day to one address, whoever sends them, renewed or withdrawn.
+    for (let i = 0; i < 3; i++) {
+      const sent = await request(server())
+        .post(invites)
+        .set(owner.auth)
+        .send({ email: target, role: 'read' })
+        .expect(201);
+      await request(server()).delete(`${invites}/${sent.body.id}`).set(owner.auth).expect(204);
+    }
+    await request(server()).post(invites).set(owner.auth).send({ email: target, role: 'read' }).expect(429);
     const other = await account();
-    await request(server()).post(invites).set(owner.auth).send({ email: other.email, role: 'read' }).expect(201);
-    const [offer] = (await request(server()).get('/api/invites').set(other.auth)).body;
-    await request(server()).delete(`/api/invites/${offer.id}`).set(other.auth).expect(204);
-    expect((await request(server()).get('/api/invites').set(other.auth)).body).toEqual([]);
+    const otherBook = await post(other.auth, '/api/notebooks', { name: 'Theirs' });
+    await request(server())
+      .post(`/api/notebooks/${otherBook.id}/members/invites`)
+      .set(other.auth)
+      .send({ email: target, role: 'read' })
+      .expect(429);
+    // Ten an hour from one account, to anyone.
+    for (let i = 0; i < 7; i++) {
+      await request(server())
+        .post(invites)
+        .set(owner.auth)
+        .send({ email: `n${i}-${target}`, role: 'read' })
+        .expect(201);
+    }
+    await request(server())
+      .post(invites)
+      .set(owner.auth)
+      .send({ email: `last-${target}`, role: 'read' })
+      .expect(429);
   });
 });
 

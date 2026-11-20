@@ -29,6 +29,8 @@ describe('NotesController', () => {
     notebook: jest.fn(),
     ownerForFilter: jest.fn(),
     visibleNotebookIds: jest.fn(),
+    noteWriteGuard: jest.fn().mockReturnValue('guard'),
+    notebookWriteGuard: jest.fn().mockReturnValue('guard'),
   };
   const controller = new NotesController(
     notes as unknown as NotesService,
@@ -39,6 +41,8 @@ describe('NotesController', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    access.noteWriteGuard.mockReturnValue('guard');
+    access.notebookWriteGuard.mockReturnValue('guard');
     access.note.mockResolvedValue(owner);
     access.notebook.mockResolvedValue(owner);
     access.ownerForFilter.mockResolvedValue(owner);
@@ -58,7 +62,8 @@ describe('NotesController', () => {
       await expect(controller.update(user, 'n1', { content: 'x', tags: ['a'] })).resolves.toMatchObject({
         access: 'edit',
       });
-      expect(notes.update).toHaveBeenCalledWith('owner-1', 'n1', { content: 'x', tags: ['a'] });
+      expect(notes.update).toHaveBeenCalledWith('owner-1', 'n1', { content: 'x', tags: ['a'] }, 'guard');
+      expect(access.noteWriteGuard).toHaveBeenCalledWith('user-1', 'n1', 'edit');
       await expect(controller.update(user, 'n1', { pinned: true })).rejects.toBeInstanceOf(ForbiddenException);
       await expect(controller.update(user, 'n1', { notebookId: null })).rejects.toBeInstanceOf(ForbiddenException);
       expect(access.note).toHaveBeenCalledWith('user-1', 'n1', 'edit');
@@ -74,7 +79,7 @@ describe('NotesController', () => {
     it('adds notes to the shared notebook as the owner’s, and nothing an owner keeps for themselves', async () => {
       notes.create.mockResolvedValue({ id: 'n2' });
       await controller.create(user, { title: 'x', notebookId: 'nb1' });
-      expect(notes.create).toHaveBeenCalledWith('owner-1', { title: 'x', notebookId: 'nb1' });
+      expect(notes.create).toHaveBeenCalledWith('owner-1', { title: 'x', notebookId: 'nb1' }, 'guard');
       await expect(controller.create(user, { notebookId: 'nb1', templateId: 't1' })).rejects.toBeInstanceOf(
         ForbiddenException,
       );
@@ -96,7 +101,7 @@ describe('NotesController', () => {
     expect(notes.list).toHaveBeenCalledWith('user-1', query);
     expect(notes.get).toHaveBeenCalledWith('user-1', 'n1');
     expect(notes.create).toHaveBeenCalledWith('user-1', { title: 'x' });
-    expect(notes.update).toHaveBeenCalledWith('user-1', 'n1', { pinned: true });
+    expect(notes.update).toHaveBeenCalledWith('user-1', 'n1', { pinned: true }, 'guard');
     expect(notes.trash).toHaveBeenCalledWith('user-1', 'n1');
   });
 
