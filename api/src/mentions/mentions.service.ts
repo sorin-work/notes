@@ -1,9 +1,17 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
-import { parseable } from '../links/prose';
-import { isMentionable, linkableMention, mayMention, normalizeTitle } from '../links/wikilinks';
+import { ParsePool } from '../links/parse-pool';
+import type { ParsedNote } from '../links/prose';
+import { isMentionable, mayMention, Mention as Place, normalizeTitle } from '../links/wikilinks';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
 import { workingNoteSql, workingNotes } from '../notes/note-scope';
 import { writeNoteText } from '../notes/note-text';
@@ -34,14 +42,20 @@ export interface MentionPage extends Page<Mention> {
 export const MAX_CANDIDATES = 200;
 /**
  * How much text one request parses in all, in characters, and for how long.
- * The parser takes about a second for 100,000 characters of some notes, and
- * nothing else runs on the server meanwhile. A note that does not write the
- * title is passed over without being parsed, and does not count. When
- * either budget is spent the rest is left out and the list says it is
- * capped.
+ * The parser runs in worker threads (ParsePool), so other requests are not
+ * held up, but one list should still not keep both workers busy for long.
+ * A note that does not write the title is passed over without being parsed,
+ * and does not count. When either budget is spent the rest is left out and
+ * the list says it is capped.
  */
 export const MAX_PARSED_LENGTH = 1_000_000;
 export const MAX_PARSE_MS = 1_000;
+/** How many mention requests of one user run at a time. More answer 429. */
+export const MAX_REQUESTS_PER_USER = 2;
+/** How much note text the cache of parsed notes holds, in characters. */
+const CACHED_LENGTH = 20_000_000;
+/** How many answers ("this note mentions that title there") the cache holds. */
+const CACHED_ANSWERS = 5_000;
 /** How many of them are held in memory at a time. A note can be a megabyte. */
 const BATCH = 25;
 /** How much of the line is shown on each side of a mention. */
@@ -56,6 +70,7 @@ export class MentionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly links: LinksService,
+    private readonly pool: ParsePool,
     private readonly versions: VersionsService,
   ) {}
 
@@ -69,6 +84,10 @@ export class MentionsService {
    * "Link" uses, so every mention listed can be linked.
    */
   async list(userId: string, noteId: string, page: PaginationQuery): Promise<MentionPage> {
+    return this.oneAtATime(userId, () => this.listNow(userId, noteId, page));
+  }
+
+  private async listNow(userId: string, noteId: string, page: PaginationQuery): Promise<MentionPage> {
     const target = await this.findNote(userId, noteId);
     if (await this.whyNot(userId, target)) {
       return { items: [], total: 0, page: page.page, pageSize: page.pageSize, capped: false };
@@ -97,8 +116,8 @@ export class MentionsService {
           capped = spent = true;
           break;
         }
-        const mention = linkableMention(note.content, target.title);
-        if (mention && mention.linked.length <= MAX_CONTENT_LENGTH) {
+        const mention = await this.mentionIn(note, target.title);
+        if (mention && mention !== 'unparseable' && mention.linked.length <= MAX_CONTENT_LENGTH) {
           mentions.push({
             id: note.id,
             title: note.title,
@@ -141,38 +160,124 @@ export class MentionsService {
     sourceId: string,
     at: { offset: number; text: string; version: number },
   ): Promise<void> {
-    const target = await this.findNote(userId, noteId);
+    return this.oneAtATime(userId, () => this.linkNow(userId, noteId, sourceId, at));
+  }
 
+  private async linkNow(
+    userId: string,
+    noteId: string,
+    sourceId: string,
+    at: { offset: number; text: string; version: number },
+  ): Promise<void> {
+    const target = await this.findNote(userId, noteId);
     const changed = () => new ConflictException('That note has changed since its mention was listed');
+
+    // The new text is worked out before the transaction, since the parse can take a moment.
+    const source = await this.prisma.note.findFirst({ where: { id: sourceId, ...workingNotes(userId) } });
+    if (!source || source.id === target.id) {
+      throw new NotFoundException('Note not found');
+    }
+    if (source.revision !== at.version) {
+      throw changed();
+    }
+    const mention = await this.mentionIn(source, target.title, at);
+    if (mention === 'unparseable') {
+      throw new BadRequestException('That note is too long or too intricate to look for mentions in');
+    }
+    if (mention === null) {
+      throw new ConflictException(`That note does not mention "${target.title}" there`);
+    }
+    if (mention.linked.length > MAX_CONTENT_LENGTH) {
+      throw new BadRequestException('That note is too long to take the four characters of a link');
+    }
+
     await this.prisma.$transaction(async (tx) => {
-      const source = await tx.note.findFirst({ where: { id: sourceId, ...workingNotes(userId) } });
-      if (!source || source.id === target.id) {
-        throw new NotFoundException('Note not found');
-      }
       const refused = await this.whyNot(userId, target, tx);
       if (refused) {
         throw new ConflictException(refused);
       }
-      if (source.revision !== at.version) {
-        throw changed();
-      }
-      if (!parseable(source.content)) {
-        throw new BadRequestException('That note is too long or too deeply nested to look for mentions in');
-      }
-      const linked = linkableMention(source.content, target.title, at)?.linked ?? null;
-      if (linked === null) {
-        throw new ConflictException(`That note does not mention "${target.title}" there`);
-      }
-      if (linked.length > MAX_CONTENT_LENGTH) {
-        throw new BadRequestException('That note is too long to take the four characters of a link');
-      }
-      // Tied to the revision that was read: a save that got in between makes this fail instead of being lost.
-      if (!(await writeNoteText(tx, { id: source.id, userId, revision: source.revision }, { content: linked }))) {
+      // Tied to the revision the text was worked out from: a save that got in between makes this fail instead of being lost.
+      if (!(await writeNoteText(tx, { id: source.id, userId, revision: at.version }, { content: mention.linked }))) {
         throw changed();
       }
       await this.versions.snapshot(tx, source);
-      await this.links.sync(tx, source.id, linked);
+      await this.links.sync(tx, source.id, mention.linked);
     });
+  }
+
+  /**
+   * The mention of `title` in `note` that "Link" can wrap, the one at `at`
+   * when it is given, or "unparseable". The parse runs in the pool. Its tree
+   * is kept by note and revision, so each revision of a note is parsed once
+   * whatever title is looked for, and so is the answer for a title. A note
+   * the parser gives up on, or runs out of time on, is not tried again until
+   * it is edited.
+   */
+  private async mentionIn(
+    note: { id: string; revision: number; content: string },
+    title: string,
+    at?: { offset: number; text: string },
+  ): Promise<(Place & { linked: string }) | null | 'unparseable'> {
+    const treeKey = `${note.id}:${note.revision}`;
+    const answerKey = at ? null : `${treeKey}:${normalizeTitle(title)}`;
+    const known = answerKey === null ? undefined : this.answers.get(answerKey);
+    if (known !== undefined) return known;
+    const tree = this.trees.get(treeKey);
+    if (tree?.parsed === null) return 'unparseable';
+
+    const answer = await this.pool.run({ text: note.content, title, at, parsed: tree?.parsed });
+    const parsed = answer === 'timeout' ? null : answer.parsed;
+    if (!tree || answer === 'timeout') this.keepTree(treeKey, parsed, note.content.length);
+    const result = parsed && answer !== 'timeout' ? answer.mention : 'unparseable';
+    if (answerKey !== null) this.keepAnswer(answerKey, result);
+    return result;
+  }
+
+  /** Parsed notes by note id and revision, oldest first, with the length of their text. */
+  private readonly trees = new Map<string, { parsed: ParsedNote | null; length: number }>();
+  private treeLength = 0;
+  private readonly answers = new Map<string, (Place & { linked: string }) | null | 'unparseable'>();
+  /** Mention requests running now, by user. */
+  private readonly running = new Map<string, number>();
+
+  private keepTree(key: string, parsed: ParsedNote | null, length: number): void {
+    const old = this.trees.get(key);
+    if (old) this.treeLength -= old.length;
+    // A verdict of "unparseable" costs next to nothing to keep.
+    const kept = parsed ? length : 1;
+    this.trees.delete(key);
+    this.trees.set(key, { parsed, length: kept });
+    this.treeLength += kept;
+    for (const [oldest, entry] of this.trees) {
+      if (this.treeLength <= CACHED_LENGTH) break;
+      this.trees.delete(oldest);
+      this.treeLength -= entry.length;
+    }
+  }
+
+  private keepAnswer(key: string, answer: (Place & { linked: string }) | null | 'unparseable'): void {
+    this.answers.delete(key);
+    this.answers.set(key, answer);
+    if (this.answers.size > CACHED_ANSWERS) this.answers.delete(this.answers.keys().next().value!);
+  }
+
+  /** Runs `work` unless the user has MAX_REQUESTS_PER_USER mention requests running already. */
+  private async oneAtATime<T>(userId: string, work: () => Promise<T>): Promise<T> {
+    const now = this.running.get(userId) ?? 0;
+    if (now >= MAX_REQUESTS_PER_USER) {
+      throw new HttpException(
+        'Too many mention requests at once. Try again in a moment.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    this.running.set(userId, now + 1);
+    try {
+      return await work();
+    } finally {
+      const left = (this.running.get(userId) ?? 1) - 1;
+      if (left > 0) this.running.set(userId, left);
+      else this.running.delete(userId);
+    }
   }
 
   /**

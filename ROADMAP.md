@@ -489,10 +489,12 @@ the position of the mention it shows and the revision of the note. "Link"
 mention through `writeNoteText`, tied to that revision, so a note that has
 changed since is left alone. Before it writes, it parses the new text again
 and refuses unless the only change is one more `[[link]]` at that place. The
-list offers only what "Link" would take, with the same function, and parses at
-most 1,000,000 characters or one second per request, skipping notes over
-100,000 characters. It saves the old text as a version, syncs the links and
-leaves `updatedAt` alone.
+list offers only what "Link" would take, with the same function. Every parse
+runs in a pool of two worker threads with half a second each, and its tree and
+verdict are kept by note and revision. A request parses at most 1,000,000
+characters or one second, skips notes over 100,000 characters, and one account
+runs two such requests at a time. It saves the old text as a version, syncs
+the links and leaves `updatedAt` alone.
 
 The graph is a page of its own. `GET /links/graph` returns nodes and resolved
 edges from one query, with titles matched by the SQL expression `resolveKeys`

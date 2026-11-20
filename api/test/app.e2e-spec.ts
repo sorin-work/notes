@@ -19,6 +19,7 @@ import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { MAX_GRAPH_NODES } from '../src/links/links.service';
+import { PARSE_DEADLINE_MS, ParsePool } from '../src/links/parse-pool';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
 
@@ -1123,6 +1124,45 @@ describe('renaming a note', () => {
 });
 
 describe('orphans and unlinked mentions', () => {
+  it('stays responsive while a note holds the parser up, and does not try that note again until it changes', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const post = async (body: object) =>
+      (await request(server).post('/api/notes').set(auth).send(body).expect(201)).body.id as string;
+    const target = await post({ title: 'Atlas' });
+    const fill = (piece: string) => piece.repeat(Math.floor(99_000 / piece.length)) + ' Atlas';
+    // The inputs that held the parser for seconds to a minute, each under the limits.
+    // Written to the database directly: a request body that size is refused before it gets here.
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    const prisma = app.get(PrismaService);
+    for (const piece of ['> - > - Atlas\n', '*_', '>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Atlas\n']) {
+      await prisma.note.create({
+        data: { userId: me.body.id as string, title: `Hostile ${piece.length}`, content: fill(piece) },
+      });
+    }
+    await post({ title: 'Plain', content: 'We met about the atlas.' });
+    // Room for the small note on a busy machine. The hostile ones take far longer than that.
+    const pool = app.get(ParsePool);
+    pool.deadline = 2_000;
+
+    const listing = request(server).get(`/api/notes/${target}/mentions`).set(auth);
+    const started = Date.now();
+    // While the list waits on the workers, another request is answered at once.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await request(server).get('/api/notes').set(auth).expect(200);
+    expect(Date.now() - started).toBeLessThan(400);
+    const mentions = await listing.expect(200);
+    expect(mentions.body.items.map((item: { title: string }) => item.title)).toEqual(['Plain']);
+
+    // Each note is tried once for its revision. Once all of them have been, a list asks the workers nothing.
+    for (let i = 0; i < 3; i++) await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
+    const run = jest.spyOn(pool, 'run');
+    await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
+    expect(run).not.toHaveBeenCalled();
+    run.mockRestore();
+    pool.deadline = PARSE_DEADLINE_MS;
+  });
+
   it('lists the notes with no links in or out', async () => {
     const { auth } = await signUp();
     const server = app.getHttpServer();

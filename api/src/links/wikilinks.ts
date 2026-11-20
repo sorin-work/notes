@@ -254,27 +254,47 @@ export function findMentions(markdown: string, title: string, parsed?: ParsedNot
   return mentions;
 }
 
-/** How many mentions in one note are tried before it is given up on. Each try parses the note again. */
-const MAX_TRIES = 5;
+/**
+ * Whether a mention can be ruled out from the tree of the note alone,
+ * without parsing anything again: after a "!" the brackets would open an
+ * image, which the preview shows broken, and around the label of a
+ * reference definition they would make a reference link.
+ */
+function ruledOut(markdown: string, mention: Mention, parsed: ParsedNote): boolean {
+  if (markdown[mention.start - 1] === '!') return true;
+  return parsed.labels.includes(normalizeTitle(markdown.slice(mention.start, mention.end)));
+}
 
 /**
  * Whether `linked` is `markdown` with [[ ]] put around `mention` and nothing
  * else changed, as the parser reads both. The new text is parsed again and
  * has to hold exactly the [[links]] the note had plus one, at that place
- * and in plain text, and every piece of code, HTML, every link, image,
- * reference and definition byte for byte as before. When the parser reads
- * the brackets some other way, as the label of a link to a reference
- * definition say, this says no.
+ * and in plain text, every piece of code, HTML, every link, image,
+ * reference and definition byte for byte as before, and every emphasis,
+ * strong and strikethrough where it was: brackets next to a `*`, `_` or `~`
+ * can change how those pair up. When the parser reads the brackets some
+ * other way, as the label of a link to a reference definition say, this
+ * says no.
  */
 export function onlyAddsLink(markdown: string, linked: string, mention: Mention, parsed?: ParsedNote | null): boolean {
   const { start, end } = mention;
   if (linked !== `${markdown.slice(0, start)}[[${markdown.slice(start, end)}]]${markdown.slice(end)}`) return false;
   const before = parsed === undefined ? parseNote(markdown) : parsed;
+  if (!before || ruledOut(markdown, mention, before)) return false;
   const after = parseNote(linked);
-  if (!before || !after) return false;
+  if (!after) return false;
 
   if (before.verbatim.length !== after.verbatim.length) return false;
   if (before.verbatim.some((part, index) => part !== after.verbatim[index])) return false;
+
+  // Formatting stays where it was, moved along by the brackets.
+  const shift = (at: number) => (at <= start ? at : at >= end ? at + 4 : at + 2);
+  const formatting = before.formatting.map((node) => {
+    const [type, from, to] = node.split(':');
+    return `${type}:${shift(Number(from))}:${shift(Number(to))}`;
+  });
+  if (formatting.length !== after.formatting.length) return false;
+  if (formatting.some((node, index) => node !== after.formatting[index])) return false;
 
   // The new link sits inside one stretch of plain text, brackets and all.
   if (!after.prose.some((span) => span.from <= start && end + 4 <= span.to)) return false;
@@ -291,29 +311,31 @@ export function onlyAddsLink(markdown: string, linked: string, mention: Mention,
 /**
  * Wraps one unlinked mention of `title` in [[ ]], keeping the words as they
  * were written: the one that starts at `at.offset` and reads `at.text`, or
- * without `at` the first one for which that works. Returns the mention and
- * the new text, or null when there is no such mention.
+ * without `at` the first one that is not ruled out from the tree. Returns
+ * the mention and the new text, or null when there is no such mention or
+ * onlyAddsLink refuses it.
  *
- * Every try is checked with onlyAddsLink. A mention it refuses is never
- * offered, so the list and "Link" agree on what can be linked.
+ * The note is parsed once, or not at all when `parsed` holds its tree
+ * already, and the new text once more. The list and "Link" both use this,
+ * so they agree on what can be linked.
  */
 export function linkableMention(
   markdown: string,
   title: string,
   at?: { offset: number; text: string },
+  parsed?: ParsedNote | null,
 ): (Mention & { linked: string }) | null {
   if (!mayMention(markdown, title)) return null;
-  const parsed = parseNote(markdown);
-  if (!parsed) return null;
-  const mentions = findMentions(markdown, title, parsed);
-  const tries = at ? mentions.filter((found) => found.start === at.offset) : mentions.slice(0, MAX_TRIES);
-  for (const mention of tries) {
-    const written = markdown.slice(mention.start, mention.end);
-    if (at && written !== at.text) return null;
-    const linked = `${markdown.slice(0, mention.start)}[[${written}]]${markdown.slice(mention.end)}`;
-    if (onlyAddsLink(markdown, linked, mention, parsed)) return { ...mention, linked };
-  }
-  return null;
+  const tree = parsed === undefined ? parseNote(markdown) : parsed;
+  if (!tree) return null;
+  const mention = findMentions(markdown, title, tree).find((found) =>
+    at ? found.start === at.offset : !ruledOut(markdown, found, tree),
+  );
+  if (!mention) return null;
+  const written = markdown.slice(mention.start, mention.end);
+  if (at && written !== at.text) return null;
+  const linked = `${markdown.slice(0, mention.start)}[[${written}]]${markdown.slice(mention.end)}`;
+  return onlyAddsLink(markdown, linked, mention, tree) ? { ...mention, linked } : null;
 }
 
 /** The first mention that can be linked, if there is one. */
