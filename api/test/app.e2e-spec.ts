@@ -11,6 +11,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { APP_CONFIG, loadConfig } from '../src/config/config';
+import { setupDocs } from '../src/docs';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
@@ -58,6 +59,7 @@ beforeAll(async () => {
     .compile();
   app = moduleRef.createNestApplication();
   setupApp(app);
+  setupDocs(app);
   await app.init();
 });
 
@@ -332,6 +334,72 @@ describe('password reset', () => {
       .post('/api/auth/password-reset/confirm')
       .send({ token: 'made-up-token', password: 'password456' })
       .expect(400);
+  });
+});
+
+describe('api docs', () => {
+  type Operation = { security: Record<string, string[]>[]; tags: string[]; parameters?: { name: string }[] };
+  type Document = {
+    paths: Record<string, Record<string, Operation>>;
+    components: {
+      securitySchemes: Record<string, { type: string; scheme: string }>;
+      schemas: Record<string, { properties: Record<string, Record<string, unknown>>; required?: string[] }>;
+    };
+  };
+
+  it('serves the page and the document without a login', async () => {
+    const server = app.getHttpServer();
+    const page = await request(server).get('/api/docs').expect(200);
+    expect(page.headers['content-type']).toContain('text/html');
+    expect(page.text).toContain('Notes API');
+    const json = await request(server).get('/api/docs-json').expect(200);
+    expect(json.body.info.title).toBe('Notes API');
+  });
+
+  it('describes both kinds of credential and says which routes take which', async () => {
+    const { body } = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const document = body as Document;
+    expect(document.components.securitySchemes).toMatchObject({
+      login: { type: 'http', scheme: 'bearer' },
+      apiToken: { type: 'http', scheme: 'bearer' },
+    });
+
+    const takes = (method: string, path: string) =>
+      document.paths[path][method].security.map((entry) => Object.keys(entry)[0]);
+    // Public, as the guard has it.
+    expect(takes('post', '/api/auth/login')).toEqual([]);
+    expect(takes('get', '/api/public/notes/{token}')).toEqual([]);
+    expect(takes('get', '/api/health')).toEqual([]);
+    // Either credential.
+    expect(takes('get', '/api/notes')).toEqual(['login', 'apiToken']);
+    expect(takes('get', '/api/auth/me')).toEqual(['login', 'apiToken']);
+    // A login only: the account and the tokens.
+    expect(takes('patch', '/api/auth/me')).toEqual(['login']);
+    expect(takes('post', '/api/auth/tokens')).toEqual(['login']);
+    expect(takes('delete', '/api/auth/tokens/{id}')).toEqual(['login']);
+
+    // No operation is left without a statement, and each has a group.
+    const operations = Object.values(document.paths).flatMap((item) => Object.values(item));
+    expect(operations.length).toBeGreaterThan(40);
+    expect(operations.every((operation) => Array.isArray(operation.security))).toBe(true);
+    expect(document.paths['/api/notes/{noteId}/versions'].get.tags).toEqual(['notes']);
+  });
+
+  it('takes the request bodies and queries from the classes the API validates with', async () => {
+    const { body } = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const { schemas } = (body as Document).components;
+
+    expect(schemas.RegisterDto.required).toEqual(['email', 'name', 'password']);
+    expect(schemas.RegisterDto.properties.password).toMatchObject({ type: 'string', minLength: 8, maxLength: 72 });
+    expect(schemas.RegisterDto.properties.email).toMatchObject({ format: 'email' });
+    expect(Object.keys(schemas.CreateNoteDto.properties)).toEqual(
+      expect.arrayContaining(['title', 'content', 'notebookId', 'tags', 'pinned', 'favorite']),
+    );
+    expect(schemas.CreateApiTokenDto.required).toEqual(['name']);
+
+    const query = (path: string) => (body as Document).paths[path].get.parameters?.map((parameter) => parameter.name);
+    expect(query('/api/notes')).toEqual(expect.arrayContaining(['notebookId', 'tag', 'sort', 'page', 'pageSize']));
+    expect(query('/api/search')).toEqual(expect.arrayContaining(['q', 'notebookId', 'tag', 'page']));
   });
 });
 
