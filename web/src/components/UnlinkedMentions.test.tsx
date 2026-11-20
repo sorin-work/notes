@@ -1,6 +1,10 @@
+import { useQuery } from '@tanstack/react-query';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { getNote } from '../api/notes';
+import { note } from '../test/fixtures';
 import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { UnlinkedMentions } from './UnlinkedMentions';
@@ -9,7 +13,11 @@ const mention = (id: string, title: string) => ({
   id,
   title,
   updatedAt: '2026-01-02T10:00:00Z',
-  context: `We talked about the atlas in ${title}.`,
+  before: `In ${title} we talked about the `,
+  match: 'atlas',
+  after: ' at length.',
+  offset: 40,
+  version: 'a'.repeat(64),
 });
 const page = (items: object[], total = items.length, number = 1, capped = false) => ({
   items,
@@ -34,17 +42,66 @@ describe('UnlinkedMentions', () => {
 
     expect(await screen.findByRole('heading', { name: /Unlinked mentions/ })).toHaveTextContent('1');
     expect(screen.getByRole('link', { name: 'Minutes' })).toHaveAttribute('href', '/notes/n2?tag=atlas');
-    expect(screen.getByText('We talked about the atlas in Minutes.')).toBeInTheDocument();
+    // The line of the mention, with the mention itself marked.
+    const marked = screen.getByText('atlas', { selector: 'mark' });
+    expect(marked.parentElement).toHaveTextContent('In Minutes we talked about the atlas at length.');
     expect(calls[0]?.url).toBe('/api/notes/n1/mentions?page=1&pageSize=10');
     await expectNoAxeViolations({ part: true });
 
     await userEvent.click(screen.getByRole('button', { name: 'Link the mention in Minutes' }));
     // The mention is a backlink now, so the list is empty and goes away.
     await waitFor(() => expect(screen.queryByRole('heading', { name: /Unlinked mentions/ })).not.toBeInTheDocument());
-    expect(calls.some((call) => call.method === 'POST' && call.url === '/api/notes/n1/mentions/n2/link')).toBe(true);
-    for (const queryKey of [['backlinks'], ['notes'], ['note', 'n2'], ['links', 'n2'], ['versions', 'n2']]) {
+    // "Link" names the mention that was shown: where it is, how it reads and the text it was found in.
+    expect(calls.find((call) => call.method === 'POST')).toMatchObject({
+      url: '/api/notes/n1/mentions/n2/link',
+      body: { offset: 40, text: 'atlas', version: 'a'.repeat(64) },
+    });
+    for (const queryKey of [['backlinks'], ['notes'], ['links', 'n2'], ['versions', 'n2']]) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey });
     }
+  });
+
+  it('does not leave the old text of the linked note for the editor to pick up', async () => {
+    // The editor reads a note from the cache when it is there, and keeps what it read as its own text.
+    function Editor({ id }: { id: string }) {
+      const opened = useQuery({ queryKey: ['note', id], queryFn: () => getNote(id) });
+      return opened.data ? <Text key={id} content={opened.data.content} /> : <p>Loading the note</p>;
+    }
+    function Text({ content }: { content: string }) {
+      const [text] = useState(content);
+      return <textarea aria-label="Note content" readOnly value={text} />;
+    }
+    function App() {
+      const [open, setOpen] = useState<'n1' | 'n2'>('n2');
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(open === 'n1' ? 'n2' : 'n1')}>
+            Open the other note
+          </button>
+          {open === 'n2' ? <Editor id="n2" /> : <UnlinkedMentions noteId="n1" />}
+        </>
+      );
+    }
+
+    let content = 'We looked at the atlas.';
+    mockFetch({
+      'GET /api/notes/n2': () => ({ body: note({ id: 'n2', title: 'Minutes', content }) }),
+      'GET /api/notes/n1/mentions': () => ({ body: page(content.includes('[[') ? [] : [mention('n2', 'Minutes')]) }),
+      'POST /api/notes/n1/mentions/n2/link': () => {
+        content = 'We looked at the [[atlas]].';
+        return { status: 204 };
+      },
+    });
+    renderWithProviders(<App />);
+    // The other note is opened first, so its text from before the link is in the cache.
+    expect(await screen.findByLabelText('Note content')).toHaveValue('We looked at the atlas.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open the other note' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Link the mention in Minutes' }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /Unlinked mentions/ })).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open the other note' }));
+    expect(await screen.findByLabelText('Note content')).toHaveValue('We looked at the [[atlas]].');
   });
 
   it('shows nothing when no note mentions this one', async () => {

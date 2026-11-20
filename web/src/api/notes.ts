@@ -1,5 +1,5 @@
 import { api, download, json, withQuery } from './client';
-import type { Backlink, MentionPage, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
+import type { Backlink, Mention, MentionPage, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
 
 export type NoteSort = 'updated' | 'created' | 'title';
 
@@ -33,9 +33,15 @@ export const outgoingLinks = (id: string) => api<OutgoingLink[]>(`/notes/${id}/l
 export const mentions = (id: string, page: number, pageSize: number) =>
   api<MentionPage>(withQuery(`/notes/${id}/mentions`, { page, pageSize }));
 
-/** Wraps the first such mention in the note `sourceId` in [[ ]]. */
-export const linkMention = (id: string, sourceId: string) =>
-  api<void>(`/notes/${id}/mentions/${sourceId}/link`, { method: 'POST' });
+/**
+ * Puts [[ ]] around a mention, exactly the one that was listed. The API
+ * answers 409 when that note has changed since.
+ */
+export const linkMention = (id: string, mention: Mention) =>
+  api<void>(
+    `/notes/${id}/mentions/${mention.id}/link`,
+    json('POST', { offset: mention.offset, text: mention.match, version: mention.version }),
+  );
 
 export const noteTitles = (q: string, limit = 8) =>
   api<{ id: string; title: string }[]>(withQuery('/notes/titles', { q, limit }));

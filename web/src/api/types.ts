@@ -89,8 +89,19 @@ export interface Backlink {
   context: string;
 }
 
-/** A note that writes another note's title without linking to it. Same shape as a backlink. */
-export type Mention = Backlink;
+/** A note that writes another note's title without linking to it, with the place where it does. */
+export interface Mention {
+  id: string;
+  title: string;
+  updatedAt: string;
+  /** The line of the mention: what stands before it, the mention as written, what follows. */
+  before: string;
+  match: string;
+  after: string;
+  /** Where the mention starts in that note's text, and the state of the text it was found in. */
+  offset: number;
+  version: string;
+}
 
 export interface MentionPage extends Page<Mention> {
   /** True when more notes matched than the server read, so some mentions may be missing. */
