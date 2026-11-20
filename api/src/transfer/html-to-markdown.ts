@@ -95,10 +95,12 @@ function closeSelfClosing(html: string): string {
 }
 
 export function htmlToMarkdown(html: string): string {
-  return turndown
-    .turndown(closeSelfClosing(html))
-    // Evernote spaces with &nbsp; all over. In Markdown that is just a space.
-    .replace(/\u00a0/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return (
+    turndown
+      .turndown(closeSelfClosing(html))
+      // Evernote spaces with &nbsp; all over. In Markdown that is just a space.
+      .replace(/\u00a0/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  );
 }
