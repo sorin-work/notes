@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { Page, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
@@ -8,9 +8,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
 import { TagsService } from '../tags/tags.service';
 import { VersionsService } from '../versions/versions.service';
-import { CreateNoteDto, ListNotesQuery, MAX_CONTENT_LENGTH, UpdateNoteDto } from './dto/note.dto';
+import { CreateNoteDto, ListNotesQuery, MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH, UpdateNoteDto } from './dto/note.dto';
+import { templateNotes, workingNotes } from './note-scope';
 import { IN_TRASH, refusedWrite, writeNoteText } from './note-text';
 import { noteInclude, NoteSummary, NoteView, toSummary, toView } from './note-view';
+import { fillPlaceholders } from './placeholders';
 
 export const DEFAULT_TITLE = 'Untitled';
 
@@ -40,7 +42,7 @@ export class NotesService {
   ) {}
 
   async list(userId: string, query: ListNotesQuery): Promise<Page<NoteSummary>> {
-    const where: Prisma.NoteWhereInput = { userId, deletedAt: null };
+    const where: Prisma.NoteWhereInput = query.templates ? templateNotes(userId) : workingNotes(userId);
 
     if (query.notebookId === 'none') {
       where.notebookId = null;
@@ -88,27 +90,86 @@ export class NotesService {
     if (dto.notebookId) {
       await this.notebooks.findOwned(userId, dto.notebookId);
     }
-    const content = dto.content ?? '';
-    const note = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.note.create({
-        data: {
-          userId,
-          title: dto.title || DEFAULT_TITLE,
-          content,
-          notebookId: dto.notebookId ?? null,
-          pinned: dto.pinned ?? false,
-          favorite: dto.favorite ?? false,
-        },
-      });
-      if (dto.tags?.length) {
-        await this.tags.setNoteTags(tx, userId, created.id, dto.tags);
-      }
-      if (content) {
-        await this.links.sync(tx, created.id, content);
-      }
-      return tx.note.findUniqueOrThrow({ where: { id: created.id }, include: noteInclude });
+    const template = dto.templateId ? await this.fromTemplate(userId, dto.templateId, dto) : null;
+    return this.insert(userId, {
+      title: dto.title || template?.title || DEFAULT_TITLE,
+      content: dto.content ?? template?.content ?? '',
+      tags: dto.tags ?? template?.tags ?? [],
+      notebookId: dto.notebookId ?? null,
+      pinned: dto.pinned ?? false,
+      favorite: dto.favorite ?? false,
+      isTemplate: dto.isTemplate ?? false,
     });
-    return toView(note);
+  }
+
+  /**
+   * A copy of a note: its text, its tags, its notebook, and whether it is a
+   * template. Nothing else comes along: not the pin or the star, not the
+   * share link and not the history.
+   */
+  async duplicate(userId: string, id: string): Promise<NoteView> {
+    await this.findActive(userId, id);
+    const source = await this.prisma.note.findFirstOrThrow({
+      where: { id, userId },
+      include: { tags: { include: { tag: true } } },
+    });
+    const suffix = ' (copy)';
+    return this.insert(userId, {
+      title: source.title.slice(0, MAX_TITLE_LENGTH - suffix.length) + suffix,
+      content: source.content,
+      tags: source.tags.map((noteTag) => noteTag.tag.name),
+      notebookId: source.notebookId,
+      pinned: false,
+      favorite: false,
+      isTemplate: source.isTemplate,
+    });
+  }
+
+  /**
+   * What a note made from a template starts with: the title, text and tags
+   * of the template, with the placeholders filled in. Its [[links]] come
+   * along as text and are stored for the new note like any others. The values
+   * for {{date}} and {{time}} come with the request, {{title}} is the title
+   * the new note gets.
+   */
+  private async fromTemplate(
+    userId: string,
+    templateId: string,
+    dto: CreateNoteDto,
+  ): Promise<{ title: string; content: string; tags: string[] }> {
+    const template = await this.prisma.note.findFirst({
+      where: { ...templateNotes(userId), id: templateId },
+      include: { tags: { include: { tag: true } } },
+    });
+    if (!template) {
+      throw new NotFoundException('Template not found');
+    }
+    const values = { date: dto.placeholders?.date, time: dto.placeholders?.time };
+    const filledTitle = fillPlaceholders(template.title, values).trim().slice(0, MAX_TITLE_LENGTH);
+    const title = dto.title || filledTitle || DEFAULT_TITLE;
+    const content = fillPlaceholders(template.content, { ...values, title });
+    if (content.length > MAX_CONTENT_LENGTH) {
+      throw new BadRequestException('With its placeholders filled in, this template is too long for a note');
+    }
+    return { title, content, tags: template.tags.map((noteTag) => noteTag.tag.name) };
+  }
+
+  private async insert(
+    userId: string,
+    note: Pick<Note, 'title' | 'content' | 'notebookId' | 'pinned' | 'favorite' | 'isTemplate'> & { tags: string[] },
+  ): Promise<NoteView> {
+    const { tags, ...data } = note;
+    const created = await this.prisma.$transaction(async (tx) => {
+      const { id } = await tx.note.create({ data: { userId, ...data } });
+      if (tags.length) {
+        await this.tags.setNoteTags(tx, userId, id, tags);
+      }
+      if (data.content) {
+        await this.links.sync(tx, id, data.content);
+      }
+      return tx.note.findUniqueOrThrow({ where: { id }, include: noteInclude });
+    });
+    return toView(created);
   }
 
   async update(userId: string, id: string, dto: UpdateNoteDto): Promise<NoteView> {
@@ -160,7 +221,8 @@ export class NotesService {
       }
       if (dto.pinned !== undefined) data.pinned = dto.pinned;
       if (dto.favorite !== undefined) data.favorite = dto.favorite;
-      // Pinning or favouriting is not an edit.
+      if (dto.isTemplate !== undefined) data.isTemplate = dto.isTemplate;
+      // Pinning, favouriting or making a note a template is not an edit.
       if (textChanged || notebookChanged || tagsChanged) data.updatedAt = new Date();
 
       return tx.note.update({ where: { id }, data, include: noteInclude });
@@ -227,7 +289,7 @@ export class NotesService {
     const take = Math.min(Math.max(limit, 1), 25);
     const term = q.trim();
     const select = { id: true, title: true } as const;
-    const base: Prisma.NoteWhereInput = { userId, deletedAt: null };
+    const base: Prisma.NoteWhereInput = workingNotes(userId);
     if (!term) {
       return this.prisma.note.findMany({ where: base, orderBy: { updatedAt: 'desc' }, take, select });
     }
@@ -272,6 +334,8 @@ export class NotesService {
     // With a second note of the new title, the rewritten links could lead to that one.
     if (await this.links.titleTaken(userId, note.title, { db, except: note.id })) return nothing;
 
+    // Templates are in on purpose: the notes made from one later should not
+    // start out with a link to the old title.
     const sources = await db.note.findMany({
       where: {
         userId,

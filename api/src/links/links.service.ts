@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { excerpt } from '../common/text';
+import { workingNotes } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { extractWikiLinks, normalizeTitle } from './wikilinks';
 
@@ -39,7 +40,7 @@ export class LinksService {
     }
   }
 
-  /** Notes outside the trash whose [[links]] point at this note's title. */
+  /** The notes whose [[links]] point at this note's title. A template that links here is not one of them. */
   async backlinks(userId: string, noteId: string): Promise<Backlink[]> {
     const note = await this.prisma.note.findFirst({ where: { id: noteId, userId }, select: { title: true } });
     if (!note) {
@@ -48,8 +49,7 @@ export class LinksService {
     const key = normalizeTitle(note.title);
     const sources = await this.prisma.note.findMany({
       where: {
-        userId,
-        deletedAt: null,
+        ...workingNotes(userId),
         id: { not: noteId },
         outgoingLinks: { some: { targetKey: key } },
       },

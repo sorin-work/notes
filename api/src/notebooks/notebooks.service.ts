@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Notebook } from '@prisma/client';
+import { WORKING_NOTE } from '../notes/note-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotebookDto, UpdateNotebookDto } from './dto/notebook.dto';
 
@@ -20,7 +21,7 @@ export class NotebooksService {
     const notebooks = await this.prisma.notebook.findMany({
       where: { userId },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { notes: { where: { deletedAt: null } } } } },
+      include: { _count: { select: { notes: { where: WORKING_NOTE } } } },
     });
     return notebooks.map(({ _count, userId: _userId, ...notebook }) => ({ ...notebook, noteCount: _count.notes }));
   }
@@ -99,7 +100,7 @@ export class NotebooksService {
   private async view(userId: string, id: string): Promise<NotebookView> {
     const notebook = await this.prisma.notebook.findFirstOrThrow({
       where: { id, userId },
-      include: { _count: { select: { notes: { where: { deletedAt: null } } } } },
+      include: { _count: { select: { notes: { where: WORKING_NOTE } } } },
     });
     const { _count, userId: _userId, ...rest } = notebook;
     return { ...rest, noteCount: _count.notes };

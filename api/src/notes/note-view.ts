@@ -25,6 +25,8 @@ export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   content: string;
   /** Counts the changes to the title and the content. A save names the revision it was based on. */
   revision: number;
+  /** A template is kept out of the lists and the search, and new notes are made from it. */
+  isTemplate: boolean;
   notebook: { id: string; name: string; parentId: string | null } | null;
   shared: boolean;
   deletedAt: Date | null;
@@ -50,6 +52,7 @@ export function toView(note: NoteWithRelations): NoteView {
     title: note.title,
     content: note.content,
     revision: note.revision,
+    isTemplate: note.isTemplate,
     notebookId: note.notebookId,
     notebook: note.notebook,
     tags: note.tags.map((noteTag) => noteTag.tag.name),

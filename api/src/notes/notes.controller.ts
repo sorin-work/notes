@@ -54,6 +54,11 @@ export class NotesController {
     return this.notes.get(user.id, id);
   }
 
+  @Post(':id/duplicate')
+  duplicate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
+    return this.notes.duplicate(user.id, id);
+  }
+
   @Patch(':id')
   update(
     @CurrentUser() user: AuthUser,

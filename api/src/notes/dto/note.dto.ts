@@ -15,6 +15,7 @@ import {
   Min,
   NotContains,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { PaginationQuery } from '../../common/pagination';
 import { ToBoolean, Trim } from '../../common/transforms';
@@ -27,6 +28,27 @@ const NUL = '\0';
 export const MAX_CONTENT_LENGTH = 1_000_000;
 /** The largest number the revision column can hold. */
 const MAX_REVISION = 2_147_483_647;
+
+/** Longest text a placeholder is filled with. A date or a time needs far less. */
+const MAX_PLACEHOLDER_LENGTH = 100;
+
+/**
+ * The values for the placeholders of a template. They are worked out in the
+ * browser, which knows the user's time zone, and arrive as plain text.
+ */
+export class PlaceholdersDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_PLACEHOLDER_LENGTH)
+  @NotContains(NUL, { message: 'date must not contain a null character' })
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_PLACEHOLDER_LENGTH)
+  @NotContains(NUL, { message: 'time must not contain a null character' })
+  time?: string;
+}
 
 export class CreateNoteDto {
   @IsOptional()
@@ -58,6 +80,24 @@ export class CreateNoteDto {
   @IsOptional()
   @IsBoolean()
   favorite?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isTemplate?: boolean;
+
+  /**
+   * Make the note from this template: its content and tags are copied, with
+   * the placeholders filled in. A title, content or tags sent along take the
+   * place of what the template would have given.
+   */
+  @IsOptional()
+  @IsUUID()
+  templateId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PlaceholdersDto)
+  placeholders?: PlaceholdersDto;
 }
 
 export class UpdateNoteDto {
@@ -88,6 +128,11 @@ export class UpdateNoteDto {
   @IsOptional()
   @IsBoolean()
   keepVersion?: boolean;
+
+  /** Turns the note into a template, or back into a note. Like pinning, it is no change to the text. */
+  @IsOptional()
+  @IsBoolean()
+  isTemplate?: boolean;
 
   /** null takes the note out of its notebook. */
   @ValidateIf((_, value) => value !== null && value !== undefined)
@@ -134,6 +179,12 @@ export class NoteFilterQuery extends PaginationQuery {
 }
 
 export class ListNotesQuery extends NoteFilterQuery {
+  /** List the templates. Without it the list is the notes, and no template is in it. */
+  @IsOptional()
+  @ToBoolean()
+  @IsBoolean()
+  templates?: boolean;
+
   @IsOptional()
   @ToBoolean()
   @IsBoolean()
