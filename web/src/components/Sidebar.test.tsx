@@ -77,4 +77,19 @@ describe('Sidebar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ name: 'Ideas', parentId: 'p' });
   });
+
+  it('opens the share dialog for a notebook', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: notebooks },
+      'GET /api/tags': { body: [] },
+      'GET /api/notebooks/w/share': { body: { share: null } },
+    });
+    renderSidebar();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Share Work' }));
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'Share notebook' }));
+    expect(await dialog.findByRole('button', { name: 'Create link' })).toBeInTheDocument();
+  });
 });

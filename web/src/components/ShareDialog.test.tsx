@@ -47,6 +47,26 @@ describe('ShareDialog', () => {
     expect(await screen.findByRole('button', { name: 'Create link' })).toBeInTheDocument();
   });
 
+  it('shares a notebook through the notebook routes, and says what that covers', async () => {
+    let shared = false;
+    const calls = mockFetch({
+      'GET /api/notebooks/nb1/share': () => ({ body: { share: shared ? share : null } }),
+      'POST /api/notebooks/nb1/share': () => {
+        shared = true;
+        return { body: share };
+      },
+    });
+    renderWithProviders(<ShareDialog notebookId="nb1" onClose={vi.fn()} />);
+
+    expect(await screen.findByRole('dialog', { name: 'Share notebook' })).toBeInTheDocument();
+    expect(await screen.findByText(/also the ones\s+you add later/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Create link' }));
+
+    expect(await screen.findByLabelText('Share link')).toHaveValue(`${window.location.origin}/s/tok123`);
+    expect(screen.getByLabelText('Link runs out')).toBeInTheDocument();
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toContain('POST /api/notebooks/nb1/share');
+  });
+
   it('sets when the link runs out, and lifts the limit again', async () => {
     let current = share;
     const calls = mockFetch({
