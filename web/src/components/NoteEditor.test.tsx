@@ -18,14 +18,14 @@ function baseRoutes(overrides = {}) {
   };
 }
 
-function renderEditor() {
+function renderEditor(state?: unknown) {
   localStorage.setItem('notes.editorMode', 'split');
   return renderWithProviders(
     <Routes>
       <Route path="/notes/:noteId" element={<NoteEditor noteId="n1" />} />
       <Route path="/notes/:noteId" element={<div />} />
     </Routes>,
-    { route: '/notes/n1' },
+    { route: { pathname: '/notes/n1', state } },
   );
 }
 
@@ -92,6 +92,12 @@ describe('NoteEditor', () => {
     await userEvent.keyboard('{ArrowDown}{Enter}');
     expect(option).not.toBeInTheDocument();
     expect(textarea).toHaveValue('See [[Weekly sync]]');
+  });
+
+  it('puts the cursor in the text when the quick switcher opened the note', async () => {
+    mockFetch(baseRoutes());
+    renderEditor({ focusEditor: true });
+    expect(await screen.findByLabelText('Note content')).toHaveFocus();
   });
 
   it('shows notes in the trash as read-only', async () => {

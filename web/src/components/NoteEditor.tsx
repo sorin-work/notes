@@ -98,6 +98,12 @@ function LoadedEditor({ note }: { note: Note }) {
     autosave.schedule(draft);
   };
 
+  // The quick switcher is used from the keyboard, so it asks for the cursor to land in the text.
+  const focusText = (location.state as { focusEditor?: boolean } | null)?.focusEditor === true;
+  useEffect(() => {
+    if (focusText) textareaRef.current?.focus();
+  }, [focusText]);
+
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (autosave.hasPending()) event.preventDefault();
