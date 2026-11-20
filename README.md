@@ -24,6 +24,10 @@ Markdown import/export.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted.
+- **Quick switcher**: `Ctrl+K` (`Cmd+K` on a Mac) opens a small dialog with
+  the notes edited last. Type part of a title, press Enter, and you are in
+  that note with the cursor in its text, or on the preview when only the
+  preview is showing.
 - **Version history**: while you edit, the previous text is saved as a
   version at most every ten minutes (the last 50 are kept). Any version can be
   previewed and restored; restoring saves the current text first.
@@ -46,6 +50,7 @@ Markdown import/export.
 | ------------------ | --------------------------------- |
 | `Alt+N`            | New note                          |
 | `/`                | Search                            |
+| `Ctrl+K` / `Cmd+K` | Go to a note by its title         |
 | `Ctrl+S` / `Cmd+S` | Save now                          |
 | `Ctrl+E` / `Cmd+E` | Switch between edit/split/preview |
 
@@ -102,11 +107,18 @@ docker compose --profile backup up -d
 To have it start with every `docker compose up`, put `COMPOSE_PROFILES=backup`
 in `.env`.
 
-Dumps land in `./backups` as `notes-<UTC date and time>.dump`. The first one
-is made when the service starts (on a new stack, once the API has created the
-tables) and the next one a day after the newest dump, so restarting the stack
-does not add dumps. After each dump only the newest seven are kept. Files
-with any other name are left alone: rename a dump to keep it for good.
+Dumps land in `./backups` as `notes-<UTC date and time>.dump`. When the
+service starts it makes one, unless the newest dump is less than a day old,
+so restarting the stack does not add dumps. On a new stack it first waits for
+the API to create the tables. After that it makes one dump a day. It looks at
+the clock once a minute instead of sleeping for a whole day, so a machine
+that was suspended or switched off catches up when it is back.
+
+After each dump only the newest seven are kept. Files with any other name are
+left alone: rename a dump to keep it for good. How old a dump is, and which
+ones are the oldest, is read from the time in the file name and never from
+the file's modification time. A dump dated in the future, which is what a
+clock that was set back leaves behind, counts as made now and not as overdue.
 
 | Variable                  | Default     | Purpose                               |
 | ------------------------- | ----------- | ------------------------------------- |
@@ -132,8 +144,10 @@ docker compose start api
 database, so everything written after the dump is gone. The dump is loaded
 into a new database first, and that one takes the place of the old one only
 when the load worked: a damaged file, or an API that is still running, leaves
-the data as it was. When the API starts again it applies any migrations that
-are newer than the dump.
+the data as it was. Should the very last step fail, giving the new database
+its name, the script says where the restored data is and prints the command
+that finishes the job. When the API starts again it applies any migrations
+that are newer than the dump.
 
 After losing the volume, or on another machine, it is the same command: put
 the dump in `./backups`, run the `restore` line (it starts the database by
@@ -220,12 +234,18 @@ A restore that is never tested is not a backup, so CI also runs
 `scripts/check-backup.sh` on the database the end-to-end tests leave behind.
 It takes three dumps while keeping two, restores the newest into a scratch
 database and compares the row count of every table. To run it against the
-database of the Compose stack (it needs some rows in it, and nothing writing
-to it meanwhile):
+database of the Compose stack (it needs rows in the application's tables, and
+nothing writing to it meanwhile):
 
 ```bash
 docker compose --profile backup run --rm --entrypoint sh backup /scripts/check-backup.sh
 ```
+
+It starts with `scripts/check-backup-loop.sh`, which needs neither Docker nor
+a database and can be run by itself. That one drives the daily loop with
+stand-ins for `pg_dump` and `sleep` and with dump files dated in the past and
+in the future, and fails if the loop makes more than one dump, makes two
+without a pause, or leaves fewer dumps behind than it should.
 
 ## Project layout
 
@@ -257,6 +277,7 @@ web/
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
   check-backup.sh       dumps, restores and compares row counts, run by CI
+  check-backup-loop.sh  the daily loop and the pruning against made-up clocks
 backups/                where the dumps go by default, ignored by git
 ```
 
@@ -296,7 +317,7 @@ email and deleting the account ask for the password again; a wrong one is a
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
 | `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
-| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Link completion and lookup                |
+| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |

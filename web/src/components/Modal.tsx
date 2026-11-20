@@ -5,10 +5,12 @@ interface ModalProps {
   onClose(): void;
   children: ReactNode;
   wide?: boolean;
+  /** Sits near the top of the window, so a list that grows and shrinks does not move it. */
+  top?: boolean;
 }
 
 /** A dialog that closes on Escape or a click on the backdrop, and keeps focus inside. */
-export function Modal({ title, onClose, children, wide }: ModalProps) {
+export function Modal({ title, onClose, children, wide, top }: ModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -34,7 +36,7 @@ export function Modal({ title, onClose, children, wide }: ModalProps) {
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div
-        className={wide ? 'modal modal-wide' : 'modal'}
+        className={['modal', wide && 'modal-wide', top && 'modal-top'].filter(Boolean).join(' ')}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

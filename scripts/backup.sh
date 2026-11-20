@@ -9,6 +9,10 @@
 #
 # Dumps go to $BACKUP_DIR as notes-<UTC time>.dump in pg_dump's custom
 # format. After every dump only the newest $BACKUP_KEEP are kept.
+#
+# The time in the name is the only time that counts, for the age of a dump
+# and for the order they are pruned in. Modification times are not looked
+# at: on a network share they come from another machine's clock.
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
@@ -45,13 +49,23 @@ check_settings() {
   fi
 }
 
-# File names of the finished dumps, newest first. The name sorts by time.
+# File names of the finished dumps, newest first, going by the time in the
+# name.
 dumps() {
   ls -1 "$dir" | grep -E '^notes-[0-9]{8}T[0-9]{6}Z\.dump$' | sort -r
 }
 
+# The time in a dump's name as seconds since 1970. Prints nothing when the
+# name does not hold a real date.
+dump_time() {
+  date -u -d "$(echo "$1" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null || true
+}
+
+# Removes the oldest dumps until $keep are left. The dump that was just
+# written ($1) is never one of them: after the clock was set back it sorts
+# below older dumps, and it is still the one worth keeping.
 prune() {
-  dumps | tail -n +"$((keep + 1))" | while read -r old; do
+  dumps | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
     rm -f "$dir/$old"
     log "removed $old"
   done
@@ -76,25 +90,21 @@ dump() {
   mv "$partial" "$dir/$name" || return 1
   partial=''
   log "wrote $name ($(wc -c <"$dir/$name") bytes)"
-  prune
+  prune "$name"
 }
 
-# Seconds until the next dump is due: one interval after the newest dump.
-# Going by the files rather than by a timer means a restart does not add an
-# extra dump, and a machine that was off catches up when it comes back.
-seconds_until_due() {
-  newest=$(dumps | head -n 1)
-  if [ -z "$newest" ]; then
-    echo 0
-    return
-  fi
-  written=$(stat -c %Y "$dir/$newest" 2>/dev/null) || written=0
-  age=$(($(date +%s) - written))
-  if [ "$age" -lt 0 ] || [ "$age" -ge "$interval" ]; then
-    echo 0
-  else
-    echo $((interval - age))
-  fi
+# When the newest dump was made, as seconds since 1970, for a clock that
+# reads $1. Dumps dated after that are skipped: the clock was set back since
+# they were made, so they say nothing about the age of the newest real one.
+# Prints nothing when no dump is left to go by.
+newest_dump_time() {
+  dumps | while read -r candidate; do
+    made=$(dump_time "$candidate")
+    if [ -n "$made" ] && [ "$made" -le "$1" ]; then
+      echo "$made"
+      break
+    fi
+  done
 }
 
 # Sleeps in the background so that "docker compose stop" is not kept waiting.
@@ -103,31 +113,56 @@ nap() {
   wait $!
 }
 
+# The daily loop. What it has to get right, because getting it wrong deletes
+# backups: a dump followed at once by another dump prunes one old dump per
+# round until the history is gone.
+#
+#   - "last" is when the newest dump was made. It is read from the file names
+#     once, at the start. After that it is only ever set to the current time,
+#     so nothing on disk and no change of the clock can make a dump look
+#     overdue twice in a row.
+#   - A dump dated in the future counts as made now, never as overdue.
+#   - After every attempt, whether it worked or not, there is a pause before
+#     the next one.
+#   - The wait is slept in steps of at most a minute, with a look at the clock
+#     after each. One long sleep would not count the time a laptop spends
+#     suspended, and the dumps would come less often than daily.
 run() {
   check_settings
   trap 'rm -f "$partial"; log "stopping"; exit 0' TERM INT
-  # Pause after a failed dump, and while the database has no tables yet.
-  retry=$((interval < 60 ? interval : 60))
+  step=$((interval < 60 ? interval : 60))
   # Left behind if the last run was killed in the middle of a dump.
   rm -f "$dir"/.notes-*.partial
   log "dumping $PGDATABASE to $dir every ${interval}s, keeping the newest $keep"
+
+  now=$(date +%s)
+  last=$(newest_dump_time "$now")
+  if [ -z "$last" ] && [ -n "$(dumps | head -n 1)" ]; then
+    log "every dump in $dir is dated in the future, counting the newest as made now"
+    last=$now
+  fi
+
   while true; do
-    pause=$(seconds_until_due)
-    if [ "$pause" -gt 0 ]; then
-      nap "$pause"
-      continue
+    now=$(date +%s)
+    if [ -n "$last" ]; then
+      # The clock was set back since the last dump.
+      [ "$last" -le "$now" ] || last=$now
+      left=$((interval - (now - last)))
+      if [ "$left" -gt 0 ]; then
+        nap "$((left < step ? left : step))"
+        continue
+      fi
     fi
     # On a new stack this starts before the api has created the tables.
     tables=$(psql -AtXq -c "select count(*) from pg_tables where schemaname not in ('pg_catalog', 'information_schema')" 2>/dev/null) || tables=unknown
     if [ "$tables" = 0 ]; then
-      log "$PGDATABASE has no tables yet, looking again in ${retry}s"
-      nap "$retry"
-      continue
+      log "$PGDATABASE has no tables yet, looking again in ${step}s"
+    elif dump; then
+      last=$now
+    else
+      log "dump failed, trying again in ${step}s"
     fi
-    if ! dump; then
-      log "dump failed, trying again in ${retry}s"
-      nap "$retry"
-    fi
+    nap "$step"
   done
 }
 
@@ -161,7 +196,17 @@ restore() {
     drop "$incoming"
     fail "could not replace $PGDATABASE, something is still connected to it. It was left as it was. Stop the api and try again."
   fi
-  psql -qX -v ON_ERROR_STOP=1 -d postgres -c "ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\""
+  rename="ALTER DATABASE \"$incoming\" RENAME TO \"$PGDATABASE\""
+  if ! psql -qX -v ON_ERROR_STOP=1 -d postgres -c "$rename"; then
+    # The old database is gone and the copy does not have its name yet.
+    log "$PGDATABASE was dropped, but the restored copy could not be given its name." >&2
+    log "Nothing is lost: the data from $(basename "$file") is in the database $incoming." >&2
+    log "To finish the restore, run this against the same server:" >&2
+    log "  psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
+    log "With the compose stack that is:" >&2
+    log "  docker compose exec db psql ${PGUSER:+-U $PGUSER }-d postgres -c '$rename'" >&2
+    exit 1
+  fi
   log "restored $PGDATABASE from $(basename "$file")"
 }
 
