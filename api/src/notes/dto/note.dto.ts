@@ -4,6 +4,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
@@ -135,4 +136,13 @@ export class ResolveQuery {
   @IsString()
   @MaxLength(MAX_TITLE_LENGTH)
   title: string;
+}
+
+export class RenameLinksDto {
+  /** The title the note had before it was renamed, which the links still point at. */
+  @Trim()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(MAX_TITLE_LENGTH)
+  from: string;
 }
