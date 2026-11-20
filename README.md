@@ -66,6 +66,12 @@ Markdown import/export.
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
   that have SMTP settings.
+- **Capture**: `/capture?title=...&url=...` opens a new note with a page's
+  title and its address, ready to save. A bookmarklet makes that one click
+  on any page, see [Saving a page from the browser](#saving-a-page-from-the-browser).
+- **API tokens** for scripts: made and revoked in Settings, shown once, and
+  read-only if you want. A token stands in for a login on everything except
+  the account itself.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
@@ -84,6 +90,27 @@ Markdown import/export.
 | `Ctrl+S` / `Cmd+S`   | Save now                          |
 | `Ctrl+E` / `Cmd+E`   | Switch between edit/split/preview |
 | `↑` `↓` `Home` `End` | Move through the note list        |
+
+### Saving a page from the browser
+
+Make a bookmark and give it this as its address, with the address of your
+own notes in place of `http://localhost:5181`:
+
+```
+javascript:(()=>{window.open('http://localhost:5181/capture?title='+encodeURIComponent(document.title)+'&url='+encodeURIComponent(location.href))})()
+```
+
+Clicking it on any page opens the notes app in a new tab, with a note that
+has the page's title as its title and the page's address as its first line.
+Nothing is saved until you press "Save note", and if you are not signed in
+you are asked to sign in first. It needs no API token and no CORS setting,
+because the note is made by the web app itself.
+
+Any site can make such a link, so the draft takes little from it. The title
+is only ever the note's title, never part of its text. The address goes in
+as a plain link that shows exactly where it leads, and only if it is an
+ordinary `http` or `https` address. Anything else is left out, and the page
+says so.
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 
@@ -152,7 +179,8 @@ Logins, sign-ups, password resets and the account changes that ask for the
 password are limited per client address. The API sits behind nginx, so the
 stack sets `TRUST_PROXY=1`: the API then takes the address nginx reports in
 `X-Forwarded-For` instead of nginx's own, which would be the same for
-everyone and let one visitor use up the allowance of all.
+everyone and let one visitor use up the allowance of all. Requests made
+with an API token are counted per token instead, wherever they come from.
 
 That header is only worth believing when it comes from nginx. The stack also
 publishes the API port itself (4401), and whoever talks to that port
@@ -262,25 +290,27 @@ npm run dev
 
 ### Configuration
 
-| Variable               | Default    | Purpose                                                                  |
-| ---------------------- | ---------- | ------------------------------------------------------------------------ |
-| `DATABASE_URL`         | (required) | Postgres connection string                                               |
-| `JWT_SECRET`           | (required) | Signs login tokens, at least 32 characters                               |
-| `JWT_EXPIRES_IN`       | `7d`       | How long a login lasts                                                   |
-| `PORT`                 | `4401`     | API port                                                                 |
-| `CORS_ORIGINS`         | (none)     | Comma-separated browser origins, only needed without nginx               |
-| `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                                       |
-| `SEED_DEMO`            | `false`    | Create the demo account on start-up                                      |
-| `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good                           |
-| `AUTH_THROTTLE_LIMIT`  | `10`       | Per-minute limit on the routes that take a password                      |
-| `SMTP_HOST`            | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
-| `SMTP_PORT`            | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
-| `SMTP_FROM`            | (none)     | Sender of the mails, required with `SMTP_HOST`                           |
-| `SMTP_USER`            | (none)     | Login for the SMTP server, if it wants one                               |
-| `SMTP_PASSWORD`        | (none)     | Password for that login                                                  |
-| `SMTP_REQUIRE_TLS`     | `true`     | `false` lets mail go out without TLS, for a test server like mailpit     |
-| `APP_URL`              | (none)     | Address of the web app for the links in mails, required with `SMTP_HOST` |
-| `TRUST_PROXY`          | `0`        | Reverse proxies in front of the API whose `X-Forwarded-For` counts       |
+| Variable                   | Default    | Purpose                                                                  |
+| -------------------------- | ---------- | ------------------------------------------------------------------------ |
+| `DATABASE_URL`             | (required) | Postgres connection string                                               |
+| `JWT_SECRET`               | (required) | Signs login tokens, at least 32 characters                               |
+| `JWT_EXPIRES_IN`           | `7d`       | How long a login lasts                                                   |
+| `PORT`                     | `4401`     | API port                                                                 |
+| `CORS_ORIGINS`             | (none)     | Comma-separated browser origins, only needed without nginx               |
+| `LOG_LEVEL`                | `info`     | `debug`, `info`, `warn` or `error`                                       |
+| `SEED_DEMO`                | `false`    | Create the demo account on start-up                                      |
+| `TRASH_RETENTION_DAYS`     | `30`       | Days before trashed notes are deleted for good                           |
+| `AUTH_THROTTLE_LIMIT`      | `10`       | Per-minute limit on the routes that take a password                      |
+| `API_TOKEN_THROTTLE_LIMIT` | `120`      | Requests a minute that one API token may make                            |
+| `API_DOCS`                 | `true`     | `false` turns off the page and the document at `/api/docs`               |
+| `SMTP_HOST`                | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
+| `SMTP_PORT`                | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
+| `SMTP_FROM`                | (none)     | Sender of the mails, required with `SMTP_HOST`                           |
+| `SMTP_USER`                | (none)     | Login for the SMTP server, if it wants one                               |
+| `SMTP_PASSWORD`            | (none)     | Password for that login                                                  |
+| `SMTP_REQUIRE_TLS`         | `true`     | `false` lets mail go out without TLS, for a test server like mailpit     |
+| `APP_URL`                  | (none)     | Address of the web app for the links in mails, required with `SMTP_HOST` |
+| `TRUST_PROXY`              | `0`        | Reverse proxies in front of the API whose `X-Forwarded-For` counts       |
 
 The API on its own sends no mail unless `SMTP_HOST` is set, and mailpit's
 SMTP port is not reachable from outside the Compose network. To work on
@@ -420,13 +450,30 @@ text changes: a save, a restored version, links rewritten after a rename.
 Pinning, favourites, tags, moving a note and the trash leave it alone. The
 editor sends the revision its text is based on with every save. When the note
 has moved on since, the save is refused and the editor asks what to keep.
-Closing that question decides nothing: the text stays in the editor, unsaved,
-and the browser warns before the tab is closed. Leaving the note with the
-question still open saves your text and puts the other one into the history,
-so neither is lost. Restoring a version first saves what is typed, and does
-not go ahead if that fails. A save that names no revision, as from a tab that
-was loaded before this existed or from a script, is never refused: the last
-write wins, as it always did.
+"Take theirs" fetches the note as it is at that moment. Closing the question
+decides nothing: the text stays in the editor, unsaved, and the browser warns
+before the tab is closed. Restoring a version first saves what is typed, and
+does not go ahead if that fails. A save that names no revision, as from a tab
+that was loaded before this existed or from a script, is never refused: the
+last write wins, as it always did.
+
+Leaving a note never drops what was typed in it without a word:
+
+- With the question still open, or when the other change is only noticed by
+  the save that leaving sets off, your text is saved and the other version
+  goes into the history of the note. A notice in the corner says so
+  afterwards, because nobody was looking when it happened.
+- When the text cannot be saved at all, because there is no connection or the
+  session has ended, it is kept in that browser tab under your account. A
+  notice says so, and the note offers to put the changes back the next time
+  you open it there. They are removed once they are saved or you discard
+  them, and are gone when the tab is closed. Another account never sees them.
+- "Sign out" saves the open note first. If that fails, it asks before it
+  throws the changes away.
+
+If the answer to a save gets lost on the way, the next save is told that the
+note has changed. The editor recognises its own text in that change and goes
+on without asking.
 
 A note made from a template gets the template's text and tags. Three
 placeholders are filled in, and no others: `{{date}}` (as `2026-11-20`),
@@ -443,9 +490,22 @@ edit: it changes neither "last edited" nor the revision.
 
 ## API overview
 
-All endpoints are under `/api` and, apart from sign-up, login, the health
-check and shared notes, need an `Authorization: Bearer <token>` header.
-Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
+The API describes itself. With the stack running, http://localhost:5181/api/docs
+(port 4401 when the API runs by itself) is a page that lists every endpoint
+with its parameters, a line on what it does and the credentials it takes,
+and lets you try it. The OpenAPI document
+behind it is at `/api/docs-json`. Both need no login, and `API_DOCS=false`
+turns both off. The request side of the document is built from the classes
+the API validates with, so it cannot fall behind the code. The answers are
+not described in it yet. The page loads nothing from other hosts.
+
+What follows is what the document does not say, or what is worth knowing
+before opening it.
+
+All endpoints are under `/api` and, apart from sign-up, login, password
+reset, the health check and shared notes, need an
+`Authorization: Bearer <token>` header. Errors use Nest's shape:
+`{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
 
 `GET /notes/:id` returns the note's `revision`. `PATCH /notes/:id` takes it
 back as `revision`, the one the new title or content was based on. If the
@@ -479,7 +539,9 @@ stored, and it works once within an hour. It is in the fragment of the link,
 which browsers keep to themselves, so it does not show up in a server log.
 `POST /auth/password-reset/confirm` with `{ token, password }` sets the
 password, bumps the token version, so every session of the account ends, and
-ends the account's other links. Asking again does not cancel a link that is
+ends the account's other links. It revokes the account's API tokens as
+well, because a reset is the way back into an account that someone else may
+have got into. Asking again does not cancel a link that is
 already out. An account has three of them at a time at most, which also
 means three mails an hour at most, and further requests do nothing until one
 runs out or is used. The mail holds fixed text and the link, nothing from
@@ -487,22 +549,42 @@ the account. Without `SMTP_HOST` both routes answer `404`, and
 `GET /auth/password-reset` says `{ "enabled": false }`, which is how the
 sign-in page knows to hide the link.
 
-| Method & path                                                  | What it does                              |
-| -------------------------------------------------------------- | ----------------------------------------- |
-| `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
-| `GET/PATCH/DELETE /auth/me`                                    | Read, change or delete the current user   |
-| `PATCH /auth/password`, `POST /auth/logout-all`                | Change password, sign out everywhere      |
-| `GET/POST /auth/password-reset`, `POST .../confirm`            | Reset a forgotten password by mail        |
-| `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
-| `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
-| `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
-| `GET /notes?templates=true`, `POST /notes/:id/duplicate`       | Templates, and a copy of a note           |
-| `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
-| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
-| `GET /notes/:id/rename-links?from=`, `POST .../rename-links`   | Count, then update, links to an old title |
-| `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
-| `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
-| `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
-| `GET /search?q=&notebookId=&tag=&page=`                        | Full-text search, `"phrases"` in quotes   |
-| `GET /tags`, `PATCH/DELETE /tags/:id`                          | Tags                                      |
-| `GET /export`, `GET /notes/:id/export`, `POST /import`         | Zip export, single note, import           |
+A script does not have to log in. A personal API token from Settings goes in
+the same header:
+
+```bash
+curl -H "Authorization: Bearer nt_..." http://localhost:5181/api/notes
+```
+
+Making a token takes the account's password, because a token outlives
+every login and a stolen login must not be able to make itself one. The
+token is shown once, when it is made, and only its SHA-256 hash is stored. It acts as the account it belongs to, with these limits:
+
+- A read-only token gets a `403` on everything that is not a `GET`.
+- No token can touch the account: listing, making or revoking tokens,
+  changing the name, email or password, deleting the account and signing out
+  everywhere all answer `403`. `GET /auth/me` works. Sign in for the rest.
+  In the code a route takes a token only when it is marked
+  `@AllowApiToken()`, so a route added later is closed to tokens until
+  someone opens it.
+- Each token may make `API_TOKEN_THROTTLE_LIMIT` requests a minute, 120
+  unless set. After that the answer is `429` with a `Retry-After` header.
+
+Tokens do not expire. Signing out everywhere and changing the password end
+logins, not tokens: a script that stops without a word is worse than one
+that goes on. After a password change the web app says how many tokens
+still work and offers to revoke them all in one click
+(`DELETE /auth/tokens`). A password reset by mail does revoke them all. A
+token also ends when it is revoked by itself or the account is deleted. An
+account can have 20 of them.
+
+The endpoints a script is most likely to want. The rest is in `/api/docs`.
+
+| Method & path                                | What it does                              |
+| -------------------------------------------- | ----------------------------------------- |
+| `POST /auth/login`                           | Returns `{ token, user }`                 |
+| `GET /notes?notebookId=&tag=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
+| `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
+| `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
+| `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
+| `POST /import`                               | Markdown, text or zip files, as `files`   |

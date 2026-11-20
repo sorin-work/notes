@@ -32,7 +32,7 @@ export function ResetPasswordPage() {
   const [mismatch, setMismatch] = useState(false);
   const reset = useMutation({
     mutationFn: () => resetPassword(token, password),
-    // The reset ended every session, so one in this browser is over too.
+    // The reset ended every login, so one in this browser is over too.
     onSuccess: logout,
   });
 
@@ -49,9 +49,12 @@ export function ResetPasswordPage() {
           <h1 tabIndex={-1} ref={focusOnce}>
             Password changed
           </h1>
-          <p>Every browser and device has been signed out. Sign in with the new password.</p>
           <p>
-            <Link to="/login">Sign in</Link>
+            Every browser and device has been signed out, and every API token of the account has been revoked. Scripts
+            that used one need a new token from Settings.
+          </p>
+          <p>
+            <Link to="/login">Sign in with the new password</Link>
           </p>
         </div>
       </main>

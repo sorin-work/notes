@@ -1,12 +1,17 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes, useParams } from 'react-router';
+import type { ReactNode } from 'react';
+import { Link, Route, Routes, useParams } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
+import { AuthProvider, useAuth } from '../auth/AuthContext';
+import { readStash, stashDraft } from '../lib/draftStash';
 import { expectNoAxeViolations } from '../test/axe';
-import { note } from '../test/fixtures';
+import { note, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
+import { Notices } from './Notices';
 
 function baseRoutes(overrides = {}) {
   return {
@@ -365,9 +370,16 @@ describe('NoteEditor', () => {
      * the editor opens it from a copy at revision 3. It answers a save the
      * way the API does: 409 with the current note when the revision is old.
      */
-    function conflictRoutes(overrides = {}) {
+    function conflictRoutes(overrides = {}, server = { saveElsewhere: (_content: string) => {} }) {
       let current = note({ content: theirText, revision: 4, updatedAt: '2026-01-02T11:00:00Z' });
+      let loads = 0;
+      // What yet another save from the other tab does to the note.
+      server.saveElsewhere = (content) => {
+        current = { ...current, content, revision: current.revision + 1 };
+      };
       return baseRoutes({
+        // The editor opens from a copy that is one revision behind. Anything fetched later is the note as it is.
+        'GET /api/notes/n1': () => ({ body: loads++ === 0 ? note() : current }),
         'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
           const { revision, keepVersion: _keepVersion, ...changes } = body as NoteChanges;
           if (!('title' in changes) && !('content' in changes)) return { body: { ...current, ...changes } };
@@ -427,13 +439,88 @@ describe('NoteEditor', () => {
       const { textarea } = await typeIntoConflict();
 
       await userEvent.click(screen.getByRole('button', { name: 'Take theirs' }));
-      expect(textarea).toHaveValue(theirText);
+      await waitFor(() => expect(textarea).toHaveValue(theirText));
       expect(screen.getByRole('status')).toHaveTextContent(/^Saved/);
       expect(patches(calls)).toHaveLength(1);
 
       fireEvent.change(textarea, { target: { value: `${theirText} And mine.` } });
       await waitFor(() => expect(patches(calls)).toHaveLength(2), { timeout: 2000 });
       expect(patches(calls)[1]).toEqual({ title: 'Project Atlas', content: `${theirText} And mine.`, revision: 4 });
+    });
+
+    it('takes their text as it is when the choice is made, not as it was when the question came up', async () => {
+      const server = { saveElsewhere: (_content: string) => {} };
+      const calls = mockFetch(conflictRoutes({}, server));
+      renderEditor();
+      const { textarea } = await typeIntoConflict();
+
+      // The question stays open while the other tab saves again.
+      server.saveElsewhere('What the other tab saved later.');
+      await userEvent.click(screen.getByRole('button', { name: 'Take theirs' }));
+      await waitFor(() => expect(textarea).toHaveValue('What the other tab saved later.'));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      fireEvent.change(textarea, { target: { value: 'On top of the later text.' } });
+      await waitFor(() => expect(patches(calls)).toHaveLength(2), { timeout: 2000 });
+      expect(patches(calls)[1]).toEqual({ title: 'Project Atlas', content: 'On top of the later text.', revision: 5 });
+    });
+
+    it('forces no version after "keep both" ran into a second conflict that ended with "Take theirs"', async () => {
+      const server = { saveElsewhere: (_content: string) => {} };
+      const calls = mockFetch(conflictRoutes({}, server));
+      renderEditor();
+      const { textarea } = await typeIntoConflict();
+
+      server.saveElsewhere('What the other tab saved later.');
+      await userEvent.click(screen.getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+      await waitFor(() => expect(patches(calls)).toHaveLength(2));
+      expect(patches(calls)[1]).toMatchObject({ revision: 4, keepVersion: true });
+      await userEvent.click(await screen.findByRole('button', { name: 'Take theirs' }));
+      await waitFor(() => expect(textarea).toHaveValue('What the other tab saved later.'));
+
+      fireEvent.change(textarea, { target: { value: 'An ordinary edit.' } });
+      await waitFor(() => expect(patches(calls)).toHaveLength(3), { timeout: 2000 });
+      expect(patches(calls)[2]).toEqual({ title: 'Project Atlas', content: 'An ordinary edit.', revision: 5 });
+    });
+
+    it('goes on without a question when the changed note is what this tab sent in a save that was never answered', async () => {
+      // The first save is written, but its answer never arrives. The next save carries other text.
+      let current = note();
+      let failNext = true;
+      const calls = mockFetch(
+        baseRoutes({
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            const { revision, ...changes } = body as NoteChanges;
+            if (revision !== current.revision) {
+              return {
+                status: 409,
+                body: { statusCode: 409, code: 'stale_revision', message: 'Changed', note: current },
+              };
+            }
+            current = { ...current, ...changes, revision: current.revision + 1 };
+            if (failNext) {
+              failNext = false;
+              throw new TypeError('Failed to fetch');
+            }
+            return { body: current };
+          },
+        }),
+      );
+      renderEditor();
+      const textarea = await screen.findByLabelText('Note content');
+      fireEvent.change(textarea, { target: { value: 'First text.' } });
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not save'), { timeout: 2000 });
+
+      fireEvent.change(textarea, { target: { value: 'Second text, not the first.' } });
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/), { timeout: 3000 });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(textarea).toHaveValue('Second text, not the first.');
+      expect(patches(calls)).toEqual([
+        { title: 'Project Atlas', content: 'First text.', revision: 3 },
+        { title: 'Project Atlas', content: 'Second text, not the first.', revision: 3 },
+        { title: 'Project Atlas', content: 'Second text, not the first.', revision: 4 },
+      ]);
+      expect(current.content).toBe('Second text, not the first.');
     });
 
     it('decides nothing when the question is closed, and keeps my text until I choose', async () => {
@@ -507,6 +594,150 @@ describe('NoteEditor', () => {
 
       await typeIntoConflict();
       expect(patches(calls)[1]).toMatchObject({ content: 'What I typed here.', revision: 3 });
+    });
+  });
+
+  describe('when the note is left before it could be saved', () => {
+    function SignedIn({ children }: { children: ReactNode }) {
+      return useAuth().status === 'signed-in' ? <>{children}</> : null;
+    }
+
+    /** The editor for a signed-in user, with somewhere else to go and the notices beside it, as in the app. */
+    function renderSignedIn() {
+      setToken('tok');
+      localStorage.setItem('notes.editorMode', 'split');
+      return renderWithProviders(
+        <AuthProvider>
+          <SignedIn>
+            <Link to="/elsewhere">Leave</Link>
+            <Link to="/notes/n1">Back</Link>
+            <Routes>
+              <Route path="/notes/:noteId" element={<NoteEditor noteId="n1" />} />
+              <Route path="/elsewhere" element={<p>Somewhere else</p>} />
+            </Routes>
+            <Notices />
+          </SignedIn>
+        </AuthProvider>,
+        { route: '/notes/n1' },
+      );
+    }
+
+    it('keeps the draft in the tab, says so, and offers it when the note is opened again', async () => {
+      let online = false;
+      let saved = note();
+      const calls = mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'GET /api/notes/n1': () => ({ body: saved }),
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            if (!online) throw new TypeError('Failed to fetch');
+            saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
+            return { body: saved };
+          },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), {
+        target: { value: 'Typed with no connection.' },
+      });
+      await userEvent.click(screen.getByRole('link', { name: 'Leave' }));
+
+      expect(await screen.findByText(/Your last changes to “Project Atlas” could not be saved/)).toBeInTheDocument();
+      expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed with no connection.', revision: 3 });
+
+      online = true;
+      await userEvent.click(screen.getByRole('link', { name: 'Back' }));
+      expect(await screen.findByText(/could not be saved before you left it/)).toBeInTheDocument();
+      // Nothing is put back unasked: the editor shows the note as the server has it.
+      expect(screen.getByLabelText('Note content')).toHaveValue('Links to [[Atlas data model]].');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Put them back' }));
+      expect(screen.getByLabelText('Note content')).toHaveValue('Typed with no connection.');
+      await waitFor(() => expect(saved.content).toBe('Typed with no connection.'), { timeout: 2000 });
+      // Saved on the revision it was written on, and only then taken out of the tab.
+      expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 3 });
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull());
+      expect(screen.queryByText(/could not be saved before you left it/)).not.toBeInTheDocument();
+    });
+
+    it('offers only the draft of the user who is signed in, and drops it when told to', async () => {
+      mockFetch(baseRoutes({ 'GET /api/auth/me': { body: user } }));
+      stashDraft('someone-else', 'n1', { title: 'Theirs', content: 'Not for these eyes.', revision: 3 });
+      const { unmount } = renderSignedIn();
+      await screen.findByLabelText('Note content');
+      expect(screen.queryByText(/could not be saved before you left it/)).not.toBeInTheDocument();
+      unmount();
+
+      stashDraft(user.id, 'n1', { title: 'Project Atlas', content: 'Mine, from before.', revision: 3 });
+      renderSignedIn();
+      await userEvent.click(await screen.findByRole('button', { name: 'Discard them' }));
+      expect(screen.queryByText(/could not be saved before you left it/)).not.toBeInTheDocument();
+      expect(readStash(user.id, 'n1')).toBeNull();
+      expect(screen.getByLabelText('Note content')).toHaveValue('Links to [[Atlas data model]].');
+      expect(readStash('someone-else', 'n1')).toMatchObject({ content: 'Not for these eyes.' });
+    });
+
+    it('keeps the draft for the user when the session ends under the editor, and offers it after signing in again', async () => {
+      let signedIn = true;
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': () => (signedIn ? { body: user } : { status: 401, body: { message: 'Unauthorized' } }),
+          'PATCH /api/notes/n1': () =>
+            signedIn ? { body: note() } : { status: 401, body: { message: 'Unauthorized', statusCode: 401 } },
+        }),
+      );
+      const first = renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed just before.' } });
+
+      // Signed out in another tab: the token is gone before the editor closes, so its last save is refused.
+      signedIn = false;
+      setToken(null);
+      window.dispatchEvent(new StorageEvent('storage', { key: null }));
+      await waitFor(() => expect(screen.queryByLabelText('Note content')).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed just before.', revision: 3 }),
+      );
+      first.unmount();
+
+      signedIn = true;
+      renderSignedIn();
+      expect(await screen.findByText(/could not be saved before you left it/)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Put them back' }));
+      expect(screen.getByLabelText('Note content')).toHaveValue('Typed just before.');
+    });
+
+    it('tells afterwards when a newer version from elsewhere was moved to the history on the way out', async () => {
+      // The other save is only noticed by the save that leaving the note sets off.
+      let current = note({ content: 'What the other tab saved.', revision: 4 });
+      const calls = mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            const { revision, keepVersion: _keepVersion, ...changes } = body as NoteChanges;
+            if (revision !== current.revision) {
+              return {
+                status: 409,
+                body: { statusCode: 409, code: 'stale_revision', message: 'Changed', note: current },
+              };
+            }
+            current = { ...current, ...changes, revision: current.revision + 1 };
+            return { body: current };
+          },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed, then left.' } });
+      await userEvent.click(screen.getByRole('link', { name: 'Leave' }));
+
+      expect(
+        await screen.findByText(/“Project Atlas” had been changed somewhere else when you left it/),
+      ).toHaveTextContent('the other version was moved to the history');
+      expect(calls.filter((call) => call.method === 'PATCH').map((call) => call.body)).toEqual([
+        { title: 'Project Atlas', content: 'Typed, then left.', revision: 3 },
+        { title: 'Project Atlas', content: 'Typed, then left.', revision: 4, keepVersion: true },
+      ]);
+      // It was saved, so nothing is left behind in the tab.
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull());
     });
   });
 

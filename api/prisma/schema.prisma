@@ -21,8 +21,31 @@ model User {
   notes          Note[]
   tags           Tag[]
   passwordResets PasswordReset[]
+  apiTokens      ApiToken[]
 
   @@map("users")
+}
+
+/// A long-lived credential for scripts, made and revoked in Settings and sent
+/// as "Authorization: Bearer nt_...". Only a hash of the token is kept, so it
+/// can be shown exactly once, when it is made.
+model ApiToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  name       String
+  /// SHA-256 of the token, in hex.
+  tokenHash  String    @unique @map("token_hash")
+  /// A read-only token is refused on everything but GET.
+  readOnly   Boolean   @default(false) @map("read_only")
+  /// Written at most once a minute, so reading with a token does not turn
+  /// every request into a write.
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_tokens")
 }
 
 /// A "forgot password" link that was mailed out. Only a hash of the token in

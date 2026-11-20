@@ -10,6 +10,20 @@ export interface AuthResult {
   user: User;
 }
 
+/** A personal API token as Settings lists it. The token itself is not part of it. */
+export interface ApiToken {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface CreatedApiToken extends ApiToken {
+  /** Only in the answer to creating it. */
+  token: string;
+}
+
 export interface Page<T> {
   items: T[];
   total: number;

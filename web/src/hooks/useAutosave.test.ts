@@ -125,4 +125,49 @@ describe('useAutosave', () => {
       expect(handling.onConflict).not.toHaveBeenCalled();
     });
   });
+
+  describe('when the component goes away with something unsaved', () => {
+    const farewell = () => ({ keep: vi.fn(), saved: vi.fn(), failed: vi.fn() });
+
+    it('puts the value aside before the last save, and says so when that worked', async () => {
+      const save = vi.fn().mockResolvedValue(undefined);
+      const handling = farewell();
+      const { result, unmount } = renderHook(() => useAutosave(save, 500, undefined, handling));
+      act(() => result.current.schedule('last words'));
+
+      unmount();
+      // Kept at once, while the save is still on its way.
+      expect(handling.keep).toHaveBeenCalledWith('last words');
+      expect(handling.saved).not.toHaveBeenCalled();
+      await vi.runAllTimersAsync();
+      expect(save).toHaveBeenCalledWith('last words');
+      expect(handling.saved).toHaveBeenCalledTimes(1);
+      expect(handling.failed).not.toHaveBeenCalled();
+    });
+
+    it('says that the save failed, so that what was put aside is all there is', async () => {
+      const save = vi.fn().mockRejectedValue(new Error('offline'));
+      const handling = farewell();
+      const { result, unmount } = renderHook(() => useAutosave(save, 500, undefined, handling));
+      act(() => result.current.schedule('last words'));
+      unmount();
+      await vi.runAllTimersAsync();
+      expect(handling.keep).toHaveBeenCalledWith('last words');
+      expect(handling.failed).toHaveBeenCalledTimes(1);
+      expect(handling.saved).not.toHaveBeenCalled();
+    });
+
+    it('does nothing of the sort when everything was saved', async () => {
+      const save = vi.fn().mockResolvedValue(undefined);
+      const handling = farewell();
+      const { result, unmount } = renderHook(() => useAutosave(save, 500, undefined, handling));
+      act(() => result.current.schedule('saved in time'));
+      await act(() => result.current.flush());
+      unmount();
+      await vi.runAllTimersAsync();
+      expect(handling.keep).not.toHaveBeenCalled();
+      expect(handling.saved).not.toHaveBeenCalled();
+      expect(handling.failed).not.toHaveBeenCalled();
+    });
+  });
 });

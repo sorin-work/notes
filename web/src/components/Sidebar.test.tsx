@@ -1,9 +1,11 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
-import { describe, expect, it } from 'vitest';
-import { setToken } from '../api/client';
+import { describe, expect, it, vi } from 'vitest';
+import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
+import { readStash, stashDraft } from '../lib/draftStash';
+import { registerUnsavedWork } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, summary, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
@@ -117,5 +119,52 @@ describe('Sidebar', () => {
     expect(await screen.findByRole('link', { name: 'Templates' })).toHaveAttribute('href', '/notes?view=templates');
     await screen.findByRole('link', { name: /Work/ });
     expect(screen.queryByRole('combobox', { name: 'New from template' })).not.toBeInTheDocument();
+  });
+
+  describe('signing out', () => {
+    const routes = {
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: [] },
+      'GET /api/tags': { body: [] },
+    };
+
+    it('saves what is unsaved first', async () => {
+      mockFetch(routes);
+      const work = { save: vi.fn().mockResolvedValue(true), discard: vi.fn() };
+      const unregister = registerUnsavedWork(work);
+      renderSidebar();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+      await waitFor(() => expect(getToken()).toBeNull());
+      expect(work.save).toHaveBeenCalledTimes(1);
+      expect(work.discard).not.toHaveBeenCalled();
+      unregister();
+    });
+
+    it('asks before throwing away a draft that cannot be saved, and only then forgets what was kept for the user', async () => {
+      mockFetch(routes);
+      const work = { save: vi.fn().mockResolvedValue(false), discard: vi.fn() };
+      const unregister = registerUnsavedWork(work);
+      const draft = { title: 'Plan', content: 'Unsaved.', revision: 3 };
+      stashDraft(user.id, 'n1', draft);
+      stashDraft('someone-else', 'n1', draft);
+      renderSidebar();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Sign out without saving?' });
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      // Still signed in, and nothing was given up.
+      expect(getToken()).toBe('tok');
+      expect(work.discard).not.toHaveBeenCalled();
+      expect(readStash(user.id, 'n1')).not.toBeNull();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Sign out and discard' }));
+      await waitFor(() => expect(getToken()).toBeNull());
+      expect(work.discard).toHaveBeenCalledTimes(1);
+      expect(readStash(user.id, 'n1')).toBeNull();
+      expect(readStash('someone-else', 'n1')).not.toBeNull();
+      unregister();
+    });
   });
 });

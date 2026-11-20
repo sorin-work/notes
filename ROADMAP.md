@@ -31,7 +31,7 @@ couple of weekends, **L** several weeks of spare time.
 | 10  | Share link options                     | Later   | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
-| 13  | Personal API tokens                    | Later   | both     | M    | -          |
+| 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Shipped | both     | M    | -          |
@@ -109,27 +109,6 @@ That covers Obsidian and this app, and not much else.
   `@media print` rules) gives PDF through the browser. A full JSON backup
   that includes the trash and version history would cover what the zip
   leaves out.
-
-### 13. Personal API tokens
-
-To script against the API today you log in with email and password and get a
-seven-day JWT. I want long-lived tokens that I create and revoke in Settings,
-for things like a shell alias that appends a line to a note or a cron job
-that downloads the export.
-
-- `ApiToken` model: name, hash of the token, a read-only flag, `lastUsedAt`.
-  The token itself is shown once, when it is created.
-- `JwtAuthGuard` gets a second path: a bearer value with a known prefix (say
-  `nt_`) is looked up by hash instead of being verified as a JWT.
-  `bearerToken()` stays as it is.
-- Endpoints under `/auth/tokens` and a card in `SettingsPage`.
-- Document the API while at it. `@nestjs/swagger` can build an OpenAPI
-  document mostly from the existing DTO classes, served at `/api/docs`, and
-  the endpoint table in the README can then shrink.
-- Undecided: scopes beyond read-only, and rate limiting for token requests
-  (only the auth routes are throttled). A "save this page" bookmarklet is
-  better done as a `/capture?title=&url=` page in the web app, which needs
-  neither a token nor CORS.
 
 ### 14. Offline mode and installable app
 
@@ -362,14 +341,20 @@ trigger, as for `search_vector`, and not by the services. That way every
 write of the text bumps the revision in its own statement: saves, restores,
 link rewrites and code that is not written yet. `useAutosave` has a `conflict`
 state and does not retry, and the editor asks what to keep: mine, theirs, or
-mine with theirs put into the history. Closing the question decides nothing,
-and leaving the note with it open saves my text and keeps theirs as a
-version. A restore now saves what is typed first, and is refused when that
-fails or when a save gets in between. A save without a revision works as
-before: the last write wins. Still open: the two texts are not merged, the
-question shows no diff (History does, after "keep mine, put theirs in the
-history"), and a tab that only has a note open is not told about a change
-before it saves.
+mine with theirs put into the history. "Take theirs" fetches the note anew.
+Closing the question decides nothing. Leaving the note with it open, or with
+a change from elsewhere that only the last save notices, saves my text and
+keeps theirs as a version, and a notice says so afterwards. A draft that
+cannot be saved when a note is left, because the connection or the session is
+gone, is kept in the tab under the user's id and offered when the note is
+opened there again. Signing out saves first and asks before it discards. A
+save whose answer got lost is recognised by its text and is no conflict. A
+restore now saves what is typed first, and is refused when that fails or when
+a save gets in between. A save without a revision works as before: the last
+write wins. Still open: the two texts are not merged, the question shows no
+diff (History does, after "keep mine, put theirs in the history"), a tab that
+only has a note open is not told about a change before it saves, and a kept
+draft does not outlive its tab.
 
 ### 11. Account settings and sessions
 
@@ -397,6 +382,37 @@ the reset is off and the link is hidden. Along the way the throttles learned
 to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
 address is not verified, the mail is plain text in English only, and nothing
 but the API log tells me when a mail could not be sent.
+
+### 13. Personal API tokens
+
+Settings has an "API tokens" card: name a token, tick read-only if it should
+only read, copy it once. Only its SHA-256 hash is kept in the new `ApiToken`
+model, with the name, the read-only flag, `lastUsedAt` and the date. In
+`JwtAuthGuard` a bearer value that starts with `nt_` is looked up by that
+hash instead of being verified as a JWT, and the same place refuses what a
+token may not do: anything but `GET` for a read-only one, and for every token
+any route that is not marked `@AllowApiToken()`. Marked are the notes
+themselves and `GET /auth/me`, so the account, the tokens and whatever is
+added later take a login. Decided on the open points: no scopes
+beyond read-only, and requests are throttled per token
+(`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
+minute. Making a token takes the password, so a stolen login cannot make
+itself a credential that outlives it. "Sign out everywhere" and a password
+change leave tokens alone, and after a password change the app says how many
+still work and offers to revoke them all at once. A password reset by mail
+revokes them.
+
+The second step documented the API. `@nestjs/swagger` builds an OpenAPI
+document from the DTO classes at build time and serves it, with a page to try
+it on, at `/api/docs`. It names the two credentials and says for every route
+which of them it takes, read from the same marks the guard goes by. The
+endpoint table in the README shrank to the few a script wants. And
+`/capture?title=&url=` in the web app opens a new note with the title and
+the address of a page, which a bookmarklet from the README turns into one
+click. Any site can send a visitor there, so it saves nothing by itself, the
+title stays out of the note's text, and only a plain web address is taken.
+`API_DOCS=false` turns the document off. Still open: the document describes
+requests but not answers.
 
 ### 16. Templates and daily notes
 
