@@ -342,26 +342,31 @@ filters instead of adding to them.
 
 ### 6. Accessibility pass
 
-Every gap on the list is closed. `Modal` keeps Tab inside the dialog, gives
-the keys to the dialog on top when two are open, and still puts the focus back
-on close. The note textarea points at the `[[` suggestions with
-`aria-controls` and `aria-activedescendant`. The quick switcher already did,
-and now also says how many notes it found. Two skip links lead to the content
-and, when a note is open, to the note. `prefers-reduced-motion` stops the
-spinner, which shows its label instead, and the sliding menu. Up, Down, Home
-and End move through `NoteList`. The page and dialog tests run axe through
-`vitest-axe` with one helper. Only `color-contrast` is off, and `region` for
-parts rendered without the layout. What axe found is fixed: task boxes without
-a name, a heading level skipped above the backlinks, pages without a `main`
-landmark and a second banner inside dialogs. Contrast is covered by
+Every gap on the list is closed. `Modal` keeps Tab inside the dialog and gives
+the keys to the dialog on top when two are open. Opening a second dialog from
+a first leaves the focus in the second. On close the focus goes back to where
+it was, or to the main region when that control is gone. The note textarea
+points at the `[[` suggestions with `aria-controls` and
+`aria-activedescendant`. The quick switcher already did, and now also says how
+many notes it found. Two skip links lead to the content and, when a note is
+open, to the note. `prefers-reduced-motion` stops the spinner, which shows its
+label instead, and the sliding menu. Up, Down, Home and End move through
+`NoteList`. The page and dialog tests run axe through `vitest-axe` with one
+helper, on every page of the app including sign-in, sign-up and the password
+reset pages. Only `color-contrast` is off, and `region` for parts rendered
+without the layout. What axe found is fixed: task boxes without a name, a
+heading level skipped above the backlinks, pages without a `main` landmark and
+a second banner inside dialogs. Contrast is covered by
 `styles.contrast.test.ts`, which computes the ratios of the colour pairs in
 `styles.css` for both themes. Muted text, the accent, the danger red, the
-favourite star and the outline of text fields were changed to reach AA. Beyond
-the list: the title field shows its focus, and on narrow screens the closed
-menu is out of reach of Tab. Still open: nobody has used the app with a real
-screen reader yet, the contrast test only knows the pairs listed in it, every
-note in `NoteList` is still its own Tab stop, and the focus does not move into
-the menu when it opens on a narrow screen.
+colour of links to missing notes, the favourite star and the outline of text
+fields were changed to reach AA. Beyond the list: the title field shows its
+focus, on narrow screens the closed menu is out of reach of Tab, and `/` no
+longer opens that menu on a wide screen, where its shade had squeezed the
+page. Still open: nobody has used the app with a real screen reader yet, the
+contrast test only knows the pairs listed in it, every note in `NoteList` is
+still its own Tab stop, and the focus does not move into the menu when it
+opens on a narrow screen.
 
 ### 7. Scheduled backups
 
