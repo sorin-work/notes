@@ -13,7 +13,12 @@ import * as A from './outbox';
 const offline = () => vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 function server(start: Note) {
   let current = start;
+  const created: { content: string }[] = [];
   mockFetch({
+    'POST /api/notes': ({ body }) => {
+      created.push(body as { content: string });
+      return { status: 201, body: { ...note(), ...(body as object), revision: 0 } };
+    },
     'GET /api/notes/n1': () => ({ body: current }),
     'PATCH /api/notes/n1': ({ body }) => {
       const sent = body as { title: string; content: string; revision?: number };
@@ -24,7 +29,7 @@ function server(start: Note) {
       return { body: current };
     },
   });
-  return { now: () => current };
+  return { now: () => current, created };
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 50));
 const base = { title: 'T', content: 'base' };
@@ -80,5 +85,70 @@ describe('two tabs offline on one note', () => {
     expect(back.now()).toMatchObject({ content: 'base + foo from A', revision: 6 });
     expect(B.outboxEntryFor('n1')).toMatchObject({ state: 'conflict', content: 'base + bar from B' });
     B.stopOutbox();
+  });
+
+  /** What the editor does when the tab is left with that question open: this tab's text becomes a note of its own. */
+  async function leaveWithQuestionOpen(tab: typeof A, mine: { title: string; content: string }) {
+    await tab.createOffline(
+      user.id,
+      { title: `${mine.title} (kept when leaving)`, content: mine.content },
+      'aaaaaaaa-1111-4111-8111-111111111111',
+    );
+  }
+
+  it('loses nothing when the question is left open after the other tab sent its text', async () => {
+    // @ts-expect-error a second tab
+    const B: typeof A = await import('./outbox.ts?tab=d');
+    setToken(userToken);
+    offline();
+    await A.startOutbox(user.id, new QueryClient());
+    await B.startOutbox(user.id, new QueryClient());
+    await A.queueText(user.id, 'n1', { title: 'T', content: 'foo from A' }, 5, [], base);
+    await tick();
+    const bar = { title: 'T', content: 'bar from B' };
+    await expect(B.queueText(user.id, 'n1', bar, 5, [], base)).rejects.toBeInstanceOf(B.QueuedElsewhere);
+    const s = server(note({ id: 'n1', ...base, revision: 5 }));
+    await A.replay();
+    await tick();
+    await leaveWithQuestionOpen(B, bar);
+    await B.replay();
+    await A.replay();
+    await tick();
+    expect(s.now().content).toBe('foo from A');
+    expect(s.created.map((body) => body.content)).toEqual(['bar from B']);
+    expect(await B.unsentAfterTrying(user.id)).toBe(0);
+    B.stopOutbox();
+  });
+
+  it('loses nothing when the question is left open while the other tab typed more', async () => {
+    // @ts-expect-error a second tab
+    const B: typeof A = await import('./outbox.ts?tab=e');
+    setToken(userToken);
+    offline();
+    await A.startOutbox(user.id, new QueryClient());
+    await B.startOutbox(user.id, new QueryClient());
+    const foo = { title: 'T', content: 'foo from A' };
+    await A.queueText(user.id, 'n1', foo, 5, [], base);
+    await tick();
+    const bar = { title: 'T', content: 'bar from B' };
+    await expect(B.queueText(user.id, 'n1', bar, 5, [], base)).rejects.toBeInstanceOf(B.QueuedElsewhere);
+    await A.queueText(user.id, 'n1', { title: 'T', content: 'foo from A + more from A' }, 5, [], foo);
+    await tick();
+    await leaveWithQuestionOpen(B, bar);
+    const s = server(note({ id: 'n1', ...base, revision: 5 }));
+    await A.replay();
+    await tick();
+    expect(s.now().content).toBe('foo from A + more from A');
+    expect(s.created.map((body) => body.content)).toEqual(['bar from B']);
+    B.stopOutbox();
+  });
+
+  it('makes one copy for "keep both", however often it is tried', async () => {
+    offline();
+    await A.startOutbox(user.id, new QueryClient());
+    const id = 'bbbbbbbb-1111-4111-8111-111111111111';
+    await A.createOffline(user.id, { title: 'T (from another tab)', content: 'foo' }, id);
+    await A.createOffline(user.id, { title: 'T (from another tab)', content: 'foo' }, id);
+    expect(A.outboxSnapshot().filter((entry) => entry.noteId === id)).toHaveLength(1);
   });
 });

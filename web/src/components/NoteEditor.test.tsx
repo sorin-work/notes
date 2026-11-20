@@ -791,6 +791,38 @@ describe('NoteEditor', () => {
       );
     });
 
+    it('keeps both texts when the note is left with that question open, and the other tab’s untouched', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')),
+          'POST /api/notes': () => Promise.reject(new TypeError('Failed to fetch')),
+        }),
+      );
+      renderSignedIn();
+      const textarea = await screen.findByLabelText('Note content');
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'From the other tab' }, 3, [], {
+        title: 'Project Atlas',
+        content: 'Links to [[Atlas data model]].',
+      });
+      fireEvent.change(textarea, { target: { value: 'Typed in this tab' } });
+      await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+
+      await userEvent.click(screen.getByRole('link', { name: 'Leave' }));
+      expect(
+        await screen.findByText(/yours is in a new note, “Project Atlas \(kept when leaving\)”/),
+      ).toBeInTheDocument();
+      // The other tab's text is exactly as it was.
+      expect(openEntryFor('n1')).toMatchObject({ content: 'From the other tab' });
+      expect(
+        outboxSnapshot()
+          .filter((entry) => entry.kind === 'create')
+          .map((entry) => [entry.title, entry.content]),
+      ).toEqual([['Project Atlas (kept when leaving)', 'Typed in this tab']]);
+      // Saved that way, the draft is not kept in the tab as well.
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull());
+    });
+
     it('asks the usual question when offline changes meet a newer note, and sends them only as told', async () => {
       let saved = note({ content: 'Changed on the phone', revision: 4 });
       const calls = mockFetch(
