@@ -311,28 +311,25 @@ export function queueText(
   }).then(() => void replay());
 }
 
-/** Replaces the waiting text of a note, after the user chose theirs over what another tab queued. */
-export function replaceQueuedText(
-  userId: string,
-  noteId: string,
-  text: { title: string; content: string },
-): Promise<void> {
-  return locked(userId, async () => {
-    const entry = openEntry(await entriesOf(userId), noteId);
-    if (entry) await put({ ...entry, ...text, version: (entry.version ?? 0) + 1, at: new Date().toISOString() });
-    await refresh();
-  }).then(() => void replay());
-}
-
-/** Makes a note without a connection: an id from the browser, and the note as it will be once sent. */
+/**
+ * Makes a note without a connection: an id from the browser, and the note as
+ * it will be once sent. Resolves once the create is in IndexedDB, so a caller
+ * that waits for it knows the text is safe.
+ */
 export async function createOffline(
   userId: string,
   start: { notebookId?: string | null; title?: string; content?: string },
+  /**
+   * An id chosen by the caller, so that trying again makes no second note:
+   * a create for an id that is already queued is not queued twice.
+   */
+  chosenId?: string,
 ): Promise<Note> {
   if (!offlineWritingAvailable()) throw new Error('Writing without a connection needs a secure (HTTPS) address.');
-  const id = crypto.randomUUID();
+  const id = chosenId ?? crypto.randomUUID();
   const now = new Date().toISOString();
   await locked(userId, async () => {
+    if ((await entriesOf(userId)).some((entry) => entry.noteId === id)) return;
     await put({
       userId,
       noteId: id,
