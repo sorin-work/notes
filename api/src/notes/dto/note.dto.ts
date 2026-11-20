@@ -101,19 +101,15 @@ export class CreateNoteDto {
   placeholders?: PlaceholdersDto;
 }
 
-/** What "Today" sends. The day and its title come from the browser, which knows what day it is for the user. */
+/**
+ * What "Today" sends. The day comes from the browser, which knows what day it
+ * is for the user. The title does not: the server writes it from the day and
+ * the date format in the preferences.
+ */
 export class DailyNoteDto {
   /** The day as the calendar shows it where the user is, as YYYY-MM-DD. */
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be a day written as YYYY-MM-DD' })
   date: string;
-
-  /**
-   * The title for the note if it has to be made: that day, written in one
-   * of the formats a daily note can have.
-   */
-  @IsString()
-  @MaxLength(MAX_TITLE_LENGTH)
-  title: string;
 
   /** The values for {{date}} and {{time}}, should the note be made from a template. */
   @IsOptional()
