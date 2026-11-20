@@ -12,6 +12,18 @@
           "before": ["<rootDir>/swagger-transformer.js"]
         }
       }
+    ],
+    "^.+\\.js$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "allowJs": true
+        },
+        "isolatedModules": true
+      }
     ]
-  }
+  },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(mdast-util-[^/]+|micromark|micromark-[^/]+|unist-util-[^/]+|decode-named-character-reference|character-entities|devlop|ccount|escape-string-regexp|longest-streak|markdown-table|zwitch|dequal)/)"
+  ]
 }
