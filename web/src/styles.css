@@ -1110,6 +1110,8 @@ mark {
 .spinner {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 0.6rem;
   padding: 1.5rem;
 }
 
@@ -1467,4 +1469,25 @@ ul.error-box {
 .flag svg {
   display: inline-block;
   vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* A ring that stands still says nothing, so its label is shown instead of only read out. */
+  .spinner-dot {
+    animation: none;
+  }
+
+  .spinner .sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    clip: auto;
+    color: var(--muted);
+  }
+
+  /* The menu on narrow screens appears and goes without sliding. */
+  .sidebar,
+  .menu-open .sidebar {
+    transition: none;
+  }
 }
