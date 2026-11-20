@@ -392,10 +392,14 @@ routes answers `403` instead of `401`, because the web app signs out on any
 
 Password reset by email came last, as planned. "Forgot password?" on the
 sign-in page mails a link that works once, for an hour. Only a hash of its
-token is stored, using it signs the account out everywhere, and the request
-answers the same whether or not the address has an account. Mail goes out
-through nodemailer over plain SMTP (`SMTP_HOST` and friends), with mailpit in
+token is stored, using it signs the account out everywhere and ends the
+account's other links, and the request answers the same whether or not the
+address has an account. An account has three links out at most, and asking
+again never cancels one, so nobody can keep a stranger's link from working
+or flood a mailbox. Mail goes out through nodemailer over SMTP (`SMTP_HOST`
+and friends), over TLS unless told otherwise, with mailpit in
 `docker-compose.yml` to catch it during development. Without SMTP settings
-the reset is off and the link is hidden. Still open: a new email address is
-not verified, the mail is plain text in English only, and nothing but the API
-log tells me when a mail could not be sent.
+the reset is off and the link is hidden. Along the way the throttles learned
+to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
+address is not verified, the mail is plain text in English only, and nothing
+but the API log tells me when a mail could not be sent.
