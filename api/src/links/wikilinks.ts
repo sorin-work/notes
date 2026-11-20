@@ -15,6 +15,10 @@ interface LinkInText extends WikiLink {
   end: number;
   /** False when inline code sits between the brackets, so the title is not the text that is written there. */
   plain: boolean;
+  /** Where the whole link starts, at its opening brackets. */
+  from: number;
+  /** Where the whole link ends, after its closing brackets. */
+  to: number;
 }
 
 const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
@@ -62,14 +66,20 @@ function* findLinks(markdown: string): Generator<LinkInText> {
   for (const { line, lineStart } of proseLines(markdown)) {
     // Blanking keeps the length of the line, so positions in it are positions in the note.
     for (const match of withoutInlineCode(line).matchAll(LINK)) {
-      const start = lineStart + match.index + 2;
+      const from = lineStart + match.index;
+      const start = from + 2;
       const end = start + match[1].length;
+      const to = from + match[0].length;
+      // From the note itself, not the blanked line: inline code in an alias is part of what is shown.
+      const alias = match[2] === undefined ? null : markdown.slice(to - 2 - match[2].length, to - 2).trim();
       yield {
         title: match[1].trim().replace(/\s+/g, ' '),
-        alias: match[2]?.trim() || null,
+        alias: alias || null,
         start,
         end,
         plain: markdown.slice(start, end) === match[1],
+        from,
+        to,
       };
     }
   }
@@ -315,4 +325,23 @@ export function findMention(markdown: string, title: string): Mention | null {
 /** The text with one mention of `title` linked, as linkableMention picks it, or null. */
 export function linkMention(markdown: string, title: string, at?: { offset: number; text: string }): string | null {
   return linkableMention(markdown, title, at)?.linked ?? null;
+}
+
+/**
+ * A note as readers of a share link get it. `keep` says, by normalised
+ * title, whether a link leads somewhere they may go. Those links stay as
+ * they are. Every other link is replaced by the words a reader sees for it,
+ * the alias or else the title as it is written, so that what is sent holds
+ * neither a title hidden behind an alias nor a hint which of the other
+ * titles exist.
+ */
+export function unlinkExcept(markdown: string, keep: (key: string) => boolean): string {
+  let result = '';
+  let copied = 0;
+  for (const link of findLinks(markdown)) {
+    if (link.plain && keep(normalizeTitle(link.title))) continue;
+    result += markdown.slice(copied, link.from) + (link.alias ?? markdown.slice(link.start, link.end).trim());
+    copied = link.to;
+  }
+  return result + markdown.slice(copied);
 }

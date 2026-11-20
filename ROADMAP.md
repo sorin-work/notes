@@ -28,7 +28,7 @@ couple of weekends, **L** several weeks of spare time.
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Shipped | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
-| 10  | Share link options                     | Later   | both     | M    | -          |
+| 10  | Share link options                     | Shipped | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
@@ -66,26 +66,6 @@ and to attach the odd PDF.
   text, which drops the images of an Obsidian vault.
 - Needs size limits per file and per account, and a list of allowed types.
   SVG is a script risk if it is served inline.
-
-### 10. Share link options
-
-A share link is all or nothing: one note, public until I stop sharing.
-
-- Expiry and password: `expiresAt` and `passwordHash` on `ShareLink`, checked
-  in `SharesService.view`, with the options in `ShareDialog`. A password
-  means `GET /public/notes/:token` needs a way to receive it and
-  `SharedNotePage` needs a prompt.
-- Share a notebook: one link with an index page and the notes inside.
-  `ShareLink.noteId` is required and unique today, so this is either a
-  nullable `notebookId` beside it or a second model.
-- Links between shared notes: `SharedNotePage` shows `[[links]]` as plain
-  text because `MarkdownPreview` gets no `onWikiLink` there. When the target
-  is shared as well (always true inside a shared notebook) it could link to
-  that share.
-- The public endpoint is not rate limited (`ThrottlerGuard` is only on the
-  routes that take a password) and every fetch bumps `viewCount`, my own
-  included. Throttle it, and skip the count when the request carries the
-  owner's token.
 
 ### 12. More import sources and export formats
 
@@ -323,11 +303,13 @@ A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
 `sleep` rather than cron. It reads the age of the newest dump from the file
 names when it starts, so a restart does not add one, and then looks at the
 clock every minute. Beyond the design, the same script restores
-(`backup restore <file>`), loading the dump into a new database that replaces
-the old one only when the load worked. The README has the commands, and CI
-runs `scripts/check-backup.sh` after the end-to-end tests: the loop and the
-pruning against clocks that are wrong, three dumps while keeping two, a
-restore into a scratch database and a row count of every table. Still open:
+(`backup restore <file>`), loading the dump into a new database that takes
+the place of the old one in a single transaction, and only when the load
+worked. The README has the commands, and CI runs `scripts/check-backup.sh`
+after the end-to-end tests: the loop and the pruning against clocks that are
+wrong, three dumps while keeping two, a restore into a scratch database and
+over one that holds something else, and a row count of every table. Still
+open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
@@ -358,6 +340,36 @@ write wins. Still open: the two texts are not merged, the question shows no
 diff (History does, after "keep mine, put theirs in the history"), a tab that
 only has a note open is not told about a change before it saves, and a kept
 draft does not outlive its tab.
+
+### 10. Share link options
+
+A share link can run out and can ask for a password: `expiresAt` and
+`passwordHash` on `ShareLink`, set in the share dialog and checked in
+`SharesService.view`. A link that has run out answers exactly like one that
+never existed, and the dialog tells the owner. A link with a password answers
+`403` so that the shared page can ask, and takes the password in the body of
+a `POST`, never in the address. The public endpoint is throttled, with a
+roomy limit for reading and a strict one for password attempts per client,
+and each link takes only so many wrong passwords a minute from everyone
+together, which a persistent guesser can use to keep readers out but never
+the signed-in owner. A request with the owner's login is no longer counted
+as a view, and nothing these routes answer may be cached.
+
+The second step shares a notebook with one link. `ShareLink` got a
+`notebookId` beside `noteId`, with a check in the database that exactly one
+is set. The link shows a list of the notes in the notebook and in the
+notebooks inside it, and each note on a page of its own. Which notes belong
+is asked with every request, so a note added later is there and one moved
+out or deleted is gone at once. The options are the same, and the right
+password comes back with a proof that opens the other notes for an hour, so
+it is typed once. A `[[link]]` leads on to a note of the same shared
+notebook, looked up among those notes first, or else to a note whose own link
+has no password and has not run out. Every other link is sent as its plain
+words, so that no title from outside the shared notes gets out. Notes and
+notebooks say when a shared notebook makes them public, and moving one into
+a shared notebook asks first. Still open:
+a link shows that it has a password, a notebook link has no search, and the
+shared pages are not styled for printing.
 
 ### 11. Account settings and sessions
 

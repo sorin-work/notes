@@ -18,7 +18,7 @@ import {
   updateNote,
 } from '../api/notes';
 import { listTags } from '../api/tags';
-import type { Note, NoteChanges } from '../api/types';
+import type { Note, NoteChanges, SharedThrough } from '../api/types';
 import { useUserId } from '../auth/AuthContext';
 import { useActiveOption } from '../hooks/useActiveOption';
 import { useAutosave } from '../hooks/useAutosave';
@@ -27,6 +27,7 @@ import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { notify } from '../lib/notices';
+import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/text';
@@ -80,6 +81,8 @@ function LoadedEditor({ note }: { note: Note }) {
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
+  // A move into a shared notebook waits for a yes: it makes the note public.
+  const [publicMove, setPublicMove] = useState<{ notebookId: string; through: SharedThrough } | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
   const readOnly = note.deletedAt !== null;
 
@@ -521,7 +524,11 @@ function LoadedEditor({ note }: { note: Note }) {
           notebooks={notebooks.data ?? []}
           value={note.notebookId}
           disabled={readOnly}
-          onChange={(notebookId) => updateMeta.mutate({ notebookId })}
+          onChange={(notebookId) => {
+            const through = newlyPublicThrough(notebooks.data ?? [], notebookId, note.sharedThrough);
+            if (through && notebookId) setPublicMove({ notebookId, through });
+            else updateMeta.mutate({ notebookId });
+          }}
         />
         <div className="toolbar-group" role="group" aria-label="View">
           {MODES.map((value) => (
@@ -608,6 +615,11 @@ function LoadedEditor({ note }: { note: Note }) {
         disabled={readOnly}
         onChange={(next) => updateMeta.mutate({ tags: next })}
       />
+      {note.sharedThrough && !readOnly && (
+        <p className="shared-through muted">
+          Anyone with the link to the shared notebook “{note.sharedThrough.name}” can read this note.
+        </p>
+      )}
       {stashed && !readOnly && (
         <div className="banner banner-info" role="status">
           <span>
@@ -759,6 +771,23 @@ function LoadedEditor({ note }: { note: Note }) {
         />
       )}
       {dialog === 'share' && <ShareDialog noteId={note.id} onClose={() => setDialog(null)} />}
+      {publicMove && (
+        <ConfirmDialog
+          title="Make this note public?"
+          message={
+            <p>
+              “{publicMove.through.name}” is shared with a link. Moved there, “{savedTitle(title)}” can be read by
+              anyone who has that link.
+            </p>
+          }
+          confirmLabel="Move it"
+          onConfirm={() => {
+            updateMeta.mutate({ notebookId: publicMove.notebookId });
+            setPublicMove(null);
+          }}
+          onCancel={() => setPublicMove(null)}
+        />
+      )}
       {dialog === 'delete' && (
         <ConfirmDialog
           title="Move to trash?"

@@ -8,14 +8,12 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
 import type { Response } from 'express';
 import { ALLOW_API_TOKEN } from '../common/allow-api-token.decorator';
 import type { AuthenticatedRequest, AuthUser } from '../common/current-user.decorator';
 import { IS_PUBLIC } from '../common/public.decorator';
-import { PrismaService } from '../prisma/prisma.service';
 import { ApiTokensService, isApiToken } from './api-tokens.service';
-import type { TokenPayload } from './auth.service';
+import { AuthService } from './auth.service';
 
 /** What a read-only API token may send. */
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -27,7 +25,7 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * A token is only good while its version matches the account's
  * tokenVersion, which is how a password change or "sign out everywhere"
  * ends sessions before their token expires. That costs one primary-key
- * lookup of two columns on every authenticated request.
+ * lookup of two columns on every authenticated request (AuthService.identify).
  *
  * A bearer value that starts with "nt_" is a personal API token instead. It
  * is looked up by its hash, and everything a token may not do is refused
@@ -37,9 +35,8 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(
-    private readonly jwt: JwtService,
     private readonly reflector: Reflector,
-    private readonly prisma: PrismaService,
+    private readonly auth: AuthService,
     private readonly apiTokens: ApiTokensService,
   ) {}
 
@@ -60,22 +57,11 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     }
 
-    let payload: TokenPayload;
-    try {
-      payload = await this.jwt.verifyAsync<TokenPayload>(token);
-    } catch {
+    const user = await this.auth.identify(token);
+    if (!user) {
       throw new UnauthorizedException('Invalid or expired token');
     }
-
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { email: true, tokenVersion: true },
-    });
-    // No user: the account was deleted after the token was issued.
-    if (!user || user.tokenVersion !== (payload.ver ?? 0)) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-    request.user = { id: payload.sub, email: user.email };
+    request.user = user;
     return true;
   }
 

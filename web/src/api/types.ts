@@ -31,11 +31,21 @@ export interface Page<T> {
   pageSize: number;
 }
 
+/** A shared notebook whose link makes something public. */
+export interface SharedThrough {
+  id: string;
+  name: string;
+}
+
 export interface Notebook {
   id: string;
   name: string;
   parentId: string | null;
   noteCount: number;
+  /** Whether the notebook has a share link of its own. */
+  shared: boolean;
+  /** The shared notebook that makes this one public: itself, or the one it is inside. */
+  sharedThrough: SharedThrough | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,7 +79,10 @@ export interface Note {
   tags: string[];
   pinned: boolean;
   favorite: boolean;
+  /** Whether the note has a share link of its own. */
   shared: boolean;
+  /** The shared notebook that makes the note public, if one does. */
+  sharedThrough: SharedThrough | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -157,14 +170,40 @@ export interface Share {
   token: string;
   viewCount: number;
   createdAt: string;
+  /** null when the link does not run out. */
+  expiresAt: string | null;
+  /** The link has run out and answers like one that does not exist. */
+  expired: boolean;
+  /** Readers are asked for a password. The password itself never comes back from the API. */
+  hasPassword: boolean;
+}
+
+/** What can be changed about a link. Left out means "as it is", null means "take it away". */
+export interface ShareOptions {
+  expiresAt?: string | null;
+  password?: string | null;
 }
 
 export interface SharedNote {
+  kind: 'note';
   title: string;
+  /** With [[links]] left only where the reader may follow them. */
   content: string;
   tags: string[];
   updatedAt: string;
+  /** Where each of those links leads, by normalised title: a path under /s/. */
+  links: Record<string, string>;
 }
+
+/** The index of a shared notebook. */
+export interface SharedNotebook {
+  kind: 'notebook';
+  name: string;
+  notes: { id: string; title: string; updatedAt: string; notebook: string | null }[];
+}
+
+/** What a link shares: a note, or a notebook with everything in it. */
+export type ShareSubject = { noteId: string } | { notebookId: string };
 
 export interface ImportResult {
   imported: number;

@@ -8,6 +8,7 @@ import {
   normalizeTitle,
   onlyAddsLink,
   renameLinks,
+  unlinkExcept,
 } from './wikilinks';
 
 describe('extractWikiLinks', () => {
@@ -562,5 +563,41 @@ describe('mentions in very large or hostile notes', () => {
     expect(linkMention(`${'`'.repeat(40_000)}\n\nThe atlas.`, 'Atlas')).toBeNull();
     // Seconds in practice. The limit catches work that grows with the square of the length.
     expect(Date.now() - started).toBeLessThan(30_000);
+  });
+});
+
+describe('unlinkExcept', () => {
+  const shared = (key: string) => key === 'starter';
+
+  it('keeps the links a reader may follow and writes the others out as their text', () => {
+    expect(unlinkExcept('See [[Starter]] and [[ starter |my starter]], not [[Secret plan]].', shared)).toBe(
+      'See [[Starter]] and [[ starter |my starter]], not Secret plan.',
+    );
+  });
+
+  it('writes out an alias as it stands in the note, inline code and all', () => {
+    expect(unlinkExcept('[[Secret|see `x` here]] and [[Starter|the `y`]]', shared)).toBe(
+      'see `x` here and [[Starter|the `y`]]',
+    );
+  });
+
+  it('leaves no trace of a title that was behind an alias, or of a heading', () => {
+    const text = unlinkExcept(
+      '[[Secret plan|a plan]] and [[Secret plan#Budget]] and [[Budget 2026#Q1|numbers]]',
+      shared,
+    );
+    expect(text).toBe('a plan and Secret plan and numbers');
+    expect(text).not.toContain('Budget 2026');
+  });
+
+  it('does not touch code, and copes with a note that has no links', () => {
+    const code = 'Use `[[Secret plan|x]]` like this:\n\n```\n[[Secret plan|y]]\n```\n';
+    expect(unlinkExcept(code, shared)).toBe(code);
+    expect(unlinkExcept('Nothing to see.', shared)).toBe('Nothing to see.');
+    expect(unlinkExcept('', shared)).toBe('');
+  });
+
+  it('treats every link the same when none may be followed', () => {
+    expect(unlinkExcept('[[A]] [[B|b]] [[C]]', () => false)).toBe('A b C');
   });
 });

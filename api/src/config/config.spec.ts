@@ -16,6 +16,7 @@ describe('loadConfig', () => {
       trashRetentionDays: 30,
       authThrottleLimit: 10,
       apiTokenThrottleLimit: 120,
+      publicThrottleLimit: 60,
       mail: null,
       appUrl: 'http://localhost:5181',
       trustProxy: 0,

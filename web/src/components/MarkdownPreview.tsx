@@ -11,6 +11,12 @@ interface MarkdownPreviewProps {
   /** Normalised titles of links that point at no note, shown as broken. */
   missingTitles?: Set<string>;
   /**
+   * When given, only links to these normalised titles are links. Any other
+   * is plain text, with nothing to show whether its note exists. For the
+   * public page of a shared note.
+   */
+  linkedTitles?: Set<string>;
+  /**
    * Called when the box of a task list item is clicked, with the line of the
    * source the item starts on (counted from 1) and whether the box showed as
    * ticked. Without it, boxes are read-only.
@@ -80,6 +86,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   content,
   onWikiLink,
   missingTitles,
+  linkedTitles,
   onToggleTask,
 }: MarkdownPreviewProps) {
   if (!content.trim()) {
@@ -105,7 +112,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
                   </a>
                 );
               }
-              if (!onWikiLink) {
+              if (!onWikiLink || (linkedTitles && !linkedTitles.has(normalizeTitle(target)))) {
                 return <span className="wikilink wikilink-static">{children}</span>;
               }
               const missing = missingTitles?.has(normalizeTitle(target));
