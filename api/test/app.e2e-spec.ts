@@ -18,6 +18,7 @@ import { APP_CONFIG, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
+import { MAX_GRAPH_NODES } from '../src/links/links.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
 
@@ -701,6 +702,7 @@ describe('api tokens', () => {
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AuthController',
+      'LinksController',
       'MentionsController',
       'NotebooksController',
       'NotesController',
@@ -1394,7 +1396,7 @@ describe('graph', () => {
       (await request(server).post(path).set(headers).send(body).expect(201)).body.id as string;
     const graph = async (query: Record<string, string> = {}) => {
       const response = await request(server).get('/api/links/graph').query(query).set(auth).expect(200);
-      return response.body as { nodes: { id: string; title: string }[]; edges: object[]; total: number };
+      return response.body as { nodes: { id: string; title: string; links: number }[]; edges: object[]; total: number };
     };
 
     const work = await post('/api/notebooks', { name: 'Work' });
@@ -1422,7 +1424,9 @@ describe('graph', () => {
     expect(all.total).toBe(4);
     // Newest first.
     expect(all.nodes.map((node) => node.id)).toEqual([alone, hub, plan, olderPlan]);
-    expect(all.nodes[1]).toEqual({ id: hub, title: 'Hub' });
+    // The hub links to the plan and is linked from it. Its other links connect nothing.
+    expect(all.nodes[1]).toEqual({ id: hub, title: 'Hub', links: 2 });
+    expect(all.nodes.map((node) => node.links)).toEqual([0, 2, 2, 0]);
     // One edge each way between the hub and the newer plan. Nothing for the note linking to itself,
     // the missing note, the note in the trash or the other account.
     const edges = [
@@ -1433,8 +1437,9 @@ describe('graph', () => {
 
     // A top-level notebook covers the notebooks inside it.
     expect((await graph({ notebookId: work })).nodes.map((node) => node.id)).toEqual([hub, plan]);
+    // Alone in its notebook, the plan has no edge here. It still says that it has links elsewhere.
     const innerOnly = await graph({ notebookId: inner });
-    expect(innerOnly).toMatchObject({ total: 1, nodes: [{ id: plan, title: 'plan' }], edges: [] });
+    expect(innerOnly).toMatchObject({ total: 1, nodes: [{ id: plan, title: 'plan', links: 2 }], edges: [] });
     expect((await graph({ notebookId: 'none' })).nodes.map((node) => node.id)).toEqual([alone, olderPlan]);
     expect((await graph({ tag: '#Atlas' })).edges).toHaveLength(2);
     expect((await graph({ notebookId: 'none', tag: 'atlas' })).total).toBe(0);
@@ -1442,7 +1447,59 @@ describe('graph', () => {
     const foreign = await post('/api/notebooks', { name: 'Theirs' }, other.auth);
     await request(server).get('/api/links/graph').query({ notebookId: foreign }).set(auth).expect(404);
     await request(server).get('/api/links/graph').query({ notebookId: 'NONE' }).set(auth).expect(400);
+    // The graph is not paged, and says so instead of ignoring the question.
+    const paged = await request(server).get('/api/links/graph').query({ page: 2 }).set(auth).expect(400);
+    expect(paged.body.message).toContain('property page should not exist');
+    await request(server).get('/api/links/graph').query({ pageSize: 10 }).set(auth).expect(400);
     await request(server).get('/api/links/graph').expect(401);
+  });
+
+  it('draws no more than the limit of notes, the ones edited last, with the links among them', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    const post = async (title: string, content: string) =>
+      (await request(server).post('/api/notes').set(auth).send({ title, content }).expect(201)).body.id as string;
+
+    // Three notes that will fall outside the limit, one of them linked from inside it.
+    const old = await post('Old', 'Too old to be drawn. See [[Older]].');
+    const older = await post('Older', 'Even older.');
+    const prisma = app.get(PrismaService);
+    const longAgo = new Date('2020-01-01T00:00:00Z');
+    await prisma.note.updateMany({ where: { id: { in: [old, older] } }, data: { updatedAt: longAgo } });
+    // Enough notes in between to fill the limit but for two.
+    await prisma.note.createMany({
+      data: Array.from({ length: MAX_GRAPH_NODES - 2 }, (_, index) => ({
+        userId: me.body.id as string,
+        title: `Filler ${index}`,
+        content: '',
+        updatedAt: new Date(Date.UTC(2024, 0, 1, 0, 0, index)),
+      })),
+    });
+    const fresh = await post('Fresh', 'See [[Newest]] and [[Old]].');
+    const newest = await post('Newest', 'See [[Fresh]].');
+
+    const response = await request(server).get('/api/links/graph').set(auth).expect(200);
+    const graph = response.body as {
+      nodes: { id: string; title: string; links: number }[];
+      edges: { source: string; target: string }[];
+      total: number;
+    };
+    expect(graph.total).toBe(MAX_GRAPH_NODES + 2);
+    expect(graph.nodes).toHaveLength(MAX_GRAPH_NODES);
+    expect(graph.nodes.slice(0, 2).map((node) => node.id)).toEqual([newest, fresh]);
+    const drawn = new Set(graph.nodes.map((node) => node.id));
+    expect(drawn.has(old)).toBe(false);
+    expect(drawn.has(older)).toBe(false);
+    // Only links between two notes that are both drawn. The one to "Old" is counted on "Fresh" and not drawn.
+    expect(graph.edges).toEqual(
+      [
+        { source: fresh, target: newest },
+        { source: newest, target: fresh },
+      ].sort((a, b) => a.source.localeCompare(b.source)),
+    );
+    expect(graph.nodes.find((node) => node.id === fresh)?.links).toBe(3);
+    expect(graph.nodes.find((node) => node.id === newest)?.links).toBe(2);
   });
 });
 
