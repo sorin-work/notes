@@ -48,6 +48,20 @@ export class VersionsService {
     return true;
   }
 
+  /**
+   * Saves the state the note is in now, whatever the interval, unless the
+   * latest version already holds it. For changes the app makes to a note on
+   * its own, which have to be undoable every time.
+   */
+  async snapshot(tx: Prisma.TransactionClient, note: Note, now = new Date()): Promise<boolean> {
+    const latest = await tx.noteVersion.findFirst({ where: { noteId: note.id }, orderBy: { createdAt: 'desc' } });
+    if (latest && latest.title === note.title && latest.content === note.content) {
+      return false;
+    }
+    await this.save(tx, note, now);
+    return true;
+  }
+
   async list(userId: string, noteId: string): Promise<VersionSummary[]> {
     await this.findNote(userId, noteId);
     const versions = await this.prisma.noteVersion.findMany({
