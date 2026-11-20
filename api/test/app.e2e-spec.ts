@@ -343,6 +343,7 @@ describe('api tokens', () => {
     const { auth } = await signUp();
 
     await request(server).post('/api/auth/tokens').set(auth).send({}).expect(400);
+    await request(server).post('/api/auth/tokens').set(auth).send({ name: 'script', readOnly: null }).expect(400);
     const created = await request(server).post('/api/auth/tokens').set(auth).send({ name: ' script ' }).expect(201);
     expect(created.body).toMatchObject({ name: 'script', readOnly: false, lastUsedAt: null });
     expect(created.body.token).toMatch(/^nt_[\w-]{43}$/);

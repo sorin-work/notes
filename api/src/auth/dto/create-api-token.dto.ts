@@ -1,5 +1,5 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
-import { Trim } from '../../common/transforms';
+import { IsBoolean, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IfPresent, Trim } from '../../common/transforms';
 
 export class CreateApiTokenDto {
   /** What the token is for, e.g. "backup script". Shown in Settings. */
@@ -9,7 +9,7 @@ export class CreateApiTokenDto {
   @MaxLength(100)
   name: string;
 
-  @IsOptional()
+  @IfPresent()
   @IsBoolean()
   readOnly?: boolean;
 }
