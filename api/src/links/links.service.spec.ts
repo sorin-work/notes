@@ -47,6 +47,7 @@ describe('LinksService', () => {
           where: {
             userId: USER,
             deletedAt: null,
+            isTemplate: false,
             id: { not: 'n1' },
             outgoingLinks: { some: { targetKey: 'project atlas' } },
           },

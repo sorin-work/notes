@@ -22,7 +22,11 @@ function note(title: string, notebook: unknown = null, overrides: Record<string,
 describe('toMarkdownFile', () => {
   it('puts title, tags, flags and dates in front matter', () => {
     const markdown = toMarkdownFile(
-      note('Plan', null, { pinned: true, tags: [{ tag: { name: 'work' } }, { tag: { name: 'q1' } }] }),
+      note('Plan', null, {
+        pinned: true,
+        isTemplate: true,
+        tags: [{ tag: { name: 'work' } }, { tag: { name: 'q1' } }],
+      }),
     );
     expect(markdown).toBe(
       [
@@ -30,6 +34,7 @@ describe('toMarkdownFile', () => {
         'title: Plan',
         'tags: [work, q1]',
         'pinned: true',
+        'template: true',
         'created: "2026-01-05T10:00:00.000Z"',
         'updated: "2026-02-01T18:30:00.000Z"',
         '---',

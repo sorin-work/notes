@@ -1,5 +1,5 @@
 import { api, json } from './client';
-import type { AuthResult, User } from './types';
+import type { AuthResult, Preferences, User } from './types';
 
 export const login = (email: string, password: string) =>
   api<AuthResult>('/auth/login', json('POST', { email, password }));
@@ -12,6 +12,10 @@ export const me = () => api<User>('/auth/me');
 /** The current password is only needed when the email changes. */
 export const updateProfile = (changes: { name?: string; email?: string; currentPassword?: string }) =>
   api<User>('/auth/me', json('PATCH', changes));
+
+/** Changes the daily note choices that are sent and leaves the others. The answer is all the preferences. */
+export const updatePreferences = (dailyNotes: Partial<Preferences['dailyNotes']>) =>
+  api<Preferences>('/auth/preferences', json('PATCH', { dailyNotes }));
 
 /** Signs out every other session. The answer holds a new token for this one. */
 export const changePassword = (currentPassword: string, newPassword: string) =>

@@ -1,16 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
-import { changePassword, deleteAccount, logoutEverywhere, updateProfile } from '../api/auth';
+import { changePassword, deleteAccount, logoutEverywhere, updatePreferences, updateProfile } from '../api/auth';
+import { listNotebooks } from '../api/notebooks';
+import { listNotes } from '../api/notes';
 import { deleteTag, listTags, renameTag } from '../api/tags';
 import { createApiToken, listApiTokens, revokeApiToken } from '../api/tokens';
 import { exportAll, importFiles } from '../api/transfer';
-import type { ApiToken, CreatedApiToken, Tag, User } from '../api/types';
+import type { ApiToken, CreatedApiToken, Preferences, Tag, User } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
 import { ConfirmDialog, Modal } from '../components/Modal';
+import { NotebookOptions } from '../components/NotebookSelect';
 import { ErrorMessage } from '../components/States';
 import { Theme, useTheme } from '../hooks/useTheme';
 import { formatRelative } from '../lib/dates';
+import { DATE_FORMATS, formatDay, localDay } from '../lib/days';
 
 export function SettingsPage() {
   const { user } = useAuth();
@@ -24,6 +28,7 @@ export function SettingsPage() {
         <SessionsSection />
         {user && <DeleteAccountSection user={user} />}
       </section>
+      {user && <DailyNoteSection user={user} />}
       <AppearanceSection />
       <ImportExportSection />
       <TagsSection />
@@ -260,6 +265,89 @@ function DeleteAccountDialog({ user, onClose }: { user: User; onClose(): void })
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Where "Today" in the sidebar puts a new daily note, what it starts from
+ * and how the day is written in its title. Kept with the account, so the
+ * choices are the same on every device.
+ */
+function DailyNoteSection({ user }: { user: User }) {
+  const { updateUser } = useAuth();
+  const daily = user.preferences.dailyNotes;
+  const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
+  const templates = useQuery({
+    queryKey: ['notes', 'templates'],
+    queryFn: () => listNotes({ templates: true, sort: 'title', pageSize: 100 }),
+  });
+  const save = useMutation({
+    mutationFn: (changes: Partial<Preferences['dailyNotes']>) => updatePreferences(changes),
+    onSuccess: (preferences) => updateUser({ ...user, preferences }),
+  });
+  // A notebook or a template that was deleted since is shown as none, which is how a new note treats it too.
+  const notebookId = notebooks.data?.some((notebook) => notebook.id === daily.notebookId) ? daily.notebookId : null;
+  const templateId = templates.data?.items.some((template) => template.id === daily.templateId)
+    ? daily.templateId
+    : null;
+  const today = localDay();
+
+  return (
+    <section className="card">
+      <h2>Daily note</h2>
+      <div className="form narrow">
+        <p className="muted">
+          “Today” in the sidebar opens the note of the day and starts it when there is none. These choices are kept with
+          your account, so they are the same on every device.
+        </p>
+        <label className="field">
+          <span>Notebook for new daily notes</span>
+          <select
+            value={notebookId ?? ''}
+            disabled={save.isPending}
+            onChange={(event) => save.mutate({ notebookId: event.target.value || null })}
+          >
+            <option value="">No notebook</option>
+            <NotebookOptions notebooks={notebooks.data ?? []} />
+          </select>
+        </label>
+        <label className="field">
+          <span>Template for new daily notes</span>
+          <select
+            value={templateId ?? ''}
+            disabled={save.isPending}
+            onChange={(event) => save.mutate({ templateId: event.target.value || null })}
+          >
+            <option value="">No template, an empty note</option>
+            {templates.data?.items.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Date in the title</span>
+          <select
+            value={daily.dateFormat}
+            disabled={save.isPending}
+            onChange={(event) => save.mutate({ dateFormat: event.target.value as (typeof DATE_FORMATS)[number] })}
+          >
+            {DATE_FORMATS.map((format) => (
+              <option key={format} value={format}>
+                {formatDay(today, format)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {save.error && <ErrorMessage error={save.error} />}
+        {save.isSuccess && (
+          <p className="success" role="status">
+            Saved.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

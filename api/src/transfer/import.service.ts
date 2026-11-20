@@ -178,6 +178,7 @@ export class ImportService {
             content: body,
             pinned: data.pinned === true,
             favorite: data.favorite === true || data.favourite === true,
+            isTemplate: data.template === true,
             createdAt: created,
             updatedAt: updated,
           },

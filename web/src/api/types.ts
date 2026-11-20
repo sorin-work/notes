@@ -1,8 +1,19 @@
+/** Choices kept with the account, so they are the same on every device. Theme and editor mode stay in the browser. */
+export interface Preferences {
+  /** What the note behind "Today" is made with. */
+  dailyNotes: {
+    notebookId: string | null;
+    templateId: string | null;
+    dateFormat: 'iso' | 'long' | 'us';
+  };
+}
+
 export interface User {
   id: string;
   email: string;
   name: string;
   createdAt: string;
+  preferences: Preferences;
 }
 
 export interface AuthResult {
@@ -42,6 +53,8 @@ export interface Notebook {
   name: string;
   parentId: string | null;
   noteCount: number;
+  /** Templates are not counted as notes, but deleting the notebook trashes them too. */
+  templateCount: number;
   /** Whether the notebook has a share link of its own. */
   shared: boolean;
   /** The shared notebook that makes this one public: itself, or the one it is inside. */
@@ -74,6 +87,10 @@ export interface Note {
   content: string;
   /** Goes up with every change to the title or the content. A save names the revision it was based on. */
   revision: number;
+  /** A template is kept out of the lists and the search, and new notes are made from it. */
+  isTemplate: boolean;
+  /** The day (YYYY-MM-DD) this note is the daily note of, if it is one. */
+  dailyDate: string | null;
   notebookId: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   tags: string[];
@@ -98,6 +115,11 @@ export interface NoteChanges {
   revision?: number;
   /** Keep the text this save replaces as a version, whatever the usual interval. */
   keepVersion?: boolean;
+  isTemplate?: boolean;
+  /** For a new note: the template to make it from. */
+  templateId?: string;
+  /** For a new note from a template: what {{date}} and {{time}} are filled with. */
+  placeholders?: { date?: string; time?: string };
   notebookId?: string | null;
   tags?: string[];
   pinned?: boolean;

@@ -8,6 +8,8 @@ export interface NoteFilters {
   tag?: string;
   pinned?: boolean;
   favorite?: boolean;
+  /** The templates, which no other list shows. */
+  templates?: boolean;
   sort?: NoteSort;
   page?: number;
   pageSize?: number;
@@ -32,6 +34,19 @@ export function staleNote(error: unknown): Note | null {
 }
 
 export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DELETE' });
+
+/**
+ * The daily note of a day: the one there is, or a new one made as the
+ * preferences say. The day and its title come from here, see lib/days.
+ */
+export const openDailyNote = (today: { date: string; placeholders: { date: string; time: string } }) =>
+  api<Note>('/notes/daily', json('POST', today));
+
+/** A copy of the note with its text, tags and notebook, and nothing else of it. */
+/** Takes a daily note off its day: the next "Today" starts a new note, and this one stays as it is. */
+export const releaseDailyNote = (id: string) => api<Note>(`/notes/${id}/daily`, { method: 'DELETE' });
+
+export const duplicateNote = (id: string) => api<Note>(`/notes/${id}/duplicate`, { method: 'POST' });
 
 export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks`);
 

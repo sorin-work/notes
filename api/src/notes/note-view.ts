@@ -63,6 +63,10 @@ export interface NoteView extends Omit<NoteSummary, 'excerpt'> {
   content: string;
   /** Counts the changes to the title and the content. A save names the revision it was based on. */
   revision: number;
+  /** A template is kept out of the lists and the search, and new notes are made from it. */
+  isTemplate: boolean;
+  /** The day, as YYYY-MM-DD, when this is the daily note of that day. */
+  dailyDate: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   /** Whether the note has a share link of its own. */
   shared: boolean;
@@ -91,13 +95,16 @@ export function toView(note: NoteWithRelations): NoteView {
     title: note.title,
     content: note.content,
     revision: note.revision,
+    isTemplate: note.isTemplate,
+    dailyDate: note.dailyDate ? note.dailyDate.toISOString().slice(0, 10) : null,
     notebookId: note.notebookId,
     notebook: note.notebook && { id: note.notebook.id, name: note.notebook.name, parentId: note.notebook.parentId },
     tags: note.tags.map((noteTag) => noteTag.tag.name),
     pinned: note.pinned,
     favorite: note.favorite,
     shared: note.share !== null,
-    sharedThrough: sharedThrough(note.notebook),
+    // A shared notebook does not show its templates to its readers.
+    sharedThrough: note.isTemplate ? null : sharedThrough(note.notebook),
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
     deletedAt: note.deletedAt,

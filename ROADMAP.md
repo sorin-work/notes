@@ -34,7 +34,7 @@ couple of weekends, **L** several weeks of spare time.
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
-| 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
+| 16  | Templates and daily notes              | Shipped | both     | M    | -          |
 | 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
 | 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
 
@@ -106,27 +106,6 @@ more.
   sidebar.
 - Undecided: whether it is worth it at all when tags and links exist. A cap
   of three or four levels would keep the sidebar manageable.
-
-### 16. Templates and daily notes
-
-The demo data has a "Weekly review template" that is an ordinary note you
-copy by hand.
-
-- Templates: mark a note as a template (`isTemplate` on `Note`, left out of
-  the normal lists and of search) and add "New from template" to the new-note
-  button. `POST /notes` takes a `templateId` and copies content and tags,
-  filling in placeholders such as `{{date}}` and `{{title}}`.
-- Daily note: a "Today" entry in the sidebar that opens the note titled with
-  today's date and creates it if needed. `GET /notes/resolve?title=` already
-  answers whether a note with that title exists.
-- A plain "Duplicate" button in the editor toolbar is a small first step and
-  useful by itself.
-- Tricky: "today" depends on the user's time zone, which the API does not
-  know. Work out the title in the browser.
-- Undecided: a column, or a reserved `template` tag that needs no migration.
-  Also where per-user choices (which notebook, which template, date format)
-  are kept. Preferences live in `localStorage` today (`useStoredState`,
-  `useTheme`) and do not follow you to another device.
 
 ### 17. Notebooks shared with other accounts
 
@@ -442,3 +421,38 @@ click. Any site can send a visitor there, so it saves nothing by itself, the
 title stays out of the note's text, and only a plain web address is taken.
 `API_DOCS=false` turns the document off. Still open: the document describes
 requests but not answers.
+
+### 16. Templates and daily notes
+
+Both are built. A note becomes a template through `isTemplate`, a column and
+not a reserved tag. Templates have a view of their own and are kept out of
+the lists, the search, the quick switcher, link completion, backlinks and the
+counts on notebooks and tags by one condition, `workingNotes` in
+`api/src/notes/note-scope.ts`, which all of those queries share.
+`POST /notes` takes a `templateId` and copies the template's content and
+tags. The placeholders are a closed set, `{{date}}`, `{{time}}` and
+`{{title}}`. Date and time are worked out in the browser and sent as text, so
+the API never guesses what day it is, and anything else in double braces is
+left as written. A template's links are copied as text and stored for the
+new note. Neither a note from a template nor a duplicate takes the pin, the
+star, the share link or the history along. "Today" in the sidebar sends the
+browser's day to `POST /notes/daily`, which opens the note of that day or
+makes it, in one step. Different from the plan: the note is not found through
+`GET /notes/resolve` and its title but through a `dailyDate` column with a
+unique index on user and day. That is what keeps two tabs from making two
+notes, and it lets the note survive a rename and a change of the date format.
+The browser sends only the day, and the server writes the title in the format
+stored at that moment. A note titled with the day, in any format, is taken
+for the note of that day, and "Not the daily note" (`DELETE
+/notes/:id/daily`) lets it go for good. The notebook, the template and the date format are a small
+validated `preferences` JSON on `User`, read with `GET /auth/me` and written
+through `PATCH /auth/preferences`. Theme and editor mode stay in
+`localStorage`. A note from a template starts untitled with the cursor in its
+title, and `{{title}}` is only filled with a title that is given. Beyond the
+design: a link to a template's title still leads to it unless a note has that
+title, renaming a note also updates the links in templates, notebooks count
+their templates apart so that deleting one can say they go too, and export
+and import keep the template flag. Still open: placeholders are also filled
+inside code, a template can still be shared by a link like any note, there
+is no page that lists the daily notes or steps from one day to the next, and
+`{{date}}` does not follow the chosen date format.
