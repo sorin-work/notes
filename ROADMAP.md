@@ -417,8 +417,14 @@ cached. A new build waits until the user takes the "new version, reload"
 offer, which saves the open note first. `nginx.conf` serves `index.html`, the
 worker and the manifest with `no-cache`. There is no lazy route on `main` yet;
 since every file of the build is cached, a lazy chunk like that of the graph
-view will load offline too. Still to come: reading notes offline from a
-persisted query cache, then writing offline through an outbox.
+view will load offline too. Second part: the TanStack Query cache is kept in
+IndexedDB, one record per user, so notes already opened can be read offline
+after a reload. Only notes, lists, notebooks, tags and links are written,
+never search results, settings or the token. It is limited to 5 MB and seven
+days, and deleted on sign-out, a 401, a sign-out seen from another tab,
+account deletion and when another user signs in here. Without a connection the
+user comes from the token and that user's copy. Search, backlinks and history
+stay online only and say so. Still to come: writing offline through an outbox.
 
 ### 16. Templates and daily notes
 

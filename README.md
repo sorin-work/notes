@@ -96,10 +96,14 @@ Markdown import/export.
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
 - **Installable**: the browser can install the app, from the address bar on
   a desktop or with "Add to Home Screen" on a phone. A service worker keeps
-  the files of the app, so it starts without a connection (it then needs one
-  to sign in or to load notes). When a new version is out, a line at the
-  bottom offers to reload into it. Nothing reloads by itself, and "Reload"
-  saves the open note first.
+  the files of the app, so it starts without a connection. When a new
+  version is out, a line at the bottom offers to reload into it. Nothing
+  reloads by itself, and "Reload" saves the open note first.
+- **Reading offline**: the notes, lists, notebooks and tags you have seen on
+  a device are kept there, so they can be read without a connection, also
+  after a reload. A line at the top says when you are offline and that what
+  is shown may be out of date. Search, backlinks and history need a
+  connection and say so.
 
 | Shortcut             | Action                            |
 | -------------------- | --------------------------------- |
@@ -575,6 +579,26 @@ installs next to the one in use and waits, with its own cache, so the open
 tab keeps every file it may still load. "Reload" in the offer at the bottom
 saves the open note, lets the new worker take over and reloads. If the note
 cannot be saved, it says so and does not reload.
+
+What can be read offline is kept apart from the worker, in IndexedDB
+(`web/src/lib/offlineCache.ts`): the TanStack Query cache, written at most once
+a second, one record per user under the user's id. Only notes, note lists,
+notebooks, tags and the links of a note are written. Search results,
+backlinks, history, the settings pages, share links and the login token never
+are. The token stays in `localStorage`, where it always was. A copy older than
+seven days is thrown away rather than shown, and past 5 MB the queries loaded
+longest ago are left out.
+
+Started without a connection, the app reads the user id from the token and
+opens that user's copy, with no request to the server. If there is none, it
+says that it needs a connection. Once the connection is back it asks the
+server who is signed in, as usual.
+
+The copy is deleted when you sign out, when the server answers 401 (the
+session ended, the password changed, or "Sign out everywhere" was used on
+another device), when another tab of this browser signs out, when the account
+is deleted, and when a different user signs in on the same browser. A device
+that never comes back online keeps its copy until then, up to its seven days.
 
 ## API overview
 
