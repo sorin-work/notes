@@ -2542,6 +2542,7 @@ describe('import and export', () => {
       notebooksCreated: 1,
       duplicates: 0,
       attachmentsSkipped: 0,
+      attachmentsImported: 0,
       skipped: [],
     });
 
