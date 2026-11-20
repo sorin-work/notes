@@ -416,21 +416,31 @@ requests but not answers.
 
 ### 16. Templates and daily notes
 
-Templates and "Duplicate" are built. The daily note, a "Today" entry in the
-sidebar, follows in a change of its own. A note becomes a template through
-`isTemplate`, a column and not a reserved tag. Templates have a view of their
-own and are kept out of the lists, the search, the quick switcher, link
-completion, backlinks and the counts on notebooks and tags by one condition,
-`workingNotes` in `api/src/notes/note-scope.ts`, which all of those queries
-share. `POST /notes` takes a `templateId` and copies the template's content
-and tags. The placeholders are a closed set, `{{date}}`, `{{time}}` and
+Both are built. A note becomes a template through `isTemplate`, a column and
+not a reserved tag. Templates have a view of their own and are kept out of
+the lists, the search, the quick switcher, link completion, backlinks and the
+counts on notebooks and tags by one condition, `workingNotes` in
+`api/src/notes/note-scope.ts`, which all of those queries share.
+`POST /notes` takes a `templateId` and copies the template's content and
+tags. The placeholders are a closed set, `{{date}}`, `{{time}}` and
 `{{title}}`. Date and time are worked out in the browser and sent as text, so
 the API never guesses what day it is, and anything else in double braces is
 left as written. A template's links are copied as text and stored for the
 new note. Neither a note from a template nor a duplicate takes the pin, the
-star, the share link or the history along. Beyond the design: a note is named
-after its template without a closing "template", a link to a template's title
-still leads to it, renaming a note also updates the links in templates, and
-export and import keep the flag. Still open: the daily note, placeholders are
-also filled inside code, and a template can still be shared by a link like
-any note.
+star, the share link or the history along. "Today" in the sidebar sends the
+browser's day to `POST /notes/daily`, which opens the note of that day or
+makes it, in one step. Different from the plan: the note is not found through
+`GET /notes/resolve` and its title but through a `dailyDate` column with a
+unique index on user and day. That is what keeps two tabs from making two
+notes, and it lets the note survive a rename and a change of the date format.
+A note titled with the day by hand, in any format, is taken for the note of
+that day. The notebook, the template and the date format are a small
+validated `preferences` JSON on `User`, read with `GET /auth/me` and written
+through `PATCH /auth/preferences`. Theme and editor mode stay in
+`localStorage`. Beyond the design: a note is named after its template without
+a closing "template", a link to a template's title still leads to it,
+renaming a note also updates the links in templates, and export and import
+keep the template flag. Still open: placeholders are also filled inside code,
+a template can still be shared by a link like any note, there is no page that
+lists the daily notes or steps from one day to the next, and `{{date}}` does
+not follow the chosen date format.
