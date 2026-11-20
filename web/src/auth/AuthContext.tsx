@@ -1,9 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as authApi from '../api/auth';
-import { ApiError, getToken, onTokenRemovedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
+import { ApiError, getToken, onTokenChangedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
 import { clearNotices } from '../lib/notices';
+import { discardUnsavedWork, putUnsavedWorkAside } from '../lib/unsavedWork';
 import {
   dropOfflineCache,
   dropOtherOfflineCaches,
@@ -33,6 +34,10 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/** A page load for a fresh start. Apart, so that tests can watch for it. */
+export const page = { reload: () => window.location.reload() };
+const reloadPage = () => page.reload();
+
 const unreachable = (error: unknown) => error instanceof ApiError && error.status === 0;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -43,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const kept = useRef<{ userId: string; cache: Promise<OfflineCache> } | null>(null);
 
   // A function, so that TypeScript does not take the value read before an await for the one after it.
-  const keptUser = () => kept.current?.userId ?? null;
+  const keptUser = useCallback(() => kept.current?.userId ?? null, []);
 
   const stopKeeping = useCallback(() => {
     const current = kept.current;
@@ -68,7 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [queryClient, stopKeeping],
   );
 
+  // Goes up with every sign-out, so a sign-in that was still waiting knows it came too late.
+  const generation = useRef(0);
+
   const logout = useCallback(() => {
+    generation.current++;
     // The user whose notes are on disk: the one shown, or else the one the token names.
     const userId = stopKeeping() ?? tokenUserId(getToken());
     setToken(null);
@@ -86,8 +95,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, [logout]);
 
-  // Signing out in one tab signs out the others, cached notes included.
-  useEffect(() => onTokenRemovedElsewhere(logout), [logout]);
+  // Signing out in one tab signs out the others, cached notes included. A
+  // tab that finds another user signed in under it lets go of everything of
+  // the old one: its draft is put aside under that user, not saved as the
+  // new one, and the page starts again for whoever is signed in now.
+  useEffect(
+    () =>
+      onTokenChangedElsewhere((token) => {
+        if (token === null) {
+          logout();
+          return;
+        }
+        const shown = keptUser();
+        const now = tokenUserId(token);
+        if (shown === null || now === null || now === shown) return;
+        putUnsavedWorkAside();
+        discardUnsavedWork();
+        stopKeeping();
+        generation.current++;
+        setUser(null);
+        setStatus('loading');
+        queryClient.clear();
+        clearNotices();
+        reloadPage();
+      }),
+    [keptUser, logout, queryClient, stopKeeping],
+  );
 
   // Who is signed in. Without a connection, the user kept with the notes on
   // this browser stands in until the server can be asked again.
@@ -136,12 +169,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.removeEventListener('online', retry);
     };
-  }, [logout, startKeeping]);
+  }, [keptUser, logout, startKeeping]);
 
   const signedIn = useCallback(
     async (result: AuthResult) => {
+      const started = generation.current;
       setToken(result.token);
       await startKeeping(result.user);
+      // Signed out while the kept copy was read: this sign-in is over too.
+      if (generation.current !== started) return;
       setUser(result.user);
       setStatus('signed-in');
     },
