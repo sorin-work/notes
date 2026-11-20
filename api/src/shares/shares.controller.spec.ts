@@ -2,7 +2,7 @@ import { Reflector } from '@nestjs/core';
 import type { Response } from 'express';
 import type { AuthService } from '../auth/auth.service';
 import { IS_PUBLIC } from '../common/public.decorator';
-import { PublicSharesController, SharesController } from './shares.controller';
+import { NotebookSharesController, PublicSharesController, SharesController } from './shares.controller';
 import { SharesService } from './shares.service';
 
 describe('SharesController', () => {
@@ -18,14 +18,28 @@ describe('SharesController', () => {
     await controller.create(user, 'n1', {});
     await controller.update(user, 'n1', { password: null });
     await controller.revoke(user, 'n1');
-    expect(service.create).toHaveBeenCalledWith('user-1', 'n1', {});
-    expect(service.update).toHaveBeenCalledWith('user-1', 'n1', { password: null });
-    expect(service.revoke).toHaveBeenCalledWith('user-1', 'n1');
+    expect(service.get).toHaveBeenCalledWith('user-1', { noteId: 'n1' });
+    expect(service.create).toHaveBeenCalledWith('user-1', { noteId: 'n1' }, {});
+    expect(service.update).toHaveBeenCalledWith('user-1', { noteId: 'n1' }, { password: null });
+    expect(service.revoke).toHaveBeenCalledWith('user-1', { noteId: 'n1' });
+  });
+
+  it('does the same for a notebook', async () => {
+    service.get.mockResolvedValue(null);
+    const controller = new NotebookSharesController(service as unknown as SharesService);
+    await expect(controller.get(user, 'nb1')).resolves.toEqual({ share: null });
+    await controller.create(user, 'nb1', { password: 'open sesame' });
+    await controller.update(user, 'nb1', { expiresAt: null });
+    await controller.revoke(user, 'nb1');
+    expect(service.get).toHaveBeenCalledWith('user-1', { notebookId: 'nb1' });
+    expect(service.create).toHaveBeenCalledWith('user-1', { notebookId: 'nb1' }, { password: 'open sesame' });
+    expect(service.update).toHaveBeenCalledWith('user-1', { notebookId: 'nb1' }, { expiresAt: null });
+    expect(service.revoke).toHaveBeenCalledWith('user-1', { notebookId: 'nb1' });
   });
 });
 
 describe('PublicSharesController', () => {
-  const service = { view: jest.fn() };
+  const service = { view: jest.fn(), viewNote: jest.fn() };
   const auth = { identify: jest.fn() };
   const response = { setHeader: jest.fn() };
   const sent = response as unknown as Response;
@@ -41,9 +55,11 @@ describe('PublicSharesController', () => {
     expect(reflector.get(IS_PUBLIC, PublicSharesController.prototype.view)).toBe(true);
     expect(reflector.get(IS_PUBLIC, PublicSharesController.prototype.unlock)).toBe(true);
 
-    await controller.view('tok', undefined, sent);
+    expect(reflector.get(IS_PUBLIC, PublicSharesController.prototype.viewNote)).toBe(true);
 
-    expect(service.view).toHaveBeenCalledWith('tok', { userId: undefined });
+    await controller.view('tok', undefined, undefined, sent);
+
+    expect(service.view).toHaveBeenCalledWith('tok', { userId: undefined, access: undefined });
     expect(auth.identify).not.toHaveBeenCalled();
     expect(response.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
   });
@@ -56,9 +72,17 @@ describe('PublicSharesController', () => {
 
   it('passes on who is asking when a login comes with the request, so the owner is not counted', async () => {
     auth.identify.mockResolvedValue({ id: 'user-1', email: 'ada@example.com' });
-    await controller.view('tok', 'Bearer login-token', sent);
+    await controller.view('tok', 'Bearer login-token', undefined, sent);
     expect(auth.identify).toHaveBeenCalledWith('login-token');
-    expect(service.view).toHaveBeenCalledWith('tok', { userId: 'user-1' });
+    expect(service.view).toHaveBeenCalledWith('tok', { userId: 'user-1', access: undefined });
+  });
+
+  it('hands on the proof of an earlier password, for the link and for a note inside a notebook', async () => {
+    await controller.view('tok', undefined, 'proof', sent);
+    expect(service.view).toHaveBeenCalledWith('tok', { userId: undefined, access: 'proof' });
+    await controller.viewNote('tok', 'n1', undefined, 'proof', sent);
+    expect(service.viewNote).toHaveBeenCalledWith('tok', 'n1', { userId: undefined, access: 'proof' });
+    expect(response.setHeader).toHaveBeenCalledTimes(2);
   });
 
   it('treats a login that is no good as no login', async () => {

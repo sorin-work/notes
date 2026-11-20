@@ -1,8 +1,16 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import type { ShareLink } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPassword } from '../auth/password';
+import { APP_CONFIG, AppConfig } from '../config/config';
+import { LinksService } from '../links/links.service';
+import { extractWikiLinks, normalizeTitle, unlinkExcept } from '../links/wikilinks';
 import { PrismaService } from '../prisma/prisma.service';
 import { ShareOptionsDto } from './dto/share.dto';
+import { accessIsValid, signAccess } from './share-access';
+
+/** What a link shares: one note, or one notebook with everything in it. */
+export type ShareSubject = { noteId: string } | { notebookId: string };
 
 /** What the owner sees of a link. The password itself is never given back, only whether there is one. */
 export interface ShareView {
@@ -16,23 +24,48 @@ export interface ShareView {
 }
 
 export interface SharedNote {
+  kind: 'note';
   title: string;
+  /**
+   * The text with its [[links]] gone over: a link stays a link only when
+   * the reader may follow it. See unlinkExcept.
+   */
   content: string;
   tags: string[];
   updatedAt: Date;
+  /** Where each link that is left leads, by normalised title: "/s/<token>" or "/s/<token>/<note id>". */
+  links: Record<string, string>;
+  /** Only in the answer to the right password. See share-access.ts. */
+  access?: string;
 }
 
-/** Who is asking for a shared note, as far as the request says. */
+/** The index page of a shared notebook. */
+export interface SharedNotebook {
+  kind: 'notebook';
+  name: string;
+  notes: {
+    id: string;
+    title: string;
+    updatedAt: Date;
+    /** The notebook inside the shared one, if the note is in one. */ notebook: string | null;
+  }[];
+  access?: string;
+}
+
+/** Who is asking, as far as the request says. */
 export interface ShareViewer {
   /** The account of a valid login token sent along, if any. */
   userId?: string;
   /** What was typed into the password prompt, if anything. */
   password?: string;
+  /** Proof of an earlier right password, from the X-Share-Access header. */
+  access?: string;
 }
 
 /**
- * The one answer for every link that cannot be read: mistyped, revoked,
- * expired, or its note in the trash. Someone outside cannot tell which.
+ * The one answer for everything that cannot be read: a link that is
+ * mistyped, revoked or expired, a note in the trash, and a note that is not,
+ * or no longer, in the shared notebook. Someone outside cannot tell which.
  */
 const GONE = 'This link does not exist or is no longer shared';
 
@@ -50,83 +83,227 @@ function passwordRequired(message: string): ForbiddenException {
   return new ForbiddenException({ statusCode: 403, error: 'Forbidden', message, passwordRequired: true });
 }
 
+/** A link that passed the checks, with what is needed to read through it. */
+interface OpenShare {
+  share: ShareLink;
+  ownerId: string;
+  /** The notebooks whose notes the link covers: the shared one and those inside it. Null for a link to one note. */
+  notebookIds: string[] | null;
+  access?: string;
+}
+
+const NOTE_FIELDS = {
+  id: true,
+  title: true,
+  content: true,
+  updatedAt: true,
+  tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' as const } } },
+};
+
 @Injectable()
 export class SharesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly links: LinksService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+  ) {}
 
-  async get(userId: string, noteId: string): Promise<ShareView | null> {
-    await this.findNote(userId, noteId);
-    const share = await this.prisma.shareLink.findUnique({ where: { noteId } });
+  async get(userId: string, subject: ShareSubject): Promise<ShareView | null> {
+    await this.findOwned(userId, subject);
+    const share = await this.prisma.shareLink.findUnique({ where: subject });
     return share ? toShareView(share) : null;
   }
 
-  /** Returns the note's share link, creating one if it has none. Options that are given are applied either way. */
-  async create(userId: string, noteId: string, options: ShareOptionsDto = {}): Promise<ShareView> {
-    const note = await this.findNote(userId, noteId);
-    if (note.deletedAt) {
+  /** Returns the share link of the note or notebook, creating one if it has none. Options that are given are applied either way. */
+  async create(userId: string, subject: ShareSubject, options: ShareOptionsDto = {}): Promise<ShareView> {
+    const owned = await this.findOwned(userId, subject);
+    if (owned.deletedAt) {
       throw new NotFoundException('Note not found');
     }
     const changes = await this.changesFrom(options);
     const share = await this.prisma.shareLink.upsert({
-      where: { noteId },
-      create: { noteId, token: newShareToken(), ...changes },
+      where: subject,
+      create: { ...subject, token: newShareToken(), ...changes },
       update: changes,
     });
     return toShareView(share);
   }
 
   /** Changes when the link runs out and whether it asks for a password. The link itself stays the same. */
-  async update(userId: string, noteId: string, options: ShareOptionsDto): Promise<ShareView> {
-    await this.findNote(userId, noteId);
-    const existing = await this.prisma.shareLink.findUnique({ where: { noteId } });
+  async update(userId: string, subject: ShareSubject, options: ShareOptionsDto): Promise<ShareView> {
+    await this.findOwned(userId, subject);
+    const existing = await this.prisma.shareLink.findUnique({ where: subject });
     if (!existing) {
-      throw new NotFoundException('This note is not shared');
+      throw new NotFoundException('noteId' in subject ? 'This note is not shared' : 'This notebook is not shared');
     }
-    const share = await this.prisma.shareLink.update({
-      where: { noteId },
-      data: await this.changesFrom(options),
-    });
+    const share = await this.prisma.shareLink.update({ where: subject, data: await this.changesFrom(options) });
     return toShareView(share);
   }
 
   /** Stops sharing. The old link stops working; sharing again makes a new one. */
-  async revoke(userId: string, noteId: string): Promise<void> {
-    await this.findNote(userId, noteId);
-    await this.prisma.shareLink.deleteMany({ where: { noteId } });
+  async revoke(userId: string, subject: ShareSubject): Promise<void> {
+    await this.findOwned(userId, subject);
+    await this.prisma.shareLink.deleteMany({ where: subject });
+  }
+
+  /** What `/s/<token>` shows: the note of a link to a note, the index of a link to a notebook. */
+  async view(token: string, viewer: ShareViewer = {}, now = new Date()): Promise<SharedNote | SharedNotebook> {
+    const open = await this.open(token, viewer, now);
+    const content = open.share.noteId
+      ? await this.noteFor(open, token, { id: open.share.noteId }, now)
+      : await this.indexFor(open);
+    await this.count(open, viewer);
+    return open.access ? { ...content, access: open.access } : content;
   }
 
   /**
-   * The read-only view behind a share link.
-   *
-   * The order of the checks matters. "Gone" comes first, so an expired link
-   * with a password looks like any other dead link and not like a prompt.
-   * The view is counted last, and not for the owner looking at their own.
+   * One note of a shared notebook. Whether the note belongs to the notebook
+   * is asked now, with this request: a note moved in a minute ago is there,
+   * and one moved out or put in the trash is gone, with nothing to refresh.
    */
-  async view(token: string, viewer: ShareViewer = {}, now = new Date()): Promise<SharedNote> {
-    const share = await this.prisma.shareLink.findUnique({
-      where: { token },
-      include: { note: { include: { tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' } } } } } },
-    });
-    if (!share || share.note.deletedAt || isExpired(share, now)) {
+  async viewNote(token: string, noteId: string, viewer: ShareViewer = {}, now = new Date()): Promise<SharedNote> {
+    const open = await this.open(token, viewer, now);
+    if (!open.notebookIds) {
       throw new NotFoundException(GONE);
     }
+    const note = await this.noteFor(open, token, { id: noteId, notebookId: { in: open.notebookIds } }, now);
+    await this.count(open, viewer);
+    return note;
+  }
+
+  /**
+   * The checks every reader goes through, in an order that matters. "Gone"
+   * comes first, so a link that has run out looks like any dead link and
+   * not like a prompt, password or not. Then the password, or proof of it.
+   */
+  private async open(token: string, viewer: ShareViewer, now: Date): Promise<OpenShare> {
+    const share = await this.prisma.shareLink.findUnique({
+      where: { token },
+      include: {
+        note: { select: { userId: true, deletedAt: true } },
+        notebook: { select: { id: true, userId: true, children: { select: { id: true } } } },
+      },
+    });
+    const ownerId = share?.note?.userId ?? share?.notebook?.userId;
+    if (!share || !ownerId || share.note?.deletedAt || isExpired(share, now)) {
+      throw new NotFoundException(GONE);
+    }
+
+    let access: string | undefined;
     if (share.passwordHash) {
-      if (viewer.password === undefined) {
-        throw passwordRequired('This note is protected by a password');
-      }
-      if (!(await verifyPassword(viewer.password, share.passwordHash))) {
-        throw passwordRequired('That password is not right');
+      if (viewer.password !== undefined) {
+        if (!(await verifyPassword(viewer.password, share.passwordHash))) {
+          throw passwordRequired('That password is not right');
+        }
+        access = signAccess(this.config.jwtSecret, share.id, share.passwordHash, now);
+      } else if (!accessIsValid(this.config.jwtSecret, viewer.access, share.id, share.passwordHash, now)) {
+        throw passwordRequired('This link is protected by a password');
       }
     }
-    if (viewer.userId !== share.note.userId) {
-      await this.prisma.shareLink.update({ where: { id: share.id }, data: { viewCount: { increment: 1 } } });
+    const notebookIds = share.notebook
+      ? [share.notebook.id, ...share.notebook.children.map((child) => child.id)]
+      : null;
+    return { share, ownerId, notebookIds, access };
+  }
+
+  /** A view is a successful read by anyone but the owner. */
+  private async count(open: OpenShare, viewer: ShareViewer): Promise<void> {
+    if (viewer.userId !== open.ownerId) {
+      await this.prisma.shareLink.update({ where: { id: open.share.id }, data: { viewCount: { increment: 1 } } });
     }
+  }
+
+  private async indexFor(open: OpenShare): Promise<SharedNotebook> {
+    const rootId = open.share.notebookId;
+    const [notebook, notes] = await Promise.all([
+      this.prisma.notebook.findUniqueOrThrow({ where: { id: rootId ?? '' }, select: { name: true } }),
+      this.prisma.note.findMany({
+        where: { userId: open.ownerId, deletedAt: null, notebookId: { in: open.notebookIds ?? [] } },
+        select: { id: true, title: true, updatedAt: true, notebookId: true, notebook: { select: { name: true } } },
+      }),
+    ]);
+    const listed = notes.map((note) => ({
+      id: note.id,
+      title: note.title,
+      updatedAt: note.updatedAt,
+      notebook: note.notebookId === rootId ? null : (note.notebook?.name ?? null),
+    }));
+    // The notes of the notebook itself first, then each notebook inside it, by title within.
+    listed.sort(
+      (a, b) =>
+        Number(a.notebook !== null) - Number(b.notebook !== null) ||
+        (a.notebook ?? '').localeCompare(b.notebook ?? '') ||
+        a.title.localeCompare(b.title),
+    );
+    return { kind: 'notebook', name: notebook.name, notes: listed };
+  }
+
+  private async noteFor(
+    open: OpenShare,
+    token: string,
+    where: { id: string; notebookId?: { in: string[] } },
+    now: Date,
+  ): Promise<SharedNote> {
+    const note = await this.prisma.note.findFirst({
+      where: { ...where, userId: open.ownerId, deletedAt: null },
+      select: NOTE_FIELDS,
+    });
+    if (!note) {
+      throw new NotFoundException(GONE);
+    }
+    const links = await this.readableLinks(open, token, note.content, now);
     return {
-      title: share.note.title,
-      content: share.note.content,
-      tags: share.note.tags.map((noteTag) => noteTag.tag.name),
-      updatedAt: share.note.updatedAt,
+      kind: 'note',
+      title: note.title,
+      content: unlinkExcept(note.content, (key) => links.has(key)),
+      tags: note.tags.map((noteTag) => noteTag.tag.name),
+      updatedAt: note.updatedAt,
+      links: Object.fromEntries(links),
     };
+  }
+
+  /**
+   * Which of a note's [[links]] a reader of this link may follow, and where
+   * to: to a note in the same shared notebook, or to a note that has a live
+   * link of its own. Nothing is said about any other target, so a link to a
+   * private note and a link to a note that does not exist look the same.
+   */
+  private async readableLinks(
+    open: OpenShare,
+    token: string,
+    content: string,
+    now: Date,
+  ): Promise<Map<string, string>> {
+    const keys = [...new Set(extractWikiLinks(content).map((link) => normalizeTitle(link.title)))];
+    const targets = await this.links.resolveKeys(open.ownerId, keys);
+    const ids = [...new Set(targets.values())];
+    const paths = new Map<string, string>();
+    if (ids.length === 0) return paths;
+
+    const [inNotebook, withOwnLink] = await Promise.all([
+      open.notebookIds
+        ? this.prisma.note.findMany({
+            where: { id: { in: ids }, deletedAt: null, notebookId: { in: open.notebookIds } },
+            select: { id: true },
+          })
+        : [],
+      this.prisma.shareLink.findMany({
+        where: { noteId: { in: ids } },
+        select: { noteId: true, token: true, expiresAt: true },
+      }),
+    ]);
+    const pathById = new Map<string, string>();
+    for (const link of withOwnLink) {
+      if (link.noteId && !isExpired(link, now)) pathById.set(link.noteId, `/s/${link.token}`);
+    }
+    // Staying inside the notebook wins over a note's own link: the reader keeps their place.
+    for (const note of inNotebook) pathById.set(note.id, `/s/${token}/${note.id}`);
+
+    for (const [key, id] of targets) {
+      const path = pathById.get(id);
+      if (path) paths.set(key, path);
+    }
+    return paths;
   }
 
   /** undefined leaves a column alone, null empties it. */
@@ -148,12 +325,26 @@ export class SharesService {
     return changes;
   }
 
-  private async findNote(userId: string, noteId: string) {
-    const note = await this.prisma.note.findFirst({ where: { id: noteId, userId } });
-    if (!note) {
-      throw new NotFoundException('Note not found');
+  /** The note or notebook, if it belongs to the user. `deletedAt` is only ever set for a note. */
+  private async findOwned(userId: string, subject: ShareSubject): Promise<{ deletedAt: Date | null }> {
+    if ('noteId' in subject) {
+      const note = await this.prisma.note.findFirst({
+        where: { id: subject.noteId, userId },
+        select: { deletedAt: true },
+      });
+      if (!note) {
+        throw new NotFoundException('Note not found');
+      }
+      return note;
     }
-    return note;
+    const notebook = await this.prisma.notebook.findFirst({
+      where: { id: subject.notebookId, userId },
+      select: { id: true },
+    });
+    if (!notebook) {
+      throw new NotFoundException('Notebook not found');
+    }
+    return { deletedAt: null };
   }
 }
 
