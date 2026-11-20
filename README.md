@@ -63,15 +63,21 @@ Markdown import/export.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
+- **Keyboard and screen readers**: skip links lead past the sidebar to the
+  content and to the open note, dialogs keep Tab inside them, the arrow keys
+  move through the note list, and the link suggestions and the quick switcher
+  are announced. Colours meet WCAG AA contrast in both themes, and nothing
+  spins or slides when the system asks for reduced motion.
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
 
-| Shortcut           | Action                            |
-| ------------------ | --------------------------------- |
-| `Alt+N`            | New note                          |
-| `/`                | Search                            |
-| `Ctrl+K` / `Cmd+K` | Go to a note by its title         |
-| `Ctrl+S` / `Cmd+S` | Save now                          |
-| `Ctrl+E` / `Cmd+E` | Switch between edit/split/preview |
+| Shortcut             | Action                            |
+| -------------------- | --------------------------------- |
+| `Alt+N`              | New note                          |
+| `/`                  | Search                            |
+| `Ctrl+K` / `Cmd+K`   | Go to a note by its title         |
+| `Ctrl+S` / `Cmd+S`   | Save now                          |
+| `Ctrl+E` / `Cmd+E`   | Switch between edit/split/preview |
+| `↑` `↓` `Home` `End` | Move through the note list        |
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 
@@ -81,7 +87,7 @@ Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 | -------- | ---------------------------------------------------------------------------------- |
 | API      | TypeScript, NestJS 11, Prisma 6, PostgreSQL 17, JWT auth, class-validator          |
 | Web      | React 19, TypeScript, Vite, React Router, TanStack Query, react-markdown           |
-| Tests    | Jest + Supertest for the API, Vitest + Testing Library for the web app             |
+| Tests    | Jest + Supertest for the API, Vitest + Testing Library + axe for the web app       |
 | Tooling  | ESLint, Prettier, GitHub Actions                                                   |
 | Delivery | Docker Compose: Postgres, the API, and nginx serving the web app and proxying /api |
 
@@ -298,6 +304,12 @@ npm test
 The end-to-end tests apply the migrations to the database they are given and
 sign up a fresh user per test, so pointing them at a separate schema (as
 above) keeps them away from your own notes.
+
+The web tests run axe (through `vitest-axe`) over the main pages and the
+dialogs, so a field without a label or a heading out of order fails the
+build. axe cannot judge colours without a real browser, so
+`web/src/styles.contrast.test.ts` reads the palette from `styles.css` and
+checks the colour pairs in use against WCAG AA, for both themes.
 
 A restore that is never tested is not a backup, so CI also runs
 `scripts/check-backup.sh` on the database the end-to-end tests leave behind.

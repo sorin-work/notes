@@ -96,6 +96,11 @@ export function QuickSwitcher({ onClose }: { onClose(): void }) {
         }}
         onKeyDown={onKeyDown}
       />
+      {/* Read out by screen readers, which do not see the list change. */}
+      <p className="sr-only" role="status">
+        {settled &&
+          (options.length === 0 ? 'No notes found' : `${options.length} ${options.length === 1 ? 'note' : 'notes'}`)}
+      </p>
       {titles.error && <ErrorMessage error={titles.error} />}
       {!term && options.length > 0 && <p className="switcher-note muted">Recently edited</p>}
       {options.length > 0 && (

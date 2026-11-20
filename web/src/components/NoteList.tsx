@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import { Link, useLocation } from 'react-router';
 import type { NoteSummary } from '../api/types';
 import { formatRelative } from '../lib/dates';
@@ -8,10 +9,22 @@ interface Props {
   activeId?: string;
 }
 
+/** Up and Down move the focus from note to note, Home and End go to the first and the last. */
+function moveFocus(event: KeyboardEvent<HTMLUListElement>) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const links = [...event.currentTarget.querySelectorAll<HTMLElement>('a')];
+  const current = links.indexOf(document.activeElement as HTMLElement);
+  const target = { ArrowDown: current + 1, ArrowUp: current - 1, Home: 0, End: links.length - 1 }[event.key];
+  if (current === -1 || target === undefined) return;
+  // The keys would otherwise scroll the list away from the focus.
+  event.preventDefault();
+  links[target]?.focus();
+}
+
 export function NoteList({ notes, activeId }: Props) {
   const location = useLocation();
   return (
-    <ul className="note-list">
+    <ul className="note-list" onKeyDown={moveFocus}>
       {notes.map((note) => (
         <li key={note.id}>
           <Link

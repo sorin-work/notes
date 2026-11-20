@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { ShareDialog } from './ShareDialog';
 
@@ -37,5 +38,12 @@ describe('ShareDialog', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Stop sharing' }));
     expect(await screen.findByRole('button', { name: 'Create link' })).toBeInTheDocument();
+  });
+
+  it('passes the axe checks', async () => {
+    mockFetch({ 'GET /api/notes/n1/share': { body: { share } } });
+    renderWithProviders(<ShareDialog noteId="n1" onClose={vi.fn()} />);
+    await screen.findByLabelText('Share link');
+    await expectNoAxeViolations({ part: true });
   });
 });

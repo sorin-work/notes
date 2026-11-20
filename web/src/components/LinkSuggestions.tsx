@@ -5,6 +5,10 @@ interface LinkSuggestionsProps {
   onPick(title: string): void;
 }
 
+/** There is one editor on screen at a time, so the list can have a fixed id for the text field to point at. */
+export const SUGGESTIONS_ID = 'link-suggestions';
+export const suggestionId = (index: number) => `${SUGGESTIONS_ID}-${index}`;
+
 /** The list shown under the editor while typing a [[link. */
 export function LinkSuggestions({ titles, query, activeIndex, onPick }: LinkSuggestionsProps) {
   const exact = titles.some((item) => item.title.toLowerCase() === query.trim().toLowerCase());
@@ -12,10 +16,11 @@ export function LinkSuggestions({ titles, query, activeIndex, onPick }: LinkSugg
   if (options.length === 0) return null;
 
   return (
-    <ul className="link-suggestions" role="listbox" aria-label="Link to note">
+    <ul id={SUGGESTIONS_ID} className="link-suggestions" role="listbox" aria-label="Link to note">
       {options.map((title, index) => (
         <li
           key={`${title}-${index}`}
+          id={suggestionId(index)}
           role="option"
           aria-selected={index === activeIndex}
           className={index === activeIndex ? 'active' : undefined}

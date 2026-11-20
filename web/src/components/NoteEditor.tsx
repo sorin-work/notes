@@ -28,7 +28,7 @@ import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/te
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
 import { BacklinksPanel } from './BacklinksPanel';
 import { PinIcon } from './Icons';
-import { LinkSuggestions, suggestionAt, suggestionCount } from './LinkSuggestions';
+import { LinkSuggestions, suggestionAt, suggestionCount, suggestionId, SUGGESTIONS_ID } from './LinkSuggestions';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
@@ -215,6 +215,7 @@ function LoadedEditor({ note }: { note: Note }) {
     setActiveIndex: setActiveSuggestion,
     onArrowKey,
   } = useActiveOption(link ? suggestionCount(titleOptions, link.query) : 0);
+  const suggesting = link !== null && suggestionCount(titleOptions, link.query) > 0;
 
   const openWikiLink = useCallback(
     async (target: string) => {
@@ -458,6 +459,9 @@ function LoadedEditor({ note }: { note: Note }) {
             <textarea
               ref={textareaRef}
               aria-label="Note content"
+              aria-autocomplete="list"
+              aria-controls={suggesting ? SUGGESTIONS_ID : undefined}
+              aria-activedescendant={suggesting ? suggestionId(activeSuggestion) : undefined}
               placeholder="Write in Markdown. Type [[ to link to another note."
               value={content}
               readOnly={readOnly}
