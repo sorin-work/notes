@@ -88,10 +88,12 @@ export function extractWikiLinks(markdown: string): WikiLink[] {
  * Whether [[title]] can be written into any note and read back as a link to
  * that title. A title with [ ] | or # in it cannot, and one with a backtick
  * could pair up with another backtick on the line and turn the link into code.
+ * A line break is refused as well: a lone \r would pass as a space, but it
+ * has no business being written into other notes.
  */
 export function isLinkable(title: string): boolean {
   const key = normalizeTitle(title);
-  if (!key || title.includes('`')) return false;
+  if (!key || /[`\r\n]/.test(title)) return false;
   const links = [...findLinks(`[[${title}]]`)];
   return links.length === 1 && links[0].alias === null && normalizeTitle(links[0].title) === key;
 }

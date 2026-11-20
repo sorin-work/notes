@@ -140,7 +140,7 @@ describe('isLinkable', () => {
   });
 
   it('rejects titles that would break or change the link', () => {
-    for (const title of ['C# notes', 'a|b', 'x[1]', '[draft', 'tick `me`', 'one ` tick', 'a\nb', '', '   ']) {
+    for (const title of ['C# notes', 'a|b', 'x[1]', '[draft', 'tick `me`', 'one ` tick', 'a\nb', 'a\rb', '', '   ']) {
       expect(isLinkable(title)).toBe(false);
     }
   });
