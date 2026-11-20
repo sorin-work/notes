@@ -61,7 +61,7 @@ export class SearchService {
                   FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
                  WHERE nt.note_id = n.id) AS tags
         ${match}
-        ORDER BY rank DESC, n.updated_at DESC
+        ORDER BY rank DESC, n.updated_at DESC, n.id
         LIMIT ${page.pageSize} OFFSET ${skipFor(page)}`,
       this.prisma.$queryRaw<{ count: bigint }[]>`SELECT count(*) AS count ${match}`,
     ]);
