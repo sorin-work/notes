@@ -227,6 +227,11 @@ describe('account', () => {
 
 describe('password reset', () => {
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+  /** The token is in the fragment of the link, where no server log sees it. */
+  const resetToken = (mail: OutgoingMail) =>
+    /^http:\/\/notes\.test\/reset-password#token=([\w-]+)$/m.exec(mail.text)?.[1];
+  const mailsTo = (address: string) => outbox.filter((message) => message.to === address);
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 
   it('sets a new password through the mailed link and ends every session', async () => {
     const server = app.getHttpServer();
@@ -247,8 +252,10 @@ describe('password reset', () => {
 
     const mail = await mailTo(email);
     expect(mail.from).toBe('Notes <notes@example.com>');
-    const token = /^http:\/\/notes\.test\/reset-password\?token=([\w-]+)$/m.exec(mail.text)?.[1];
+    const token = resetToken(mail);
     expect(token).toBeDefined();
+    // Nothing from the account is in the mail, only fixed text and the link.
+    expect(mail.text).not.toContain('Ada');
 
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'short' }).expect(400);
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password456' }).expect(204);
@@ -260,6 +267,50 @@ describe('password reset', () => {
     // The link worked once.
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password789' }).expect(400);
     await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+  });
+
+  it('keeps an earlier link alive when asked again, and ends them all when one is used', async () => {
+    const server = app.getHttpServer();
+    const email = `twice-${Date.now()}@example.com`;
+    await request(server).post('/api/auth/register').send({ email, name: 'Ada', password: 'password123' });
+
+    await request(server).post('/api/auth/password-reset').send({ email }).expect(204);
+    await mailTo(email);
+    await request(server).post('/api/auth/password-reset').send({ email }).expect(204);
+    while (mailsTo(email).length < 2) await settle();
+    const [first, second] = mailsTo(email).map(resetToken);
+    expect(first).not.toBe(second);
+
+    // The second request did not cancel the first link.
+    await request(server)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token: first, password: 'password456' })
+      .expect(204);
+    // And once one is used, the other no longer sets a password.
+    await request(server)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token: second, password: 'password789' })
+      .expect(400);
+    await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+  });
+
+  it('has three links out per account at most, also when the requests come at once', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const email = `flood-${Date.now()}@example.com`;
+    const account = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' });
+    const ask = () => request(server).post('/api/auth/password-reset').send({ email }).expect(204);
+
+    // Without the row lock every one of these would count zero links and add its own.
+    await Promise.all([ask(), ask(), ask(), ask(), ask(), ask()]);
+    await settle();
+    await ask();
+    await settle();
+
+    expect(mailsTo(email)).toHaveLength(3);
+    expect(await prisma.passwordReset.count({ where: { userId: account.body.user.id } })).toBe(3);
   });
 
   it('answers the same for an address without an account, and mails nothing', async () => {
