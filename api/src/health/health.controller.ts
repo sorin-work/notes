@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Says whether the API is up and reaches its database. */
   @Public()
   @Get()
   async check(): Promise<{ status: string; database: string }> {

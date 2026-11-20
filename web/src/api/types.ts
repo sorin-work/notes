@@ -10,6 +10,20 @@ export interface AuthResult {
   user: User;
 }
 
+/** A personal API token as Settings lists it. The token itself is not part of it. */
+export interface ApiToken {
+  id: string;
+  name: string;
+  readOnly: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface CreatedApiToken extends ApiToken {
+  /** Only in the answer to creating it. */
+  token: string;
+}
+
 export interface Page<T> {
   items: T[];
   total: number;
@@ -48,6 +62,8 @@ export interface Note {
   id: string;
   title: string;
   content: string;
+  /** Goes up with every change to the title or the content. A save names the revision it was based on. */
+  revision: number;
   notebookId: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   tags: string[];
@@ -62,6 +78,13 @@ export interface Note {
 export interface NoteChanges {
   title?: string;
   content?: string;
+  /**
+   * The revision the title or content was based on. If the note has changed
+   * since, the save is refused (see `staleNote`). Without it the last write wins.
+   */
+  revision?: number;
+  /** Keep the text this save replaces as a version, whatever the usual interval. */
+  keepVersion?: boolean;
   notebookId?: string | null;
   tags?: string[];
   pinned?: boolean;
@@ -75,8 +98,19 @@ export interface Backlink {
   context: string;
 }
 
-/** A note that writes another note's title without linking to it. Same shape as a backlink. */
-export type Mention = Backlink;
+/** A note that writes another note's title without linking to it, with the place where it does. */
+export interface Mention {
+  id: string;
+  title: string;
+  updatedAt: string;
+  /** The line of the mention: what stands before it, the mention as written, what follows. */
+  before: string;
+  match: string;
+  after: string;
+  /** Where the mention starts in that note's text, and the revision of the note it was found in. */
+  offset: number;
+  version: number;
+}
 
 export interface MentionPage extends Page<Mention> {
   /** True when more notes matched than the server read, so some mentions may be missing. */

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router';
 import { linkMention, mentions } from '../api/notes';
+import type { Mention } from '../api/types';
 import { formatRelative } from '../lib/dates';
 import { joinPages } from '../lib/pages';
 import { ErrorMessage } from './States';
@@ -24,12 +25,16 @@ export function UnlinkedMentions({ noteId }: { noteId: string }) {
   });
 
   const link = useMutation({
-    mutationFn: (sourceId: string) => linkMention(noteId, sourceId),
-    // Also after a refusal: the other note has changed since it was listed.
-    onSettled: (_result, _error, sourceId) => {
-      // This note has a backlink more and a mention less. The other one has
-      // new text, a new link and its old text in the history.
-      for (const key of [['backlinks'], ['notes'], ['note', sourceId], ['links', sourceId], ['versions', sourceId]]) {
+    mutationFn: (mention: Mention) => linkMention(noteId, mention),
+    // Also after a refusal: the other note has changed since it was listed, and the list has to be asked for again.
+    onSettled: (_result, _error, mention) => {
+      // The other note has new text. Its copy here is thrown away, not just
+      // marked old: the editor starts from the copy it finds. A save from the
+      // old copy would be refused for its revision, but it should not come
+      // to that.
+      queryClient.removeQueries({ queryKey: ['note', mention.id] });
+      // This note has a backlink more and a mention less. The other one has a new link and its old text in the history.
+      for (const key of [['backlinks'], ['notes'], ['links', mention.id], ['versions', mention.id]]) {
         void queryClient.invalidateQueries({ queryKey: key });
       }
     },
@@ -61,12 +66,16 @@ export function UnlinkedMentions({ noteId }: { noteId: string }) {
                 title="Put [[ ]] around the mention in that note"
                 aria-label={`Link the mention in ${mention.title}`}
                 disabled={link.isPending}
-                onClick={() => link.mutate(mention.id)}
+                onClick={() => link.mutate(mention)}
               >
                 Link
               </button>
             </div>
-            {mention.context && <p className="backlink-context">{mention.context}</p>}
+            <p className="backlink-context">
+              {mention.before}
+              <mark>{mention.match}</mark>
+              {mention.after}
+            </p>
           </li>
         ))}
       </ul>

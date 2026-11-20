@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Note, Prisma } from '@prisma/client';
 import { LinksService } from '../links/links.service';
+import { refusedWrite, writeNoteText } from '../notes/note-text';
 import { noteInclude, NoteView, toView } from '../notes/note-view';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -91,15 +92,18 @@ export class VersionsService {
 
     const restored = await this.prisma.$transaction(async (tx) => {
       const now = new Date();
+      // Tied to the revision that was just read, so that the text saved as a
+      // version below is the text this restore replaces. A save that got in
+      // between makes the restore fail instead of dropping that save.
+      const text = { title: version.title, content: version.content };
+      if (!(await writeNoteText(tx, { id: noteId, userId, revision: note.revision }, text))) {
+        throw await refusedWrite(tx, userId, noteId);
+      }
       if (note.title !== version.title || note.content !== version.content) {
         await this.save(tx, note, now);
       }
       await this.links.sync(tx, noteId, version.content);
-      return tx.note.update({
-        where: { id: noteId },
-        data: { title: version.title, content: version.content, updatedAt: now },
-        include: noteInclude,
-      });
+      return tx.note.update({ where: { id: noteId }, data: { updatedAt: now }, include: noteInclude });
     });
     return toView(restored);
   }

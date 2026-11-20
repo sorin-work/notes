@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/States';
+import { CapturePage } from './pages/CapturePage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotesPage } from './pages/NotesPage';
@@ -61,6 +62,7 @@ export function App() {
         />
         <Route path="/trash" element={<TrashPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/capture" element={<CapturePage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
