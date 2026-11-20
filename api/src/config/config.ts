@@ -9,6 +9,12 @@ export interface MailConfig {
   from: string;
   user?: string;
   password?: string;
+  /**
+   * Refuse to send unless the connection is encrypted. On by default: with
+   * STARTTLS "when offered", whoever sits between the API and the mail
+   * server only has to hide the offer to read the login and the reset links.
+   */
+  requireTls: boolean;
 }
 
 export interface AppConfig {
@@ -27,6 +33,12 @@ export interface AppConfig {
   mail: MailConfig | null;
   /** Where people reach the web app, for the links in mails. No trailing slash. */
   appUrl: string;
+  /**
+   * How many reverse proxies stand between the clients and the API. With 0
+   * the address of the connection counts as the client, which behind a proxy
+   * is the proxy for everyone. With 1 it is the address the proxy reports.
+   */
+  trustProxy: number;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -59,6 +71,11 @@ export function logLevelsFrom(value: string | undefined): LogLevel[] {
   return LEVELS.slice(0, index + 1);
 }
 
+/** For switches that are on unless someone says no: a typo must not turn them off. */
+function saysNo(value: string | undefined): boolean {
+  return ['0', 'false', 'no', 'off'].includes((value ?? '').trim().toLowerCase());
+}
+
 function mailFrom(env: NodeJS.ProcessEnv): MailConfig | null {
   const host = env.SMTP_HOST?.trim();
   if (!host) return null;
@@ -72,12 +89,21 @@ function mailFrom(env: NodeJS.ProcessEnv): MailConfig | null {
     from,
     user: env.SMTP_USER || undefined,
     password: env.SMTP_PASSWORD || undefined,
+    requireTls: !saysNo(env.SMTP_REQUIRE_TLS),
   };
 }
 
-/** Links in mails must not depend on what a request claims its host is. */
-function appUrlFrom(value: string | undefined): string {
-  const raw = (value ?? '').trim() || 'http://localhost:5181';
+/**
+ * Links in mails must not depend on what a request claims its host is. Once
+ * mail is on there is no default either: a forgotten APP_URL would mail
+ * links to localhost without a word.
+ */
+function appUrlFrom(value: string | undefined, mailIsOn: boolean): string {
+  const given = (value ?? '').trim();
+  if (!given && mailIsOn) {
+    throw new ConfigError('APP_URL is required when SMTP_HOST is set: the links in mails start with it');
+  }
+  const raw = given || 'http://localhost:5181';
   let url: URL;
   try {
     url = new URL(raw);
@@ -100,6 +126,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigError('JWT_SECRET must be at least 32 characters long');
   }
 
+  const mail = mailFrom(env);
   return {
     port: toInt('PORT', env.PORT, 4401, 1),
     databaseUrl,
@@ -114,7 +141,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     trashRetentionDays: toInt('TRASH_RETENTION_DAYS', env.TRASH_RETENTION_DAYS, 30, 1),
     authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
     apiTokenThrottleLimit: toInt('API_TOKEN_THROTTLE_LIMIT', env.API_TOKEN_THROTTLE_LIMIT, 120, 1),
-    mail: mailFrom(env),
-    appUrl: appUrlFrom(env.APP_URL),
+    mail,
+    appUrl: appUrlFrom(env.APP_URL, mail !== null),
+    trustProxy: toInt('TRUST_PROXY', env.TRUST_PROXY, 0, 0),
   };
 }

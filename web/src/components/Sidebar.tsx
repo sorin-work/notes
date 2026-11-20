@@ -6,6 +6,7 @@ import { createNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { notebookTree, totalNotes } from '../lib/notebooks';
 import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
@@ -29,19 +30,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
   const tree = notebookTree(notebooks.data ?? []);
 
+  // Only the note list is filtered. On the other pages nothing in here is the current place.
   const onNotes = location.pathname.startsWith('/notes');
-  const view = onNotes ? (params.get('view') ?? (params.get('notebook') || params.get('tag') ? '' : 'all')) : '';
-  const activeNotebook = onNotes ? params.get('notebook') : null;
-  const activeTag = onNotes ? params.get('tag') : null;
+  const shown = readFilters(onNotes ? params : new URLSearchParams());
+  const { notebook: activeNotebook, tag: activeTag, view } = shown;
+  const showsAll = onNotes && !activeNotebook && !activeTag && !view;
 
   const newNote = useMutation({
-    mutationFn: () =>
-      createNote({
-        notebookId: activeNotebook,
-        tags: activeTag ? [activeTag] : undefined,
-        pinned: view === 'pinned' || undefined,
-        favorite: view === 'favorites' || undefined,
-      }),
+    mutationFn: () => createNote(newNoteFor(shown)),
     onSuccess: (note) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
@@ -113,10 +109,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="sidebar-scroll">
         <div className="nav-section">
-          {filterLink('', view === 'all', 'All notes')}
+          {filterLink('', showsAll, 'All notes')}
           {filterLink('?view=pinned', view === 'pinned', 'Pinned')}
           {filterLink('?view=favorites', view === 'favorites', 'Favourites')}
-          {filterLink('?view=unfiled', view === 'unfiled', 'Not in a notebook')}
+          {filterLink(`?notebook=${NO_NOTEBOOK}`, activeNotebook === NO_NOTEBOOK, 'Not in a notebook')}
         </div>
 
         <div className="nav-section">

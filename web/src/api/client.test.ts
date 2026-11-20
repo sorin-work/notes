@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, json, setToken, setUnauthorizedHandler, withQuery } from './client';
+import {
+  api,
+  ApiError,
+  getToken,
+  json,
+  onTokenRemovedElsewhere,
+  setToken,
+  setUnauthorizedHandler,
+  withQuery,
+} from './client';
 
 function respond(status: number, body?: unknown) {
   return vi.fn().mockResolvedValue(
@@ -52,6 +61,24 @@ describe('api', () => {
     expect(handler).toHaveBeenCalled();
   });
 
+  it('keeps a token that replaced the rejected one while the request was on its way', async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    // The answer arrives after another request has stored a new token.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        setToken('fresh');
+        return new Response(JSON.stringify({ message: 'Invalid or expired token' }), { status: 401 });
+      }),
+    );
+
+    await expect(api('/notes')).rejects.toThrow('Invalid or expired token');
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(getToken()).toBe('fresh');
+  });
+
   it('reports network failures', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
     await expect(api('/notes')).rejects.toMatchObject({ status: 0, message: expect.stringContaining('server') });
@@ -64,5 +91,30 @@ describe('withQuery', () => {
       '/notes?tag=work&page=2&pinned=false',
     );
     expect(withQuery('/notes')).toBe('/notes');
+  });
+});
+
+describe('onTokenRemovedElsewhere', () => {
+  const storageEvent = (key: string | null) => window.dispatchEvent(new StorageEvent('storage', { key }));
+
+  it('fires when another tab removed the token, not when it replaced it', () => {
+    const handler = vi.fn();
+    const stop = onTokenRemovedElsewhere(handler);
+
+    // Another tab changed the password: the token was swapped, not removed.
+    setToken('fresh');
+    storageEvent('notes.token');
+    storageEvent('notes.theme');
+    expect(handler).not.toHaveBeenCalled();
+
+    // Another tab signed out, or cleared the storage.
+    setToken(null);
+    storageEvent('notes.token');
+    storageEvent(null);
+    expect(handler).toHaveBeenCalledTimes(2);
+
+    stop();
+    storageEvent('notes.token');
+    expect(handler).toHaveBeenCalledTimes(2);
   });
 });

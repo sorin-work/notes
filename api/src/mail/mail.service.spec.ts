@@ -1,7 +1,35 @@
+import { createTransport } from 'nodemailer';
 import type { AppConfig } from '../config/config';
-import { MailService, MailTransport } from './mail.service';
+import { createSmtpTransport, MailService, MailTransport } from './mail.service';
 
-const mail = { host: 'smtp.example.com', port: 587, from: 'Notes <notes@example.com>' };
+jest.mock('nodemailer', () => ({ createTransport: jest.fn(() => ({ sendMail: jest.fn() })) }));
+
+const mail = { host: 'smtp.example.com', port: 587, from: 'Notes <notes@example.com>', requireTls: true };
+
+describe('createSmtpTransport', () => {
+  const options = () => (createTransport as jest.Mock).mock.lastCall?.[0] as Record<string, unknown>;
+
+  it('insists on STARTTLS on the submission port', () => {
+    createSmtpTransport({ ...mail, user: 'mailer', password: 'secret' });
+    expect(options()).toMatchObject({
+      host: 'smtp.example.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      auth: { user: 'mailer', pass: 'secret' },
+    });
+  });
+
+  it('speaks TLS from the start on port 465', () => {
+    createSmtpTransport({ ...mail, port: 465 });
+    expect(options()).toMatchObject({ secure: true });
+  });
+
+  it('sends in the clear only when the settings say so, and logs in only with a user', () => {
+    createSmtpTransport({ ...mail, host: 'mailpit', port: 1025, requireTls: false });
+    expect(options()).toMatchObject({ secure: false, requireTLS: false, auth: undefined });
+  });
+});
 
 describe('MailService', () => {
   it('sends from the configured address', async () => {

@@ -3,6 +3,7 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
 import { AllowApiToken, SessionOnly } from '../common/session-only.decorator';
+import { AccountThrottlerGuard } from './account-throttler.guard';
 import { AuthResult, AuthService, PublicUser } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
@@ -43,13 +44,16 @@ export class AuthController {
 
   // The three routes below check the password, so they are throttled like
   // login: a stolen session must not be a way to guess it without limit.
-  @UseGuards(ThrottlerGuard)
+  // Twice over: per client address on each route, and per account across
+  // the three of them, so one account gets AUTH_THROTTLE_LIMIT guesses a
+  // minute however they are spread.
+  @UseGuards(ThrottlerGuard, AccountThrottlerGuard)
   @Patch('me')
   updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto): Promise<PublicUser> {
     return this.auth.updateProfile(user.id, dto);
   }
 
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ThrottlerGuard, AccountThrottlerGuard)
   @Delete('me')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteAccount(@CurrentUser() user: AuthUser, @Body() dto: DeleteAccountDto): Promise<void> {
@@ -57,7 +61,7 @@ export class AuthController {
   }
 
   /** Answers with a new token: the old one stopped working with the old password. */
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ThrottlerGuard, AccountThrottlerGuard)
   @Patch('password')
   changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto): Promise<AuthResult> {
     return this.auth.changePassword(user.id, dto);

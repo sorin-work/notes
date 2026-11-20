@@ -36,6 +36,21 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   onUnauthorized = handler;
 }
 
+/**
+ * Calls `handler` when another tab of this browser removes the token: it
+ * signed out, or was signed out. The tabs share the storage but not what
+ * they have in memory, so without this the other tab keeps showing its
+ * notes until it is reloaded. Returns a function that stops listening.
+ */
+export function onTokenRemovedElsewhere(handler: () => void): () => void {
+  const listener = (event: StorageEvent) => {
+    // key is null when the whole storage was cleared.
+    if ((event.key === TOKEN_KEY || event.key === null) && getToken() === null) handler();
+  };
+  window.addEventListener('storage', listener);
+  return () => window.removeEventListener('storage', listener);
+}
+
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 export function withQuery(path: string, query?: Query): string {
@@ -75,7 +90,10 @@ export async function request(path: string, init: RequestInit = {}): Promise<Res
 
   if (!response.ok) {
     const error = await errorFrom(response);
-    if (response.status === 401 && token) onUnauthorized?.();
+    // Only if the rejected token is still the saved one. A request that was
+    // on its way while the password changed comes back 401 for the old
+    // token, and must not throw away the new one that replaced it.
+    if (response.status === 401 && token && getToken() === token) onUnauthorized?.();
     throw error;
   }
   return response;
