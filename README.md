@@ -94,6 +94,12 @@ Markdown import/export.
   are announced. Colours meet WCAG AA contrast in both themes, and nothing
   spins or slides when the system asks for reduced motion.
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
+- **Installable**: the browser can install the app, from the address bar on
+  a desktop or with "Add to Home Screen" on a phone. A service worker keeps
+  the files of the app, so it starts without a connection (it then needs one
+  to sign in or to load notes). When a new version is out, a line at the
+  bottom offers to reload into it. Nothing reloads by itself, and "Reload"
+  saves the open note first.
 
 | Shortcut             | Action                            |
 | -------------------- | --------------------------------- |
@@ -160,6 +166,11 @@ database.
 | api     | http://localhost:4401 | `GET /api/health` checks the database too   |
 | db      | `localhost:5441`      | Postgres 17, user/password/database `notes` |
 | mailpit | http://localhost:8041 | Shows the mail the API sends, delivers none |
+
+nginx serves `index.html`, `sw.js` and `manifest.webmanifest` with
+`Cache-Control: no-cache`, so the browser asks for them every time and finds
+a new version as soon as it is deployed. The fingerprinted files under
+`/assets/` are cached for a year.
 
 The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
 `MAILPIT_UI_PORT`. The API container runs `prisma migrate deploy` before it
@@ -312,6 +323,10 @@ npm install
 npm run dev
 ```
 
+There is no service worker under `npm run dev`. It is only built and
+registered by `npm run build`, so try it with `npm run preview` or the
+Docker stack.
+
 ### Configuration
 
 | Variable                   | Default    | Purpose                                                                  |
@@ -420,6 +435,8 @@ web/
     hooks/              autosave, theme and small state helpers
     lib/                wiki links, task lists, templates, line diff, dates, text
     pages/              one component per route
+    sw/                 the service worker and what it does with each request
+  build/                the build step that writes the service worker
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
   check-backup.sh       dumps, restores and compares row counts, run by CI
@@ -542,6 +559,22 @@ trash as an ordinary note. The three formats are `2026-11-20`,
 `2026-11-20`. The notebook, the template and the format are preferences kept
 with the account. Theme and editor mode are not: they belong to a screen and
 stay in the browser.
+
+## Offline and the installed app
+
+The service worker (`web/src/sw/worker.ts`, built into `/sw.js` by
+`web/build/service-worker.ts`) keeps the files of one build: the scripts,
+the styles, `index.html`, the icons and the manifest. Those are the same for
+everyone. It never stores anything under `/api/`, so no note, token or other
+private data sits in its cache. Every page of the app is answered with the
+cached `index.html`, and requests to the API, `/api/docs` and `/healthz` go to
+the network as if there were no worker.
+
+A new build is found when the tab comes back into view and once an hour. It
+installs next to the one in use and waits, with its own cache, so the open
+tab keeps every file it may still load. "Reload" in the offer at the bottom
+saves the open note, lets the new worker take over and reloads. If the note
+cannot be saved, it says so and does not reload.
 
 ## API overview
 
