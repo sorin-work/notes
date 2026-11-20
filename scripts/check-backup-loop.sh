@@ -257,6 +257,22 @@ PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "the
 grep -q "warning: dated in the future" "$STATE/log" || fail "the warning was not repeated on the next run"
 echo "ok: $case_name"
 
+begin "a dump named for 31 February: no such day, so it is kept and named in the warning"
+# Whether "date" refuses the day depends on whose it is. The one in the image
+# the backup service runs in reads it as 3 March, two years back: the oldest
+# of the lot, and the one to go.
+impossible=notes-20240231T000000Z.dump
+echo "old" >"$BACKUP_DIR/$impossible"
+oldest=$(old_dump $((-4 * DAY)))
+old_dump $((-3 * DAY)) >/dev/null
+old_dump $((-2 * DAY)) >/dev/null
+PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "once failed"
+[ -e "$BACKUP_DIR/$impossible" ] || fail "the dump with a date that does not exist was removed"
+[ ! -e "$BACKUP_DIR/$oldest" ] || fail "the oldest real dump was kept, so the one from 31 February was counted"
+[ "$(dump_count)" -eq 4 ] || fail "expected the new dump, two older ones and the one from 31 February, found $(dump_count)"
+grep -q "warning: dated in the future or on a day that does not exist.*$impossible" "$STATE/log" || fail "no warning names the dump from 31 February"
+echo "ok: $case_name"
+
 # A restore of "notes" from $1, with whatever the case has set up. Leaves the exit status in $status.
 run_restore() {
   status=0

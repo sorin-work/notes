@@ -208,8 +208,9 @@ ones are the oldest, is read from the time in the file name and never from
 the file's modification time. A dump dated in the future, which is what a
 clock that was wrong leaves behind, counts as made now and not as overdue.
 Such dumps are never removed and do not count towards the seven, so they
-cannot push out the real ones. Every run names them in a warning in the log,
-and deleting them is up to you.
+cannot push out the real ones. The same goes for a name with a day that does
+not exist, such as 31 February. Every run names them in a warning in the
+log, and deleting them is up to you.
 
 | Variable                  | Default     | Purpose                               |
 | ------------------------- | ----------- | ------------------------------------- |

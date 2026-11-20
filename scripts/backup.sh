@@ -68,8 +68,16 @@ dumps() {
 
 # The time in a dump's name as seconds since 1970. Prints nothing when the
 # name does not hold a real date.
+#
+# Whether "date" refuses a day that does not exist depends on whose "date"
+# it is. The one in the image this runs in (busybox) turns 31 February into
+# 3 March. So the seconds are turned back into a name, and the date counts
+# only when the name comes back as it was written.
 dump_time() {
-  date -u -d "$(echo "$1" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s 2>/dev/null || true
+  written=$(echo "$1" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')
+  read_as=$(date -u -d "$written" +%s 2>/dev/null) || return 0
+  [ "$(date -u -d "@$read_as" +notes-%Y%m%dT%H%M%SZ.dump 2>/dev/null)" = "$1" ] || return 0
+  echo "$read_as"
 }
 
 # Dumps whose name says they were made after the moment $1 (seconds since
@@ -99,7 +107,7 @@ present_dumps() {
 warn_about_future_dumps() {
   ahead=$(future_dumps "$1" | tr '\n' ' ')
   if [ -n "$ahead" ]; then
-    log "warning: dated in the future, so never removed and not counted towards the $keep to keep: $ahead"
+    log "warning: dated in the future or on a day that does not exist, so never removed and not counted towards the $keep to keep: $ahead"
     log "warning: check the clock, and delete them by hand if they are not wanted"
   fi
 }
