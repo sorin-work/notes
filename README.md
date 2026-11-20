@@ -27,7 +27,8 @@ Markdown import/export.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
-  paragraph the link is in.
+  paragraph the link is in. After a note is renamed, the editor offers to
+  update the links other notes have to its old title.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted. Words in `"double quotes"` are a phrase: they have to follow
@@ -376,6 +377,30 @@ recently edited one wins. Renaming a note therefore leaves links to the old
 title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
 
+When a rename leaves links dangling, the editor shows how many notes still
+link to the old title and offers to update them, naming both titles. The
+offer waits until the new title is finished: the cursor has left the title
+field and the title is saved. Nothing is rewritten before you click. The
+update changes only the title inside `[[ ]]`: a `#heading`, an `|alias` and
+links in code stay as they are. The rewritten notes keep their place in "last
+edited" lists, and each one gets a version first, so the change can be undone
+from its history.
+
+There is no offer, and nothing is rewritten:
+
+- while another note has the old title, since the links still lead somewhere;
+- when another note has the new title as well, since the links could then
+  lead to that one;
+- for a note left without a title, which is stored as "Untitled";
+- when the new title contains `[`, `]`, `|`, `#` or a backtick, which cannot
+  be written as a link.
+
+Notes in the trash and the links a note has to itself are left alone. A note
+that is being saved at that very moment, or that would grow past the size
+limit, is left as it is. The editor then says how many were left and keeps
+the offer. The offer is made in the editor where the rename happened and is
+gone once you leave the note.
+
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
@@ -427,7 +452,8 @@ stored, and it works once within an hour. It is in the fragment of the link,
 which browsers keep to themselves, so it does not show up in a server log.
 `POST /auth/password-reset/confirm` with `{ token, password }` sets the
 password, bumps the token version, so every session of the account ends, and
-ends the account's other links. Asking again does not cancel a link that is
+ends the account's other links. Its answer is a new login for the browser
+that did it, like the answer of a password change. Asking again does not cancel a link that is
 already out. An account has three of them at a time at most, which also
 means three mails an hour at most, and further requests do nothing until one
 runs out or is used. The mail holds fixed text and the link, nothing from
@@ -442,8 +468,9 @@ the same header:
 curl -H "Authorization: Bearer nt_..." http://localhost:5181/api/notes
 ```
 
-The token is shown once, when it is made, and only its SHA-256 hash is
-stored. It acts as the account it belongs to, with these limits:
+Making a token takes the account's password, because a token outlives
+every login and a stolen login must not be able to make itself one. The
+token is shown once, when it is made, and only its SHA-256 hash is stored. It acts as the account it belongs to, with these limits:
 
 - A read-only token gets a `403` on everything that is not a `GET`.
 - No token can touch the account: listing, making or revoking tokens,
@@ -453,7 +480,10 @@ stored. It acts as the account it belongs to, with these limits:
   unless set. After that the answer is `429` with a `Retry-After` header.
 
 Tokens do not expire. Changing the password and signing out everywhere end
-logins, not tokens. A token ends when it is revoked or the account is
+logins, not tokens: a script that stops without a word is worse than one
+that goes on. Instead, after a password change or a reset the web app lists
+the tokens that still work and offers to revoke them all in one click
+(`DELETE /auth/tokens`). A token ends when it is revoked or the account is
 deleted. An account can have 20 of them.
 
 The endpoints a script is most likely to want. The rest is in `/api/docs`.

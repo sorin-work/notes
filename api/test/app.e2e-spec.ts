@@ -12,6 +12,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { APP_CONFIG, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
+import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
@@ -243,6 +244,12 @@ describe('password reset', () => {
       .send({ email, name: 'Ada', password: 'password123' })
       .expect(201);
 
+    const apiToken = await request(server)
+      .post('/api/auth/tokens')
+      .set(bearer(session.body.token))
+      .send({ name: 'cron job', currentPassword: 'password123' })
+      .expect(201);
+
     const status = await request(server).get('/api/auth/password-reset').expect(200);
     expect(status.body).toEqual({ enabled: true });
 
@@ -260,11 +267,28 @@ describe('password reset', () => {
     expect(mail.text).not.toContain('Ada');
 
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'short' }).expect(400);
-    await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password456' }).expect(204);
+    const done = await request(server)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token, password: 'password456' })
+      .expect(200);
 
     await request(server).get('/api/auth/me').set(bearer(session.body.token)).expect(401);
     await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(401);
     await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+
+    // The answer signs the browser that did the reset in again.
+    expect(done.body.user.email).toBe(email);
+    const fresh = bearer(done.body.token);
+    await request(server).get('/api/auth/me').set(fresh).expect(200);
+
+    // The API token made before is still good. It is not revoked behind the
+    // owner's back, but the new login can list it and end it with the rest.
+    await request(server).get('/api/notes').set(bearer(apiToken.body.token)).expect(200);
+    const listed = await request(server).get('/api/auth/tokens').set(fresh).expect(200);
+    expect(listed.body.map((entry: { name: string }) => entry.name)).toEqual(['cron job']);
+    const revoked = await request(server).delete('/api/auth/tokens').set(fresh).expect(200);
+    expect(revoked.body).toEqual({ revoked: 1 });
+    await request(server).get('/api/notes').set(bearer(apiToken.body.token)).expect(401);
 
     // The link worked once.
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password789' }).expect(400);
@@ -287,7 +311,7 @@ describe('password reset', () => {
     await request(server)
       .post('/api/auth/password-reset/confirm')
       .send({ token: first, password: 'password456' })
-      .expect(204);
+      .expect(200);
     // And once one is used, the other no longer sets a password.
     await request(server)
       .post('/api/auth/password-reset/confirm')
@@ -377,6 +401,7 @@ describe('api docs', () => {
     expect(takes('patch', '/api/auth/me')).toEqual(['login']);
     expect(takes('post', '/api/auth/tokens')).toEqual(['login']);
     expect(takes('delete', '/api/auth/tokens/{id}')).toEqual(['login']);
+    expect(takes('delete', '/api/auth/tokens')).toEqual(['login']);
 
     // No operation is left without a statement, and each has a group.
     const operations = Object.values(document.paths).flatMap((item) => Object.values(item));
@@ -410,9 +435,27 @@ describe('api tokens', () => {
     const server = app.getHttpServer();
     const { auth } = await signUp();
 
-    await request(server).post('/api/auth/tokens').set(auth).send({}).expect(400);
-    await request(server).post('/api/auth/tokens').set(auth).send({ name: 'script', readOnly: null }).expect(400);
-    const created = await request(server).post('/api/auth/tokens').set(auth).send({ name: ' script ' }).expect(201);
+    const currentPassword = 'password123';
+    await request(server).post('/api/auth/tokens').set(auth).send({ currentPassword }).expect(400);
+    await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'script', readOnly: null, currentPassword })
+      .expect(400);
+    // A login alone does not make a token: it would outlive that login.
+    await request(server).post('/api/auth/tokens').set(auth).send({ name: 'script' }).expect(400);
+    await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'script', currentPassword: 'wrong-one' })
+      .expect(403);
+    expect((await request(server).get('/api/auth/tokens').set(auth).expect(200)).body).toEqual([]);
+
+    const created = await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: ' script ', currentPassword })
+      .expect(201);
     expect(created.body).toMatchObject({ name: 'script', readOnly: false, lastUsedAt: null });
     expect(created.body.token).toMatch(/^nt_[\w-]{43}$/);
     const token = bearer(created.body.token);
@@ -432,7 +475,8 @@ describe('api tokens', () => {
 
     // Managing the account and the tokens takes a login.
     await request(server).get('/api/auth/tokens').set(token).expect(403);
-    await request(server).post('/api/auth/tokens').set(token).send({ name: 'more' }).expect(403);
+    await request(server).post('/api/auth/tokens').set(token).send({ name: 'more', currentPassword }).expect(403);
+    await request(server).delete('/api/auth/tokens').set(token).expect(403);
     await request(server).delete(`/api/auth/tokens/${created.body.id}`).set(token).expect(403);
     await request(server).patch('/api/auth/me').set(token).send({ name: 'Mallory' }).expect(403);
     await request(server)
@@ -446,7 +490,7 @@ describe('api tokens', () => {
     const reader = await request(server)
       .post('/api/auth/tokens')
       .set(auth)
-      .send({ name: 'reader', readOnly: true })
+      .send({ name: 'reader', readOnly: true, currentPassword })
       .expect(201);
     const readOnly = bearer(reader.body.token);
     await request(server).get(`/api/notes/${note.body.id}`).set(readOnly).expect(200);
@@ -466,8 +510,10 @@ describe('api tokens', () => {
       .send({ email, name: 'Ada', password: 'password123' })
       .expect(201);
     const auth = bearer(session.body.token);
-    const first = await request(server).post('/api/auth/tokens').set(auth).send({ name: 'first' }).expect(201);
-    const second = await request(server).post('/api/auth/tokens').set(auth).send({ name: 'second' }).expect(201);
+    const make = (name: string) =>
+      request(server).post('/api/auth/tokens').set(auth).send({ name, currentPassword: 'password123' }).expect(201);
+    const first = await make('first');
+    const second = await make('second');
 
     await request(server).post('/api/auth/logout-all').set(auth).expect(204);
     await request(server).get('/api/notes').set(auth).expect(401);
@@ -671,6 +717,192 @@ describe('links and search', () => {
   });
 });
 
+describe('renaming a note', () => {
+  type Auth = { Authorization: string };
+
+  async function createNote(auth: Auth, title: string, content = ''): Promise<{ id: string; updatedAt: string }> {
+    const response = await request(app.getHttpServer()).post('/api/notes').set(auth).send({ title, content });
+    expect(response.status).toBe(201);
+    return response.body;
+  }
+
+  const getNote = async (auth: Auth, id: string) =>
+    (await request(app.getHttpServer()).get(`/api/notes/${id}`).set(auth).expect(200)).body;
+
+  const orphaned = async (auth: Auth, id: string, from: string) =>
+    (await request(app.getHttpServer()).get(`/api/notes/${id}/rename-links`).query({ from }).set(auth).expect(200))
+      .body;
+
+  const renameLinks = (auth: Auth, id: string, body: object) =>
+    request(app.getHttpServer()).post(`/api/notes/${id}/rename-links`).set(auth).send(body);
+
+  it('points the links of the user’s notes at the new title, and nothing else', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+
+    const target = await createNote(auth, 'Atlas', 'Reporting dashboard');
+    const syncText = 'Talked about [[atlas]] and [[Atlas#Goals|the goals]].\r\n\r\n`[[Atlas]]` stays as it is.';
+    const sync = await createNote(auth, 'Weekly sync', syncText);
+    const ideas = await createNote(auth, 'Ideas', 'See [[Atlas]] and [[Other]].');
+    const plain = await createNote(auth, 'Plain', 'Atlas without a link');
+    const trashed = await createNote(auth, 'Thrown away', 'Was about [[Atlas]].');
+    await request(server).delete(`/api/notes/${trashed.id}`).set(auth).expect(204);
+    const theirs = await createNote(other.auth, 'Not mine', 'Another [[Atlas]] altogether.');
+
+    // The title autosaves while it is typed, so the rename arrives in steps.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project' }).expect(200);
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+
+    // The rename itself rewrote nothing: the links dangle.
+    expect((await getNote(auth, ideas.id)).content).toBe('See [[Atlas]] and [[Other]].');
+    const dangling = await request(server).get(`/api/notes/${target.id}/backlinks`).set(auth).expect(200);
+    expect(dangling.body).toEqual([]);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 2 });
+    expect(await orphaned(auth, target.id, 'Project')).toEqual({ count: 0 });
+
+    const renamed = await renameLinks(auth, target.id, { from: ' atlas ' }).expect(200);
+    expect(renamed.body).toEqual({
+      updated: 2,
+      skipped: 0,
+      title: 'Project Atlas',
+      noteIds: expect.arrayContaining([sync.id, ideas.id]),
+    });
+    expect(renamed.body.noteIds).toHaveLength(2);
+
+    const syncAfter = await getNote(auth, sync.id);
+    expect(syncAfter.content).toBe(
+      'Talked about [[Project Atlas]] and [[Project Atlas#Goals|the goals]].\r\n\r\n`[[Atlas]]` stays as it is.',
+    );
+    // Not an edit by the user: the note keeps its place in "last edited".
+    expect(syncAfter.updatedAt).toBe(sync.updatedAt);
+    const ideasAfter = await getNote(auth, ideas.id);
+    expect(ideasAfter.content).toBe('See [[Project Atlas]] and [[Other]].');
+    expect(ideasAfter.updatedAt).toBe(ideas.updatedAt);
+
+    // The old text is in the history, so the rewrite can be undone there.
+    const versions = await request(server).get(`/api/notes/${sync.id}/versions`).set(auth).expect(200);
+    expect(versions.body).toHaveLength(1);
+    const version = await request(server)
+      .get(`/api/notes/${sync.id}/versions/${versions.body[0].id}`)
+      .set(auth)
+      .expect(200);
+    expect(version.body.content).toBe(syncText);
+
+    // The links resolve again, and search finds the new text.
+    const backlinks = await request(server).get(`/api/notes/${target.id}/backlinks`).set(auth).expect(200);
+    expect(backlinks.body.map((link: { id: string }) => link.id).sort()).toEqual([sync.id, ideas.id].sort());
+    const search = await request(server).get('/api/search?q=project').set(auth).expect(200);
+    expect(search.body.items.map((hit: { id: string }) => hit.id)).toEqual(
+      expect.arrayContaining([target.id, sync.id, ideas.id]),
+    );
+    const links = await request(server).get(`/api/notes/${ideas.id}/links`).set(auth).expect(200);
+    expect(links.body).toEqual([
+      { title: 'Project Atlas', noteId: target.id },
+      { title: 'Other', noteId: null },
+    ]);
+
+    // Left alone: plain text, the trash, and other people's notes.
+    expect((await getNote(auth, plain.id)).content).toBe('Atlas without a link');
+    expect((await getNote(auth, trashed.id)).content).toBe('Was about [[Atlas]].');
+    expect((await getNote(other.auth, theirs.id)).content).toBe('Another [[Atlas]] altogether.');
+    await renameLinks(other.auth, target.id, { from: 'Atlas' }).expect(404);
+    await request(server).get(`/api/notes/${target.id}/rename-links?from=Atlas`).set(other.auth).expect(404);
+
+    // Nothing is left to do a second time.
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+  });
+
+  it('rewrites nothing while the links still lead somewhere or the new title cannot be linked', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const target = await createNote(auth, 'Atlas');
+    const source = await createNote(auth, 'Source', 'About [[Atlas]].');
+
+    // Only the case changed: the links still find the note.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'ATLAS' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+
+    // Another note has taken the old title.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+    const successor = await createNote(auth, 'atlas');
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+    expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+
+    // A note in the trash does not hold a title.
+    await request(server).delete(`/api/notes/${successor.id}`).set(auth).expect(204);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 1 });
+
+    // [[Atlas | v2]] would be read as a link to "Atlas" with other text.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Atlas | v2' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+    expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+
+    // A note with no title is stored as "Untitled", which is nothing to link to.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: '' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+
+    // When a second note has the new title, the links could end up leading to that one.
+    const namesake = await createNote(auth, 'Plan');
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'plan' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.noteIds).toEqual([]);
+    expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+    await request(server).delete(`/api/notes/${namesake.id}`).set(auth).expect(204);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 1 });
+
+    await renameLinks(auth, target.id, {}).expect(400);
+    await renameLinks(auth, target.id, { from: '   ' }).expect(400);
+    // The database cannot take a null character. That is a bad request, not a server error.
+    await renameLinks(auth, target.id, { from: 'At\0las' }).expect(400);
+    await request(server).get(`/api/notes/${target.id}/rename-links?from=At%00las`).set(auth).expect(400);
+    await renameLinks(auth, target.id, { from: 'Atlas', to: 'Elsewhere' }).expect(400);
+    await renameLinks(auth, 'not-a-uuid', { from: 'Atlas' }).expect(400);
+    await request(server).delete(`/api/notes/${target.id}`).set(auth).expect(204);
+    await renameLinks(auth, target.id, { from: 'Atlas' }).expect(409);
+  });
+
+  it('rewrites all the notes or none', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const target = await createNote(auth, 'Atlas');
+    const first = await createNote(auth, 'First', 'One [[Atlas]].');
+    const second = await createNote(auth, 'Second', 'Two [[Atlas]].');
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'Project Atlas' }).expect(200);
+
+    // The second note fails after the first one was already written inside the transaction.
+    const links = app.get(LinksService);
+    const sync = links.sync.bind(links);
+    let calls = 0;
+    const failing = jest.spyOn(links, 'sync').mockImplementation(async (...args) => {
+      if (++calls === 2) throw new Error('Simulated failure halfway through the rewrite');
+      return sync(...args);
+    });
+    try {
+      await renameLinks(auth, target.id, { from: 'Atlas' }).expect(500);
+    } finally {
+      failing.mockRestore();
+    }
+    expect(calls).toBe(2);
+
+    for (const note of [first, second]) {
+      expect((await getNote(auth, note.id)).content).toMatch(/\[\[Atlas\]\]/);
+      const versions = await request(server).get(`/api/notes/${note.id}/versions`).set(auth).expect(200);
+      expect(versions.body).toEqual([]);
+      const outgoing = await request(server).get(`/api/notes/${note.id}/links`).set(auth).expect(200);
+      expect(outgoing.body).toEqual([{ title: 'Atlas', noteId: null }]);
+    }
+
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(2);
+    expect((await getNote(auth, first.id)).content).toBe('One [[Project Atlas]].');
+    expect((await getNote(auth, second.id)).content).toBe('Two [[Project Atlas]].');
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
@@ -758,7 +990,7 @@ describe('password guesses with a low throttle limit', () => {
     return bearer(response.body.token);
   };
 
-  it('caps the guesses against one account across the three routes together', async () => {
+  it('caps the guesses against one account across the routes that check the password', async () => {
     const server = limited.getHttpServer();
     const victim = await account('victim');
     const other = await account('other');
@@ -772,6 +1004,8 @@ describe('password guesses with a low throttle limit', () => {
         .send({ currentPassword: 'guess-2', newPassword: 'password456' });
     const guessOnDelete = (auth: { Authorization: string }) =>
       request(server).delete('/api/auth/me').set(auth).send({ password: 'guess-3' });
+    const guessOnToken = (auth: { Authorization: string }) =>
+      request(server).post('/api/auth/tokens').set(auth).send({ name: 'mine now', currentPassword: 'guess-4' });
 
     // One guess on each route uses up the three the account gets.
     await guessOnProfile(victim).expect(403);
@@ -784,11 +1018,13 @@ describe('password guesses with a low throttle limit', () => {
     expect(refused.headers['retry-after']).toBeDefined();
     await guessOnProfile(victim).expect(429);
     await guessOnDelete(victim).expect(429);
+    await guessOnToken(victim).expect(429);
 
     // The right password does not get through either until the minute is over.
     await request(server).delete('/api/auth/me').set(victim).send({ password: 'password123' }).expect(429);
 
     // Another account, from the same address, still has its own guesses.
     await guessOnPassword(other).expect(403);
+    await guessOnToken(other).expect(403);
   });
 });

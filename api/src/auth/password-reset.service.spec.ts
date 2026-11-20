@@ -153,7 +153,10 @@ describe('PasswordResetService', () => {
       prisma.passwordReset.findUnique.mockResolvedValue(link);
       prisma.passwordReset.deleteMany.mockResolvedValue({ count: 1 });
 
-      await service.reset('the-token', 'battery-staple', now);
+      prisma.user.update.mockResolvedValue({ ...user, tokenVersion: 1 });
+
+      // The account as it is afterwards, for the login token the answer carries.
+      await expect(service.reset('the-token', 'battery-staple', now)).resolves.toEqual({ ...user, tokenVersion: 1 });
 
       expect(prisma.passwordReset.findUnique).toHaveBeenCalledWith({
         where: { tokenHash: hashResetToken('the-token') },

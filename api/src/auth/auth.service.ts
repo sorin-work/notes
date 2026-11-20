@@ -128,6 +128,11 @@ export class AuthService {
     await this.prisma.user.delete({ where: { id: userId } });
   }
 
+  /** For other routes that ask for the password again. Throws the same 403 as the ones here. */
+  async assertPassword(userId: string, password: string): Promise<void> {
+    await this.checkPassword(await this.find(userId), password, 'Current password is incorrect');
+  }
+
   private async find(userId: string): Promise<User> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -146,7 +151,8 @@ export class AuthService {
     }
   }
 
-  private async issue(user: User): Promise<AuthResult> {
+  /** A login token for the user as they are now, with the current token version. */
+  async issue(user: User): Promise<AuthResult> {
     const payload: TokenPayload = { sub: user.id, ver: user.tokenVersion };
     return { token: await this.jwt.signAsync(payload), user: toPublicUser(user) };
   }

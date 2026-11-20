@@ -12,4 +12,12 @@ export class CreateApiTokenDto {
   @IfPresent()
   @IsBoolean()
   readOnly?: boolean;
+
+  /**
+   * A token outlives every login, also "sign out everywhere". Without the
+   * password a stolen login could make itself one.
+   */
+  @IsString()
+  @IsNotEmpty({ message: 'currentPassword is required' })
+  currentPassword: string;
 }
