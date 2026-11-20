@@ -27,7 +27,7 @@ couple of weekends, **L** several weeks of spare time.
 | 6   | Accessibility pass                     | Shipped | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Shipped | both     | M    | -          |
-| 9   | Attachments and pasted images          | Later   | both     | L    | -          |
+| 9   | Attachments and pasted images          | Shipped | both     | L    | -          |
 | 10  | Share link options                     | Shipped | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Shipped | both     | M    | -          |
@@ -43,29 +43,6 @@ couple of weekends, **L** several weeks of spare time.
 Empty for now: everything that was in this group has shipped.
 
 ## Later
-
-### 9. Attachments and pasted images
-
-Images only work as links to somewhere else on the web. I want to paste or
-drop an image into the editor and have it uploaded and inserted as `![](...)`,
-and to attach the odd PDF.
-
-- New `Attachment` model (note, owner, file name, type, size, storage key)
-  and an `attachments` module. Uploads can follow `TransferController`, which
-  already uses multer through `FilesInterceptor`. Files go on a new volume in
-  `docker-compose.yml`. S3-compatible storage can wait.
-- Tricky: auth. The token lives in `localStorage` and is sent as a header by
-  `request()`, which an `<img src>` cannot do. Either short-lived signed
-  URLs, or fetch the file and hand `MarkdownPreview` an object URL. Shared
-  notes (`/s/<token>`) need their images to load for anonymous readers too.
-- Clean-up: `TrashService.purgeExpired` and `empty` delete rows with
-  `deleteMany`, which would leave the files behind. Needs a sweep for files
-  without a row.
-- Export and import should carry the files. `ExportService.exportAll` writes
-  only `.md`, and `ImportService` skips everything that is not Markdown or
-  text, which drops the images of an Obsidian vault.
-- Needs size limits per file and per account, and a list of allowed types.
-  SVG is a script risk if it is served inline.
 
 ### 14. Offline mode and installable app
 
@@ -320,6 +297,24 @@ write wins. Still open: the two texts are not merged, the question shows no
 diff (History does, after "keep mine, put theirs in the history"), a tab that
 only has a note open is not told about a change before it saves, and a kept
 draft does not outlive its tab.
+
+### 9. Attachments and pasted images
+
+Paste or drop an image or a PDF into a note and it is uploaded and linked as
+`attachment:<id>`; a panel under the editor lists a note's files.
+`Attachment` rows point at files kept under their ids on the new
+`attachments` volume. The type comes from the bytes: PNG, JPEG, GIF, WebP,
+PDF and plain text, never SVG or HTML, with limits per file and per account.
+Files are served at addresses signed with an HMAC over the file, its owner
+and an expiry five minutes ahead, so an `<img>` needs no login; images
+inline, the rest as downloads, always with nosniff and a sandboxing policy.
+A shared note hands out signed addresses for its own files only. Deleting
+notes for good removes their files, and the purge job sweeps files without a
+row on start-up and every hour. The zip export, the JSON backup and the
+import carry the files; the import keeps the images and PDFs an Obsidian or
+Markdown note links to. Still open: Evernote's attachments, thumbnails,
+S3-compatible storage, and the `pg_dump` backup service does not cover the
+files.
 
 ### 10. Share link options
 
