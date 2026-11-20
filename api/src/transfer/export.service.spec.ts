@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import type { AttachmentsService } from '../attachments/attachments.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { ExportService, toMarkdownFile } from './export.service';
 
@@ -48,10 +49,13 @@ describe('toMarkdownFile', () => {
 describe('ExportService', () => {
   let prisma: PrismaMock;
   let service: ExportService;
+  let attachments: { read: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new ExportService(asPrismaService(prisma));
+    attachments = { read: jest.fn((id: string) => Promise.resolve(Buffer.from(`bytes of ${id}`))) };
+    prisma.attachment.findMany.mockResolvedValue([]);
+    service = new ExportService(asPrismaService(prisma), attachments as unknown as AttachmentsService);
   });
 
   it('exports notes into folders named after their notebooks', async () => {
@@ -73,6 +77,35 @@ describe('ExportService', () => {
     expect(files).toEqual(['Inbox note.md', 'Work/Meetings/Sync Tuesday.md', 'Work/Plan (2).md', 'Work/Plan.md']);
     expect(await zip.file('Work/Plan.md')?.async('string')).toContain('title: Plan');
     expect(prisma.note.findMany.mock.calls[0][0].where).toEqual({ userId: 'user-1', deletedAt: null });
+  });
+
+  it('puts the files of attachments in the zip, and links the notes to them by a relative path', async () => {
+    const id = '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e';
+    const other = '00000000-0000-4000-8000-000000000001';
+    prisma.attachment.findMany.mockResolvedValue([{ id, fileName: 'beach photo?.png' }]);
+    prisma.note.findMany.mockResolvedValue([
+      note(
+        'Trip',
+        { name: 'Travel', parent: { name: 'Life' } },
+        {
+          content: `![beach](attachment:${id}) and ![gone](attachment:${other})`,
+        },
+      ),
+      note('Top', null, { content: `![again](attachment:${id})` }),
+    ]);
+
+    const zip = await JSZip.loadAsync(await service.exportAll('user-1'));
+
+    expect(await zip.file(`attachments/${id}/beach photo .png`)?.async('string')).toBe(`bytes of ${id}`);
+    expect(await zip.file('Life/Travel/Trip.md')?.async('string')).toContain(
+      `![beach](../../attachments/${id}/beach%20photo%20.png) and ![gone](attachment:${other})`,
+    );
+    expect(await zip.file('Top.md')?.async('string')).toContain(`![again](attachments/${id}/beach%20photo%20.png)`);
+    // The owner's own files of notes outside the trash, and nothing else.
+    expect(prisma.attachment.findMany.mock.calls[0][0].where).toEqual({
+      userId: 'user-1',
+      note: { userId: 'user-1', deletedAt: null },
+    });
   });
 
   it('exports a single note with a safe file name', async () => {

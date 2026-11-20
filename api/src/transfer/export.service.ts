@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import JSZip from 'jszip';
+import { AttachmentsService } from '../attachments/attachments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { replaceAttachmentLinks } from './attachment-links';
 import { safeFileName, UniquePaths } from './file-names';
 import { FrontMatter, serializeFrontMatter } from './front-matter';
 
@@ -36,7 +38,10 @@ export function toMarkdownFile(note: ExportableNote): string {
 
 @Injectable()
 export class ExportService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly attachments: AttachmentsService,
+  ) {}
 
   async exportNote(userId: string, noteId: string): Promise<{ filename: string; markdown: string }> {
     const note = await this.prisma.note.findFirst({ where: { id: noteId, userId }, include: exportInclude });
@@ -59,13 +64,29 @@ export class ExportService {
 
     const zip = new JSZip();
     const paths = new UniquePaths();
+
+    // The files of the notes go under attachments/<id>/, and the notes link to them there by a
+    // relative path, which this app's import and other Markdown apps follow.
+    const files = await this.prisma.attachment.findMany({
+      where: { userId, note: { userId, deletedAt: null } },
+      select: { id: true, fileName: true },
+    });
+    const fileOf = new Map(
+      files.map((file) => [file.id, `attachments/${file.id}/${safeFileName(file.fileName, 'file')}`]),
+    );
+    for (const [id, path] of fileOf) zip.file(path, await this.attachments.read(id));
     for (const note of notes) {
       const folders: string[] = [];
       if (note.notebook?.parent) folders.push(safeFileName(note.notebook.parent.name, 'Notebook'));
       if (note.notebook) folders.push(safeFileName(note.notebook.name, 'Notebook'));
       const folder = folders.map((name) => `${name}/`).join('');
       const path = paths.claim(folder, safeFileName(note.title), '.md');
-      zip.file(path, toMarkdownFile(note), { date: note.updatedAt });
+      const up = '../'.repeat(folders.length);
+      const content = replaceAttachmentLinks(note.content, (id) => {
+        const file = fileOf.get(id);
+        return file && up + file.split('/').map(encodeURIComponent).join('/');
+      });
+      zip.file(path, toMarkdownFile({ ...note, content }), { date: note.updatedAt });
     }
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   }
