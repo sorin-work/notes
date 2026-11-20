@@ -407,7 +407,13 @@ describe('password reset', () => {
 });
 
 describe('api docs', () => {
-  type Operation = { security: Record<string, string[]>[]; tags: string[]; parameters?: { name: string }[] };
+  type Operation = {
+    security: Record<string, string[]>[];
+    tags: string[];
+    summary?: string;
+    parameters?: { name: string }[];
+    requestBody?: { content: Record<string, { schema: { properties: Record<string, unknown>; required?: string[] } }> };
+  };
   type Document = {
     paths: Record<string, Record<string, Operation>>;
     components: {
@@ -423,6 +429,55 @@ describe('api docs', () => {
     expect(page.text).toContain('Notes API');
     const json = await request(server).get('/api/docs-json').expect(200);
     expect(json.body.info.title).toBe('Notes API');
+  });
+
+  it('serves its own page and files under /api/docs and nothing else from the swagger package', async () => {
+    const server = app.getHttpServer();
+    const page = await request(server).get('/api/docs').expect(200);
+
+    // Everything the page loads is a file next to it, never another host.
+    const loaded = [...page.text.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
+    expect(loaded.length).toBeGreaterThan(3);
+    for (const file of loaded) {
+      expect(file).toMatch(/^\.\/docs\/[\w.-]+$/);
+      await request(server).get(file.replace(/^\./, '/api')).expect(200);
+    }
+    const init = await request(server).get('/api/docs/swagger-ui-init.js').buffer(true).expect(200);
+    expect(init.text).not.toContain('petstore');
+    expect(init.text).not.toMatch(/https?:\/\/(?!localhost)[a-z0-9.-]+\.swagger\.io/);
+
+    // The package's stock page, which loads a sample document from petstore.swagger.io, and the rest of its folder.
+    for (const path of [
+      '/api/docs/docs/',
+      '/api/docs/docs',
+      '/api/docs/index.html',
+      '/api/docs/docs/index.html',
+      '/api/docs/swagger-initializer.js',
+      '/api/docs/docs/swagger-initializer.js',
+      '/api/docs/docs/swagger-ui.css',
+      '/api/docs/oauth2-redirect.html',
+      '/api/docs/package.json',
+      '/api/docs/swagger-ui-bundle.js.map',
+    ]) {
+      const response = await request(server).get(path);
+      expect({ path, status: response.status }).toEqual({ path, status: 404 });
+    }
+    await request(server).get('/api/docs/').expect(200);
+  });
+
+  it('gives every operation a line on what it does, and the import its upload', async () => {
+    const { body } = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const document = body as Document;
+    const missing = Object.entries(document.paths).flatMap(([path, item]) =>
+      Object.entries(item)
+        .filter(([, operation]) => !operation.summary)
+        .map(([method]) => `${method.toUpperCase()} ${path}`),
+    );
+    expect(missing).toEqual([]);
+
+    const upload = document.paths['/api/import'].post.requestBody?.content['multipart/form-data'].schema;
+    expect(upload?.required).toEqual(['files']);
+    expect(upload?.properties.files).toMatchObject({ type: 'array', items: { type: 'string', format: 'binary' } });
   });
 
   it('describes both kinds of credential and says which routes take which', async () => {
@@ -1145,6 +1200,15 @@ describe('password guesses with a low throttle limit', () => {
       .expect(201);
     return bearer(response.body.token);
   };
+
+  it('serves no API document when it is not set up, which is what API_DOCS=false does', async () => {
+    const server = limited.getHttpServer();
+    await request(server).get('/api/docs').expect(404);
+    await request(server).get('/api/docs/').expect(404);
+    await request(server).get('/api/docs-json').expect(404);
+    await request(server).get('/api/docs/swagger-ui.css').expect(404);
+    await request(server).get('/api/health').expect(200);
+  });
 
   it('caps the guesses against one account across the routes that check the password', async () => {
     const server = limited.getHttpServer();
