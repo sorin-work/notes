@@ -407,10 +407,6 @@ mark {
   font-weight: 550;
 }
 
-.nav-item.nested {
-  padding-left: 1.4rem;
-}
-
 .nav-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -428,6 +424,19 @@ mark {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* Each level of notebooks steps in a little. */
+.notebook-tree ul {
+  padding-left: 0.8rem;
+}
+
+/* The arrow that folds a notebook, and the same room where a notebook has nothing inside. */
+.tree-toggle {
+  flex-shrink: 0;
+  width: 1.1rem;
+  padding: 0.15rem 0;
+  text-align: center;
 }
 
 .nav-row {

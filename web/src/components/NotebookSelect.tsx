@@ -1,5 +1,5 @@
 import type { Notebook } from '../api/types';
-import { notebookTree } from '../lib/notebooks';
+import { flattenTree, notebookTree } from '../lib/notebooks';
 
 interface Props {
   notebooks: Notebook[];
@@ -24,21 +24,23 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
   );
 }
 
-/** One option per notebook, with the nested notebooks indented under their parent. */
+/** A step of indent in a select, where ordinary spaces at the start of an option are dropped. */
+export const INDENT = '\u00a0 \u00a0 ';
+
+/**
+ * One option per notebook, in the order of the tree, each indented by how
+ * deep it sits. A select cannot fold parts of its list away, but it can be
+ * searched by typing, which a list that folds could not offer as simply.
+ */
 export function NotebookOptions({ notebooks }: { notebooks: Notebook[] }) {
   return (
     <>
-      {notebookTree(notebooks).map((parent) => [
-        <option key={parent.id} value={parent.id}>
-          {parent.name}
-        </option>,
-        ...parent.children.map((child) => (
-          <option key={child.id} value={child.id}>
-            {'   '}
-            {child.name}
-          </option>
-        )),
-      ])}
+      {flattenTree(notebookTree(notebooks)).map((notebook) => (
+        <option key={notebook.id} value={notebook.id}>
+          {INDENT.repeat(notebook.depth - 1)}
+          {notebook.name}
+        </option>
+      ))}
     </>
   );
 }

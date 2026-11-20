@@ -6,8 +6,9 @@ import { createNote } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Notebook } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { useStoredSet } from '../hooks/useStoredSet';
 import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
-import { notebookTree, totalNotes } from '../lib/notebooks';
+import { isInside, MAX_NOTEBOOK_DEPTH, type NotebookNode, notebookTree, totalNotes } from '../lib/notebooks';
 import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
@@ -29,6 +30,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
   const tree = notebookTree(notebooks.data ?? []);
+  // Notebooks are open until they are folded shut, and stay the way they were left.
+  const [closed, toggleClosed] = useStoredSet('notes.closedNotebooks');
 
   // Only the note list is filtered. On the other pages nothing in here is the current place.
   const onNotes = location.pathname.startsWith('/notes');
@@ -53,7 +56,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
       setAction(null);
-      if (activeNotebook === id || tree.some((n) => n.id === id && n.children.some((c) => c.id === activeNotebook))) {
+      // The list was showing the deleted notebook, or one that went with it.
+      if (isInside(notebooks.data ?? [], activeNotebook, id)) {
         navigate('/notes');
       }
     },
@@ -65,6 +69,39 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     if (!q) return;
     navigate(`/search?q=${encodeURIComponent(q)}`);
     onNavigate?.();
+  };
+
+  /** A notebook with, when it is open, the notebooks inside it. Deeper ones are drawn the same way. */
+  const branch = (node: NotebookNode) => {
+    const open = !closed.has(node.id);
+    const insideId = `notebooks-in-${node.id}`;
+    return (
+      <li key={node.id}>
+        <div className="nav-row">
+          {node.children.length > 0 ? (
+            <button
+              type="button"
+              className="icon-button small tree-toggle"
+              aria-expanded={open}
+              aria-controls={insideId}
+              aria-label={open ? `Fold ${node.name}` : `Unfold ${node.name}`}
+              onClick={() => toggleClosed(node.id)}
+            >
+              {open ? '▾' : '▸'}
+            </button>
+          ) : (
+            <span className="tree-toggle" aria-hidden="true" />
+          )}
+          {filterLink(`?notebook=${node.id}`, activeNotebook === node.id, node.name, totalNotes(node))}
+          <NotebookMenu
+            notebook={node}
+            canNest={node.depth < MAX_NOTEBOOK_DEPTH}
+            onAction={(kind) => setAction(kind === 'create' ? { kind, parentId: node.id } : { kind, notebook: node })}
+          />
+        </div>
+        {node.children.length > 0 && open && <ul id={insideId}>{node.children.map(branch)}</ul>}
+      </li>
+    );
   };
 
   const filterLink = (search: string, active: boolean, label: string, count?: number, className = '') => (
@@ -130,41 +167,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             </button>
           </div>
           {notebooks.data?.length === 0 && <p className="nav-empty">No notebooks yet.</p>}
-          <ul className="notebook-tree">
-            {tree.map((parent) => (
-              <li key={parent.id}>
-                <div className="nav-row">
-                  {filterLink(`?notebook=${parent.id}`, activeNotebook === parent.id, parent.name, totalNotes(parent))}
-                  <NotebookMenu
-                    notebook={parent}
-                    canNest
-                    onAction={(kind) =>
-                      setAction(kind === 'create' ? { kind, parentId: parent.id } : { kind, notebook: parent })
-                    }
-                  />
-                </div>
-                {parent.children.length > 0 && (
-                  <ul>
-                    {parent.children.map((child) => (
-                      <li key={child.id} className="nav-row">
-                        {filterLink(
-                          `?notebook=${child.id}`,
-                          activeNotebook === child.id,
-                          child.name,
-                          child.noteCount,
-                          'nested',
-                        )}
-                        <NotebookMenu
-                          notebook={child}
-                          onAction={(kind) => kind !== 'create' && setAction({ kind, notebook: child })}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ul>
+          <ul className="notebook-tree">{tree.map(branch)}</ul>
         </div>
 
         {tags.data && tags.data.length > 0 && (
@@ -226,7 +229,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           message={
             <p>
               The notebook
-              {tree.some((n) => n.id === action.notebook.id && n.children.length > 0) &&
+              {(notebooks.data ?? []).some((notebook) => notebook.parentId === action.notebook.id) &&
                 ' and the notebooks inside it'}{' '}
               will be deleted. Its notes move to the trash, where you can restore them for 30 days.
             </p>
