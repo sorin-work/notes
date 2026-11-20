@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, PayloadTooLargeException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, PayloadTooLargeException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
@@ -50,6 +50,8 @@ const backupNoteInclude = {
 
 @Injectable()
 export class BackupService {
+  private readonly logger = new Logger(BackupService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly links: LinksService,
@@ -108,17 +110,31 @@ export class BackupService {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true, noteId: true, fileName: true, createdAt: true },
     });
-    for (const [index, file] of files.entries()) {
+    // A file that is gone from storage is left out, and named in missingAttachments.
+    const missing: string[] = [];
+    let written = 0;
+    for (const file of files) {
+      let bytes: Buffer;
+      try {
+        bytes = await this.attachments.read(file.id);
+      } catch {
+        missing.push(file.id);
+        continue;
+      }
       const entry: BackupAttachment = {
         id: file.id,
         noteId: file.noteId,
         fileName: file.fileName,
         createdAt: iso(file.createdAt),
-        data: (await this.attachments.read(file.id)).toString('base64'),
+        data: bytes.toString('base64'),
       };
-      yield `${index === 0 ? '' : ','}\n${JSON.stringify(entry)}`;
+      yield `${written === 0 ? '' : ','}\n${JSON.stringify(entry)}`;
+      written++;
     }
-    yield '\n],"notes":[';
+    if (missing.length > 0) {
+      this.logger.warn(`Backup left out ${missing.length} attachment file(s) that are missing from storage`);
+    }
+    yield `\n],"missingAttachments":${JSON.stringify(missing)},"notes":[`;
 
     let after: string | undefined;
     let first = true;
