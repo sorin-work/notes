@@ -104,6 +104,12 @@ Markdown import/export.
   after a reload. A line at the top says when you are offline and that what
   is shown may be out of date. Search, backlinks and history need a
   connection and say so.
+- **Writing offline**: text typed without a connection, and new notes made
+  without one, are kept on the device and sent when the server can be
+  reached again, also after a reload. A line at the top counts what is
+  waiting. If the note was changed elsewhere meanwhile, the usual question
+  comes up when it is opened; a change the server cannot take is listed
+  until you decide. Signing out with unsent changes asks first.
 
 | Shortcut             | Action                            |
 | -------------------- | --------------------------------- |
@@ -618,6 +624,35 @@ lets go of what it holds and starts again as that user. A copy is only ever
 written while the token names its user. A device that never comes back online
 keeps its copy until then, up to seven days per note.
 
+Writing without a connection goes through an outbox (`web/src/lib/outbox.ts`),
+in IndexedDB as well, one entry per note and per user. When a save cannot
+reach the server, the editor puts the text there, and every later save of
+that note goes there too until it has been sent, so the changes to a note
+arrive in order. "+ New note" without a connection makes the note in the
+browser with an id of its own (a random UUID), which `POST /notes` accepts as
+`id`. The outbox sends when the browser is back online, when the app starts
+and every half minute while something waits, one tab at a time (a Web Lock),
+through the same `PATCH` as the editor, on the revision the text was written
+on. So a note changed elsewhere meanwhile is never overwritten: the entry is
+kept and the editor asks the usual question when the note is opened. A text
+the server already has (the answer to an earlier send got lost) is taken as
+sent, and a create whose id turns out to be the user's own note is too, so a
+connection that comes and goes applies nothing twice. A change the server
+refuses for another reason (the note is in the trash, say) stays, with the
+reason, until the user discards it.
+
+The outbox and the draft stash of the editor do not overlap: the outbox has
+what the server never saw, and the stash, in the tab's `sessionStorage`, only
+a draft the server refused when nobody was left to ask (the session had
+ended, or the note changed once more on the way out).
+
+What waits in the outbox belongs to the user who wrote it. It goes when that
+user signs out and agrees to throw it away, when the account is deleted and
+when another user signs in on this browser. It stays when the session ends
+by itself (a 401, or a sign-out in another tab), and is sent at that user's
+next sign-in here. Only text and new notes wait: a pin, a tag, a notebook or
+a move to the trash still need a connection.
+
 ## API overview
 
 The API describes itself. With the stack running, http://localhost:5181/api/docs
@@ -645,6 +680,10 @@ carries the note as it is now:
 The check only applies when `title` or `content` is sent, and a request
 without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
+
+`POST /notes` takes an `"id"`, a random UUID made by the client, for a note
+made offline. If any note has that id the answer is a `409` with
+`"code": "note_exists"`, the same whoever's note it is.
 
 `POST /notes` with `"templateId"` makes the note from that template, and
 `"placeholders": {"date": "...", "time": "..."}` gives the text to fill in,

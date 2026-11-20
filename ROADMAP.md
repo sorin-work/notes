@@ -32,7 +32,7 @@ couple of weekends, **L** several weeks of spare time.
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
-| 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
+| 14  | Offline mode and installable app       | Shipped | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Shipped | both     | M    | -          |
 | 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
@@ -89,33 +89,6 @@ That covers Obsidian and this app, and not much else.
   `@media print` rules) gives PDF through the browser. A full JSON backup
   that includes the trash and version history would cover what the zip
   leaves out.
-
-### 14. Offline mode and installable app
-
-The layout works on a phone, but the app cannot be installed and needs a
-connection for everything. Depends on item 8.
-
-- Installable: a web manifest, icons (`web/public` only has `favicon.svg`)
-  and a service worker that caches the app shell, for example with
-  `vite-plugin-pwa`. `nginx.conf` then has to serve `index.html` and the
-  worker file with `no-cache`. Only `/assets/` sets cache headers now.
-- Read offline: the TanStack Query cache is memory-only (`queryClient.ts`).
-  Persisting it to IndexedDB makes the notes that were already opened
-  readable.
-- Write offline: `request()` in `api/client.ts` throws `ApiError(0, ...)` when
-  the server cannot be reached and `useAutosave` keeps the pending draft, but
-  only until the tab closes. Needs an outbox that survives a reload and is
-  replayed on reconnect, which is where conflict detection comes in.
-- Tricky: creating notes offline needs ids made in the browser.
-  `CreateNoteDto` has no `id` and the validation pipe rejects unknown fields.
-- Search, backlinks and history stay online-only. Signing out has to clear
-  the stored notes as well as the in-memory cache.
-
-Built so far, in three parts that ship together: the app can be installed
-(manifest, icons, a service worker that caches the files of the build and
-never anything under `/api/`, an offer to reload into a new version), and
-notes already opened can be read offline from a copy of the query cache kept
-in IndexedDB per user. Writing offline follows.
 
 ## Maybe
 
@@ -431,6 +404,26 @@ click. Any site can send a visitor there, so it saves nothing by itself, the
 title stays out of the note's text, and only a plain web address is taken.
 `API_DOCS=false` turns the document off. Still open: the document describes
 requests but not answers.
+
+### 14. Offline mode and installable app
+
+Built in three parts. The app can be installed: a manifest, icons and a
+service worker written by hand rather than with `vite-plugin-pwa`, which
+caches only the files of the build and never anything under `/api/`, asks
+the network first for pages, and offers a reload into a new version that
+every open tab follows. `web/sw-retire/sw.js` takes the worker out of use if
+it ever has to go. Notes already opened can be read offline: the query cache
+is kept in IndexedDB, one record per user, limited to notes, lists,
+notebooks, tags and links, 5 MB and seven days per note, and deleted on every
+way out of a session. Text and new notes can be written offline: an outbox
+in IndexedDB sends them through the normal create and save on reconnect, in
+order per note and without applying anything twice, and a change that meets a
+newer note raises the usual conflict question instead of overwriting it.
+`POST /notes` takes a client-made id, refused with the same answer for
+anyone. Different from the plan: the outbox is kept, not wiped, when a session
+ends by itself, and sent at the same user's next sign-in. Still open: pins,
+tags, notebooks and the trash need a connection, and a note made offline is
+not in the lists until it is sent.
 
 ### 16. Templates and daily notes
 
