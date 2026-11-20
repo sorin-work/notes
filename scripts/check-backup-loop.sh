@@ -1,9 +1,9 @@
 #!/bin/sh
 # Checks the parts of backup.sh that can lose data when they go wrong: the
-# daily loop, the pruning, and the one step of a restore that cannot be taken
-# back. No database is needed. pg_dump, psql and sleep are replaced by
-# stand-ins, so every case takes a moment, and dump files with made-up dates
-# stand for clocks that were wrong or were changed.
+# daily loop, the pruning, and the order of the steps in a restore. No
+# database is needed. pg_dump, psql, the other database tools and sleep are
+# replaced by stand-ins, so every case takes a moment, and dump files with
+# made-up dates stand for clocks that were wrong or were changed.
 #
 # For the loop: it runs for a number of rounds, makes at most one dump,
 # pauses after every attempt, and never leaves fewer dumps behind than
@@ -39,21 +39,67 @@ for arg in "$@"; do
 done
 STUB
 
-# The loop asks psql how many tables there are. A restore uses it for the
-# rename at the end, which the last case lets fail.
+# The database server, for a restore, is a folder: one file per database,
+# holding "original", "empty" or "restored". Every call is written down in
+# $STATE/calls, so a case can say what must never have been asked for.
 cat >"$work/bin/psql" <<'STUB'
 #!/bin/sh
+echo "psql $*" >>"$STATE/calls"
+name=''
+for arg in "$@"; do
+  case $arg in
+    name=*) name=${arg#name=} ;;
+  esac
+done
 case "$*" in
-  *"RENAME TO"*) [ ! -e "$STATE/rename-fails" ] || exit 1 ;;
-  *) echo 9 ;;
+  *"RENAME TO"*)
+    # The two renames of the swap, or the one when there is nothing to replace.
+    [ ! -e "$STATE/swap-fails" ] || exit 1
+    echo "$*" | grep -o 'ALTER DATABASE "[^"]*" RENAME TO "[^"]*"' | while read -r _ _ from _ _ to; do
+      mv "$STATE/dbs/$(echo "$from" | tr -d '"')" "$STATE/dbs/$(echo "$to" | tr -d '"')" || exit 1
+    done
+    ;;
+  *pg_tables*)
+    # The loop asking how many tables there are.
+    echo 9
+    ;;
+  *)
+    query=$(cat)
+    case $query in
+      *pg_stat_activity*) [ ! -e "$STATE/connected" ] || cat "$STATE/connected" ;;
+      *pg_database*) if [ -e "$STATE/dbs/$name" ]; then echo 1; else echo 0; fi ;;
+    esac
+    ;;
 esac
 STUB
 
-# The rest of what a restore calls. All of it works.
-for tool in dropdb createdb pg_restore; do
-  printf '#!/bin/sh\nexit 0\n' >"$work/bin/$tool"
-  chmod +x "$work/bin/$tool"
+cat >"$work/bin/createdb" <<'STUB'
+#!/bin/sh
+echo "createdb $*" >>"$STATE/calls"
+echo empty >"$STATE/dbs/$1"
+STUB
+
+cat >"$work/bin/dropdb" <<'STUB'
+#!/bin/sh
+echo "dropdb $*" >>"$STATE/calls"
+for name in "$@"; do :; done
+if [ -e "$STATE/drop-fails" ] && [ "$name" = "$(cat "$STATE/drop-fails")" ]; then
+  exit 1
+fi
+rm -f "$STATE/dbs/$name"
+STUB
+
+cat >"$work/bin/pg_restore" <<'STUB'
+#!/bin/sh
+echo "pg_restore $*" >>"$STATE/calls"
+[ ! -e "$STATE/restore-fails" ] || exit 1
+for arg in "$@"; do
+  case $arg in
+    --dbname=*) echo restored >"$STATE/dbs/${arg#--dbname=}" ;;
+  esac
 done
+STUB
+chmod +x "$work/bin/createdb" "$work/bin/dropdb" "$work/bin/pg_restore"
 
 # Returns at once and stops the loop, its parent, after $ROUNDS naps.
 cat >"$work/bin/sleep" <<'STUB'
@@ -86,9 +132,10 @@ begin() {
   STATE="$work/state"
   BACKUP_DIR="$work/dumps"
   rm -rf "$STATE" "$BACKUP_DIR"
-  mkdir "$STATE" "$BACKUP_DIR"
+  mkdir "$STATE" "$STATE/dbs" "$BACKUP_DIR"
   : >"$STATE/attempts"
   : >"$STATE/naps"
+  : >"$STATE/calls"
   export STATE BACKUP_DIR ROUNDS AHEAD
   export BACKUP_KEEP=3 BACKUP_INTERVAL_SECONDS=$DAY PGDATABASE=notes
 }
@@ -163,14 +210,28 @@ run_loop
 expect 0 3
 grep -q "dated in the future" "$STATE/log" || fail "the log does not mention the dates"
 
-begin "dumps dated in the future next to an overdue one"
+begin "dumps dated in the future next to an overdue one: one dump, and none of them is removed"
 overdue=$(old_dump $((-2 * DAY)))
-old_dump $((2 * DAY)) >/dev/null
+ahead=$(old_dump $((2 * DAY)))
 old_dump $((3 * DAY)) >/dev/null
 run_loop
-expect 1 3
-[ ! -e "$BACKUP_DIR/$overdue" ] || fail "the overdue dump was kept instead of the new one"
+# The two from the future do not count, so the overdue one and the new one are well within the three to keep.
+expect 1 4
+[ -e "$BACKUP_DIR/$overdue" ] || fail "a dump was removed although fewer than BACKUP_KEEP are dated in the present"
 grep -lq new "$BACKUP_DIR"/*.dump || fail "the dump that was just written was pruned"
+grep -q "warning: dated in the future.*$ahead" "$STATE/log" || fail "no warning names the dumps from the future"
+
+begin "a full set of real dumps beside ones from the future: the real ones get the whole quota"
+old_dump $((30 * DAY)) >/dev/null
+old_dump $((31 * DAY)) >/dev/null
+oldest=$(old_dump $((-4 * DAY)))
+kept=$(old_dump $((-3 * DAY)))
+old_dump $((-2 * DAY)) >/dev/null
+run_loop
+# Three dated in the present stay (the new one and the two newest before it), next to the two from the future.
+expect 1 5
+[ ! -e "$BACKUP_DIR/$oldest" ] || fail "the oldest present-dated dump was kept"
+[ -e "$BACKUP_DIR/$kept" ] || fail "yesterday's dumps were pushed out by ones from the future"
 
 begin "pg_dump fails: a pause after every attempt, nothing removed"
 old_dump $((-4 * DAY)) >/dev/null
@@ -183,24 +244,119 @@ run_loop
 [ -z "$(ls -A "$BACKUP_DIR" | grep '\.partial$' || true)" ] || fail "a partial dump was left behind"
 echo "ok: $case_name"
 
-begin "once, with every other dump dated in the future: the new dump stays"
+begin "once, with every other dump dated in the future: nothing is removed, and it says so every time"
 old_dump $((1 * DAY)) >/dev/null
 old_dump $((2 * DAY)) >/dev/null
 old_dump $((3 * DAY)) >/dev/null
 PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "once failed"
-[ "$(dump_count)" -eq 3 ] || fail "expected 3 dump files, found $(dump_count)"
+[ "$(dump_count)" -eq 4 ] || fail "expected the 3 future-dated dumps and the new one, found $(dump_count)"
 grep -lq new "$BACKUP_DIR"/*.dump || fail "the dump that was just written was pruned"
+[ "$(grep -c "warning: dated in the future" "$STATE/log")" -eq 1 ] || fail "expected one warning about the future-dated dumps"
+sleep 1
+PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || fail "the second once failed"
+grep -q "warning: dated in the future" "$STATE/log" || fail "the warning was not repeated on the next run"
 echo "ok: $case_name"
 
-begin "restore: the rename fails after the drop"
+# A restore of "notes" from $1, with whatever the case has set up. Leaves the exit status in $status.
+run_restore() {
+  status=0
+  PATH="$work/bin:$PATH" PGUSER=notes sh "$here/backup.sh" restore "$1" >"$STATE/log" 2>&1 || status=$?
+}
+
+database() {
+  cat "$STATE/dbs/$1" 2>/dev/null || echo "(none)"
+}
+
+# The current database must never be dropped by name: it is renamed aside, and only that copy is dropped.
+never_dropped_by_name() {
+  if grep -q -x -e "dropdb --if-exists notes" "$STATE/calls"; then
+    fail "the database itself was dropped"
+  fi
+}
+
+begin "restore: replaces the database in one transaction and drops the old one last"
 dump=$(old_dump -3600)
-touch "$STATE/rename-fails"
-status=0
-PATH="$work/bin:$PATH" PGUSER=notes sh "$here/backup.sh" restore "$dump" >"$STATE/log" 2>&1 || status=$?
+echo original >"$STATE/dbs/notes"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)', not the restored data"
+[ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+swap=$(grep "RENAME TO" "$STATE/calls")
+[ "$(echo "$swap" | wc -l)" -eq 1 ] || fail "the two renames were not one call: $swap"
+echo "$swap" | grep -q -e "--single-transaction" || fail "the renames are not in a transaction"
+echo "$swap" | grep -q 'ALTER DATABASE "notes" RENAME TO "notes_replaced"; ALTER DATABASE "notes_restoring" RENAME TO "notes";' ||
+  fail "unexpected swap: $swap"
+[ "$(grep -n "RENAME TO" "$STATE/calls" | cut -d: -f1)" -lt "$(grep -n "dropdb --if-exists notes_replaced" "$STATE/calls" | tail -n 1 | cut -d: -f1)" ] ||
+  fail "the old database was dropped before the swap"
+never_dropped_by_name
+echo "ok: $case_name"
+
+begin "restore: the dump does not load: the database is untouched"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+touch "$STATE/restore-fails"
+run_restore "$dump"
 [ "$status" -ne 0 ] || fail "the restore reported success"
-grep -q "the data from $dump is in the database notes_restoring" "$STATE/log" || fail "it does not say where the data is"
-finish="psql -U notes -d postgres -c 'ALTER DATABASE \"notes_restoring\" RENAME TO \"notes\"'"
-grep -q -F "$finish" "$STATE/log" || fail "it does not print the command that finishes the restore"
+[ "$(database notes)" = original ] || fail "notes holds '$(database notes)' after a failed restore"
+[ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+if grep -q "RENAME TO" "$STATE/calls"; then fail "a swap was attempted with a dump that did not load"; fi
+never_dropped_by_name
+grep -q "notes was left as it was" "$STATE/log" || fail "the message does not say the database is untouched"
+echo "ok: $case_name"
+
+begin "restore: the swap is refused: the database is untouched, and the message says who is connected"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+touch "$STATE/swap-fails"
+printf 'notes-api (2)\nnotes-backup (1)\n' >"$STATE/connected"
+run_restore "$dump"
+[ "$status" -ne 0 ] || fail "the restore reported success"
+[ "$(database notes)" = original ] || fail "notes holds '$(database notes)' after a refused swap"
+[ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+never_dropped_by_name
+grep -q "notes was left as it was" "$STATE/log" || fail "the message does not say the database is untouched"
+grep -q "Connected now: notes-api (2), notes-backup (1)\." "$STATE/log" || fail "the message does not say who is connected"
+echo "ok: $case_name"
+
+begin "restore: no database of that name yet"
+dump=$(old_dump -3600)
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
+[ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+echo "ok: $case_name"
+
+begin "restore: the old database cannot be dropped after the swap: restored, with a warning that names it"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+echo notes_replaced >"$STATE/drop-fails"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore reported a failure although the data is in place"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
+[ "$(database notes_replaced)" = original ] || fail "the old database is gone although its drop failed"
+grep -q "still there as notes_replaced" "$STATE/log" || fail "no warning about the database that was left"
+grep -q "dropdb -U notes notes_replaced" "$STATE/log" || fail "the warning does not say how to remove it"
+echo "ok: $case_name"
+
+begin "restore: an old database left by an earlier restore is removed first"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+echo older >"$STATE/dbs/notes_replaced"
+echo half >"$STATE/dbs/notes_restoring"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
+[ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+grep -q "removing notes_replaced" "$STATE/log" || fail "it does not say that it removed the leftover"
+echo "ok: $case_name"
+
+begin "restore: needs no backup folder it can write to, or one at all"
+dump=$(old_dump -3600)
+mv "$BACKUP_DIR/$dump" "$STATE/elsewhere.dump"
+echo original >"$STATE/dbs/notes"
+BACKUP_DIR="$work/no-such-folder" run_restore "$STATE/elsewhere.dump"
+[ "$status" -eq 0 ] || fail "the restore failed: $(cat "$STATE/log")"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
 echo "ok: $case_name"
 
 echo "OK: the loop, the pruning and the restore held in every case"
