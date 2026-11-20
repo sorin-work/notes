@@ -688,6 +688,7 @@ describe('api tokens', () => {
       'AuthController.changePassword',
       'AuthController.deleteAccount',
       'AuthController.logoutEverywhere',
+      'AuthController.updatePreferences',
       'AuthController.updateProfile',
     ]);
     expect(names(routes.filter((route) => route.isPublic))).toEqual([
@@ -1358,6 +1359,138 @@ describe('templates and copies', () => {
     await request(server).post(`/api/notes/${original.id}/duplicate`).set(other.auth).expect(404);
     await request(server).delete(`/api/notes/${original.id}`).set(auth).expect(204);
     await request(server).post(`/api/notes/${original.id}/duplicate`).set(auth).expect(409);
+  });
+});
+
+describe('daily notes', () => {
+  it('opens one note per day, made the way the preferences say, however often and however it is asked for', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const post = async (path: string, body: object = {}) =>
+      (await request(server).post(path).set(auth).send(body).expect(201)).body;
+    const daily = (body: object, headers = auth) => request(server).post('/api/notes/daily').set(headers).send(body);
+    const today = {
+      date: '2026-11-20',
+      title: '20 November 2026',
+      placeholders: { date: '2026-11-20', time: '08:15' },
+    };
+
+    // Nothing chosen yet: the defaults come with the account.
+    const me = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(me.body.preferences).toEqual({ dailyNotes: { notebookId: null, templateId: null, dateFormat: 'iso' } });
+
+    const journal = await post('/api/notebooks', { name: 'Journal' });
+    const template = await post('/api/notes', {
+      title: 'Daily template',
+      content: '# {{title}}\n\nStarted at {{time}}.\n\n- [ ] Plan the day',
+      tags: ['journal'],
+      isTemplate: true,
+    });
+    const saved = await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { notebookId: journal.id, templateId: template.id, dateFormat: 'long' } })
+      .expect(200);
+    expect(saved.body.dailyNotes).toEqual({ notebookId: journal.id, templateId: template.id, dateFormat: 'long' });
+    // Only what is sent changes, and the choices come back with the account on any device.
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'us' } })
+      .expect(200);
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'long' } })
+      .expect(200);
+    const again = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(again.body.preferences.dailyNotes).toEqual(saved.body.dailyNotes);
+
+    // Several tabs ask for today's note at once. There is one note, and they all get it.
+    const answers = await Promise.all(Array.from({ length: 6 }, () => daily(today)));
+    expect(answers.map((answer) => answer.status)).toEqual([200, 200, 200, 200, 200, 200]);
+    const [note] = answers.map((answer) => answer.body);
+    expect(new Set(answers.map((answer) => answer.body.id)).size).toBe(1);
+    expect(note).toMatchObject({
+      title: '20 November 2026',
+      content: '# 20 November 2026\n\nStarted at 08:15.\n\n- [ ] Plan the day',
+      notebookId: journal.id,
+      tags: ['journal'],
+      isTemplate: false,
+      revision: 0,
+    });
+    const list = await request(server).get('/api/notes').set(auth).expect(200);
+    expect(list.body.items.map((item: { id: string }) => item.id)).toEqual([note.id]);
+
+    // Still the same note after it was written in, renamed, and the format was changed.
+    await request(server)
+      .patch(`/api/notes/${note.id}`)
+      .set(auth)
+      .send({ title: 'A long Friday', revision: 0 })
+      .expect(200);
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'iso' } })
+      .expect(200);
+    const later = await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200);
+    expect(later.body).toMatchObject({ id: note.id, title: 'A long Friday', revision: 1 });
+
+    // Another day is another note. One that was written by hand under that day's title is taken for it.
+    const byHand = await post('/api/notes', { title: 'november 21, 2026', content: 'Written the evening before.' });
+    const tomorrow = await daily({ date: '2026-11-21', title: '2026-11-21' }).expect(200);
+    expect(tomorrow.body).toMatchObject({ id: byHand.id, content: 'Written the evening before.', revision: 0 });
+    expect(tomorrow.body.updatedAt).toBe(byHand.updatedAt);
+
+    // In the trash, the note of a day makes room for a new one and stays what it was.
+    await request(server).delete(`/api/notes/${note.id}`).set(auth).expect(204);
+    const fresh = await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200);
+    expect(fresh.body.id).not.toBe(note.id);
+    expect(fresh.body.title).toBe('2026-11-20');
+    await request(server).post(`/api/trash/${note.id}/restore`).set(auth).expect(204);
+    expect((await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
+
+    // A copy of a daily note is an ordinary note, and each account has its own days.
+    await post(`/api/notes/${fresh.body.id}/duplicate`);
+    expect((await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
+    const theirs = await daily({ date: '2026-11-20', title: '2026-11-20' }, other.auth).expect(200);
+    expect(theirs.body.id).not.toBe(fresh.body.id);
+    expect(theirs.body).toMatchObject({ content: '', notebookId: null, tags: [] });
+
+    // A template or a notebook that is gone is no longer used, and nothing fails over it.
+    await request(server).delete(`/api/notes/${template.id}`).set(auth).expect(204);
+    await request(server).delete(`/api/notebooks/${journal.id}`).set(auth).expect(200);
+    const plain = await daily({ date: '2026-11-22', title: '2026-11-22' }).expect(200);
+    expect(plain.body).toMatchObject({ content: '', notebookId: null, tags: [] });
+  });
+
+  it('takes only real days, titles that are that day, and preferences that are the user’s own', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const daily = (body: object) => request(server).post('/api/notes/daily').set(auth).send(body);
+
+    await daily({ date: '2026-02-30', title: '2026-02-30' }).expect(400);
+    await daily({ date: '20 November 2026', title: '20 November 2026' }).expect(400);
+    await daily({ date: '2026-11-20', title: 'My day' }).expect(400);
+    await daily({ date: '2026-11-20', title: '2026-11-21' }).expect(400);
+    await daily({ date: '2026-11-20' }).expect(400);
+    await daily({ date: '2026-11-20', title: '2026-11-20', notebookId: 'x' }).expect(400);
+    await request(server).post('/api/notes/daily').send({ date: '2026-11-20', title: '2026-11-20' }).expect(401);
+
+    const preferences = (body: object) => request(server).patch('/api/auth/preferences').set(auth).send(body);
+    const theirNotebook = await request(server).post('/api/notebooks').set(other.auth).send({ name: 'Theirs' });
+    const ordinary = await request(server).post('/api/notes').set(auth).send({ title: 'No template' });
+    await preferences({ dailyNotes: { notebookId: theirNotebook.body.id } }).expect(400);
+    await preferences({ dailyNotes: { templateId: ordinary.body.id } }).expect(400);
+    await preferences({ dailyNotes: { dateFormat: 'roman' } }).expect(400);
+    await preferences({ dailyNotes: { notebookId: 'not-an-id' } }).expect(400);
+    await preferences({ theme: 'dark' }).expect(400);
+    const untouched = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(untouched.body.preferences).toEqual({
+      dailyNotes: { notebookId: null, templateId: null, dateFormat: 'iso' },
+    });
   });
 });
 
