@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { sep } from 'node:path';
 
 export const WORKER_FILE = 'sw.js';
+/** Says which build is deployed. Never cached, so an open tab can compare it with its own. */
+export const VERSION_FILE = 'version.json';
 
 /**
  * What the worker caches: every file of the build and of `public/`, but not
@@ -10,7 +12,7 @@ export const WORKER_FILE = 'sw.js';
  */
 export function precacheList(files: Iterable<string>): string[] {
   return [...new Set(files)]
-    .filter((file) => !file.endsWith('.map') && file !== WORKER_FILE)
+    .filter((file) => !file.endsWith('.map') && file !== WORKER_FILE && file !== VERSION_FILE)
     .map((file) => `/${file.split(sep).join('/')}`)
     .sort();
 }

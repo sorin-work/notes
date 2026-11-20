@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildVersion, precacheList } from './precache';
 
 describe('precacheList', () => {
-  it('lists every file of the build as a path, without source maps and without the worker', () => {
+  it('lists every file of the build as a path, without source maps, the worker and the version', () => {
     expect(
-      precacheList(['index.html', 'assets/index-abc.js', 'assets/index-abc.js.map', 'sw.js', 'icons/icon-192.png']),
+      precacheList([
+        'index.html',
+        'assets/index-abc.js',
+        'assets/index-abc.js.map',
+        'sw.js',
+        'version.json',
+        'icons/icon-192.png',
+      ]),
     ).toEqual(['/assets/index-abc.js', '/icons/icon-192.png', '/index.html']);
   });
 });
