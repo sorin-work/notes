@@ -18,14 +18,21 @@ describe('splitPath', () => {
 });
 
 describe('notebookPath', () => {
-  it('keeps up to two levels', () => {
+  it('keeps the folders as deep as notebooks nest', () => {
     expect(notebookPath([])).toEqual([]);
     expect(notebookPath(['Work'])).toEqual(['Work']);
     expect(notebookPath(['Work', 'Meetings'])).toEqual(['Work', 'Meetings']);
+    expect(notebookPath(['Work', 'Clients', 'Acme'])).toEqual(['Work', 'Clients', 'Acme']);
+    expect(notebookPath(['Work', 'Clients', 'Acme', '2026'])).toEqual(['Work', 'Clients', 'Acme', '2026']);
   });
 
-  it('folds deeper folders into the second level', () => {
-    expect(notebookPath(['Work', 'Clients', 'Acme'])).toEqual(['Work', 'Clients - Acme']);
+  it('folds what is deeper into the fourth level', () => {
+    expect(notebookPath(['Work', 'Clients', 'Acme', '2026', 'Q1'])).toEqual(['Work', 'Clients', 'Acme', '2026 - Q1']);
+    expect(notebookPath(['A', 'B', 'C', 'D', 'E', 'F'])).toEqual(['A', 'B', 'C', 'D - E - F']);
+  });
+
+  it('drops empty folder names', () => {
+    expect(notebookPath([' Work ', '', '  ', 'Plans'])).toEqual(['Work', 'Plans']);
   });
 });
 

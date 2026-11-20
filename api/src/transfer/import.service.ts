@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import JSZip from 'jszip';
 import { LinksService } from '../links/links.service';
+import { MAX_NOTEBOOK_DEPTH } from '../notebooks/notebooks.service';
 import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TagsService } from '../tags/tags.service';
@@ -34,13 +35,14 @@ export function splitPath(path: string): { folders: string[]; name: string } {
 }
 
 /**
- * Notebooks only nest one level, so deeper folders are folded into the
- * second level: "A/B/C" becomes notebook "B - C" inside "A".
+ * Folders become notebooks at the depth they have, as far as notebooks
+ * nest. What is deeper is folded into the last level: with four levels,
+ * "A/B/C/D/E" becomes notebook "D - E" inside "A/B/C".
  */
 export function notebookPath(folders: string[]): string[] {
   const cleaned = folders.map((folder) => folder.trim()).filter(Boolean);
-  if (cleaned.length <= 2) return cleaned;
-  return [cleaned[0], cleaned.slice(1).join(' - ')];
+  if (cleaned.length <= MAX_NOTEBOOK_DEPTH) return cleaned;
+  return [...cleaned.slice(0, MAX_NOTEBOOK_DEPTH - 1), cleaned.slice(MAX_NOTEBOOK_DEPTH - 1).join(' - ')];
 }
 
 function toDate(value: unknown): Date | undefined {
