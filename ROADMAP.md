@@ -26,12 +26,12 @@ couple of weekends, **L** several weeks of spare time.
 | 5   | Rename a note without breaking links   | Shipped | both     | M    | -          |
 | 6   | Accessibility pass                     | Shipped | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
-| 8   | Edit conflict detection                | Later   | both     | M    | -          |
+| 8   | Edit conflict detection                | Shipped | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Later   | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
-| 13  | Personal API tokens                    | Later   | both     | M    | -          |
+| 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
@@ -43,26 +43,6 @@ couple of weekends, **L** several weeks of spare time.
 Empty for now: everything that was in this group has shipped.
 
 ## Later
-
-### 8. Edit conflict detection
-
-With a note open in two tabs, or on a laptop and a phone, the last save wins
-and the other edit is gone without a word, unless a version happened to be
-saved in between. Items 14 and 17 both need this first.
-
-- `PATCH /notes/:id` takes the revision the edit was based on and answers
-  `409` with the current note when it is stale. A `revision` counter on
-  `Note` is cleaner than comparing `updatedAt`, which is deliberately not
-  bumped by every change.
-- `useAutosave` only has an `error` state and retries the same value on the
-  next change, which for a `409` would never succeed. It needs a `conflict`
-  state, and `NoteEditor` a dialog: keep mine, take theirs, or keep mine and
-  put theirs into the history through `VersionsService`.
-- Tricky: pin, favourite, notebook and tag changes (`updateMeta` in
-  `NoteEditor`) are sent without content and must not conflict with typing in
-  the same tab. Only check when `title` or `content` is in the request.
-- Restoring a version changes the content as well and has to bump the
-  revision.
 
 ### 9. Attachments and pasted images
 
@@ -129,27 +109,6 @@ That covers Obsidian and this app, and not much else.
   `@media print` rules) gives PDF through the browser. A full JSON backup
   that includes the trash and version history would cover what the zip
   leaves out.
-
-### 13. Personal API tokens
-
-To script against the API today you log in with email and password and get a
-seven-day JWT. I want long-lived tokens that I create and revoke in Settings,
-for things like a shell alias that appends a line to a note or a cron job
-that downloads the export.
-
-- `ApiToken` model: name, hash of the token, a read-only flag, `lastUsedAt`.
-  The token itself is shown once, when it is created.
-- `JwtAuthGuard` gets a second path: a bearer value with a known prefix (say
-  `nt_`) is looked up by hash instead of being verified as a JWT.
-  `bearerToken()` stays as it is.
-- Endpoints under `/auth/tokens` and a card in `SettingsPage`.
-- Document the API while at it. `@nestjs/swagger` can build an OpenAPI
-  document mostly from the existing DTO classes, served at `/api/docs`, and
-  the endpoint table in the README can then shrink.
-- Undecided: scopes beyond read-only, and rate limiting for token requests
-  (only the auth routes are throttled). A "save this page" bookmarklet is
-  better done as a `/capture?title=&url=` page in the web app, which needs
-  neither a token nor CORS.
 
 ### 14. Offline mode and installable app
 
@@ -393,6 +352,33 @@ the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
 
+### 8. Edit conflict detection
+
+A note has a `revision` that counts the changes to its title and content.
+`PATCH /notes/:id` takes the revision an edit was based on and answers `409`
+with the current note when it is stale, but only when title or content is
+sent, so pinning, tags and moving never conflict. The check and the write are
+one conditional update, so of two saves that race from the same revision only
+one gets through. Different from the plan: the counting is done by a database
+trigger, as for `search_vector`, and not by the services. That way every
+write of the text bumps the revision in its own statement: saves, restores,
+link rewrites and code that is not written yet. `useAutosave` has a `conflict`
+state and does not retry, and the editor asks what to keep: mine, theirs, or
+mine with theirs put into the history. "Take theirs" fetches the note anew.
+Closing the question decides nothing. Leaving the note with it open, or with
+a change from elsewhere that only the last save notices, saves my text and
+keeps theirs as a version, and a notice says so afterwards. A draft that
+cannot be saved when a note is left, because the connection or the session is
+gone, is kept in the tab under the user's id and offered when the note is
+opened there again. Signing out saves first and asks before it discards. A
+save whose answer got lost is recognised by its text and is no conflict. A
+restore now saves what is typed first, and is refused when that fails or when
+a save gets in between. A save without a revision works as before: the last
+write wins. Still open: the two texts are not merged, the question shows no
+diff (History does, after "keep mine, put theirs in the history"), a tab that
+only has a note open is not told about a change before it saves, and a kept
+draft does not outlive its tab.
+
 ### 11. Account settings and sessions
 
 Settings can now change the name and the email (`PATCH /auth/me`, the email
@@ -419,3 +405,34 @@ the reset is off and the link is hidden. Along the way the throttles learned
 to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
 address is not verified, the mail is plain text in English only, and nothing
 but the API log tells me when a mail could not be sent.
+
+### 13. Personal API tokens
+
+Settings has an "API tokens" card: name a token, tick read-only if it should
+only read, copy it once. Only its SHA-256 hash is kept in the new `ApiToken`
+model, with the name, the read-only flag, `lastUsedAt` and the date. In
+`JwtAuthGuard` a bearer value that starts with `nt_` is looked up by that
+hash instead of being verified as a JWT, and the same place refuses what a
+token may not do: anything but `GET` for a read-only one, and for every token
+any route that is not marked `@AllowApiToken()`. Marked are the notes
+themselves and `GET /auth/me`, so the account, the tokens and whatever is
+added later take a login. Decided on the open points: no scopes
+beyond read-only, and requests are throttled per token
+(`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
+minute. Making a token takes the password, so a stolen login cannot make
+itself a credential that outlives it. "Sign out everywhere" and a password
+change leave tokens alone, and after a password change the app says how many
+still work and offers to revoke them all at once. A password reset by mail
+revokes them.
+
+The second step documented the API. `@nestjs/swagger` builds an OpenAPI
+document from the DTO classes at build time and serves it, with a page to try
+it on, at `/api/docs`. It names the two credentials and says for every route
+which of them it takes, read from the same marks the guard goes by. The
+endpoint table in the README shrank to the few a script wants. And
+`/capture?title=&url=` in the web app opens a new note with the title and
+the address of a page, which a bookmarklet from the README turns into one
+click. Any site can send a visitor there, so it saves nothing by itself, the
+title stays out of the note's text, and only a plain web address is taken.
+`API_DOCS=false` turns the document off. Still open: the document describes
+requests but not answers.

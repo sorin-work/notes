@@ -1,15 +1,19 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
+  Min,
   NotContains,
   ValidateIf,
 } from 'class-validator';
@@ -22,6 +26,8 @@ export const MAX_TITLE_LENGTH = 200;
 const NUL = '\0';
 /** About 500 pages of text. */
 export const MAX_CONTENT_LENGTH = 1_000_000;
+/** The largest number the revision column can hold. */
+const MAX_REVISION = 2_147_483_647;
 
 export class CreateNoteDto {
   @IsOptional()
@@ -66,6 +72,23 @@ export class UpdateNoteDto {
   @IsString()
   @MaxLength(MAX_CONTENT_LENGTH)
   content?: string;
+
+  /**
+   * The revision of the note that the title or content in this request was
+   * based on. When the note has moved on since, the request is refused with
+   * a 409 that carries the note as it is now. Without it the last write
+   * wins. It is ignored when neither title nor content is sent.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_REVISION)
+  revision?: number;
+
+  /** Save the text this request replaces as a version, whatever the usual interval between versions. */
+  @IsOptional()
+  @IsBoolean()
+  keepVersion?: boolean;
 
   /** null takes the note out of its notebook. */
   @ValidateIf((_, value) => value !== null && value !== undefined)
@@ -122,6 +145,7 @@ export class ListNotesQuery extends NoteFilterQuery {
   @IsBoolean()
   favorite?: boolean;
 
+  @ApiPropertyOptional({ enum: NOTE_SORTS })
   @IsOptional()
   @IsIn(NOTE_SORTS)
   sort: NoteSort = 'updated';

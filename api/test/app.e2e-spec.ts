@@ -4,13 +4,18 @@
  * e.g. ?schema=e2e) that the tests may write to. Every test signs up its own
  * user, so the tests do not interfere with each other or with existing data.
  */
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, RequestMethod, Type } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { DiscoveryModule, DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import JSZip from 'jszip';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { ALLOW_API_TOKEN } from '../src/common/allow-api-token.decorator';
+import { IS_PUBLIC } from '../src/common/public.decorator';
 import { APP_CONFIG, loadConfig } from '../src/config/config';
+import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -27,6 +32,51 @@ process.env.APP_URL = 'http://notes.test';
 
 let app: INestApplication<App>;
 let counter = 0;
+
+interface RegisteredRoute {
+  /** "NotesController.list" */
+  name: string;
+  verb: 'get' | 'post' | 'put' | 'patch' | 'delete';
+  /** With a made-up id in place of every parameter. */
+  path: string;
+  /** As the API document writes it: "/api/notes/{id}". */
+  documented: string;
+  isPublic: boolean;
+  allowsToken: boolean;
+}
+
+/** Every route of every controller, with the marks JwtAuthGuard reads on it. */
+function registeredRoutes(nest: INestApplication): RegisteredRoute[] {
+  const reflector = nest.get(Reflector);
+  const scanner = new MetadataScanner();
+  const first = (value: string | string[] | undefined) => [value ?? ''].flat()[0];
+  const routes: RegisteredRoute[] = [];
+  for (const { metatype } of nest.get(DiscoveryService).getControllers()) {
+    const controller = metatype as Type | undefined;
+    if (!controller) continue;
+    const prototype = controller.prototype as Record<string, (...args: unknown[]) => unknown>;
+    for (const method of scanner.getAllMethodNames(prototype)) {
+      const handler = prototype[method];
+      const verb = Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod | undefined;
+      if (verb === undefined) continue;
+      const parts = [
+        first(Reflect.getMetadata(PATH_METADATA, controller)),
+        first(Reflect.getMetadata(PATH_METADATA, handler)),
+      ];
+      const path = ['/api', ...parts.map((part) => part.replace(/^\/|\/$/g, '')).filter(Boolean)].join('/');
+      const targets = [handler, controller];
+      routes.push({
+        name: `${controller.name}.${method}`,
+        verb: RequestMethod[verb].toLowerCase() as RegisteredRoute['verb'],
+        path: path.replace(/:\w+/g, '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e'),
+        documented: path.replace(/:(\w+)/g, '{$1}'),
+        isPublic: reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets) === true,
+        allowsToken: reflector.getAllAndOverride<boolean>(ALLOW_API_TOKEN, targets) === true,
+      });
+    }
+  }
+  return routes;
+}
 
 const outbox: (OutgoingMail & { from: string })[] = [];
 const fakeTransport: MailTransport = {
@@ -53,12 +103,14 @@ async function signUp(): Promise<{ token: string; auth: { Authorization: string 
 }
 
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  // DiscoveryModule is for registeredRoutes above.
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule, DiscoveryModule] })
     .overrideProvider(MAIL_TRANSPORT)
     .useValue(fakeTransport)
     .compile();
   app = moduleRef.createNestApplication();
   setupApp(app);
+  setupDocs(app);
   await app.init();
 });
 
@@ -242,6 +294,13 @@ describe('password reset', () => {
       .send({ email, name: 'Ada', password: 'password123' })
       .expect(201);
 
+    const apiToken = await request(server)
+      .post('/api/auth/tokens')
+      .set(bearer(session.body.token))
+      .send({ name: 'cron job', currentPassword: 'password123' })
+      .expect(201);
+
+    await request(server).get('/api/notes').set(bearer(apiToken.body.token)).expect(200);
     const status = await request(server).get('/api/auth/password-reset').expect(200);
     expect(status.body).toEqual({ enabled: true });
 
@@ -259,11 +318,22 @@ describe('password reset', () => {
     expect(mail.text).not.toContain('Ada');
 
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'short' }).expect(400);
-    await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password456' }).expect(204);
+    const done = await request(server)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token, password: 'password456' })
+      .expect(204);
+    expect(done.text).toBe('');
 
     await request(server).get('/api/auth/me').set(bearer(session.body.token)).expect(401);
     await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(401);
     await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+
+    // A reset is the way back into an account someone else may have been
+    // in, so the API token made with the old password goes with the logins.
+    await request(server).get('/api/notes').set(bearer(apiToken.body.token)).expect(401);
+    const login = await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+    const listed = await request(server).get('/api/auth/tokens').set(bearer(login.body.token)).expect(200);
+    expect(listed.body).toEqual([]);
 
     // The link worked once.
     await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password789' }).expect(400);
@@ -333,6 +403,345 @@ describe('password reset', () => {
       .post('/api/auth/password-reset/confirm')
       .send({ token: 'made-up-token', password: 'password456' })
       .expect(400);
+  });
+});
+
+describe('api docs', () => {
+  type Operation = {
+    security: Record<string, string[]>[];
+    tags: string[];
+    summary?: string;
+    parameters?: { name: string }[];
+    requestBody?: { content: Record<string, { schema: { properties: Record<string, unknown>; required?: string[] } }> };
+  };
+  type Document = {
+    paths: Record<string, Record<string, Operation>>;
+    components: {
+      securitySchemes: Record<string, { type: string; scheme: string }>;
+      schemas: Record<string, { properties: Record<string, Record<string, unknown>>; required?: string[] }>;
+    };
+  };
+
+  it('serves the page and the document without a login', async () => {
+    const server = app.getHttpServer();
+    const page = await request(server).get('/api/docs').expect(200);
+    expect(page.headers['content-type']).toContain('text/html');
+    expect(page.text).toContain('Notes API');
+    const json = await request(server).get('/api/docs-json').expect(200);
+    expect(json.body.info.title).toBe('Notes API');
+  });
+
+  it('serves its own page and files under /api/docs and nothing else from the swagger package', async () => {
+    const server = app.getHttpServer();
+    const page = await request(server).get('/api/docs').expect(200);
+
+    // Everything the page loads is a file next to it, never another host.
+    const loaded = [...page.text.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
+    expect(loaded.length).toBeGreaterThan(3);
+    for (const file of loaded) {
+      expect(file).toMatch(/^\.\/docs\/[\w.-]+$/);
+      await request(server).get(file.replace(/^\./, '/api')).expect(200);
+    }
+    const init = await request(server).get('/api/docs/swagger-ui-init.js').buffer(true).expect(200);
+    expect(init.text).not.toContain('petstore');
+    expect(init.text).not.toMatch(/https?:\/\/(?!localhost)[a-z0-9.-]+\.swagger\.io/);
+
+    // The package's stock page, which loads a sample document from petstore.swagger.io, and the rest of its folder.
+    for (const path of [
+      '/api/docs/docs/',
+      '/api/docs/docs',
+      '/api/docs/index.html',
+      '/api/docs/docs/index.html',
+      '/api/docs/swagger-initializer.js',
+      '/api/docs/docs/swagger-initializer.js',
+      '/api/docs/docs/swagger-ui.css',
+      '/api/docs/oauth2-redirect.html',
+      '/api/docs/package.json',
+      '/api/docs/swagger-ui-bundle.js.map',
+    ]) {
+      const response = await request(server).get(path);
+      expect({ path, status: response.status }).toEqual({ path, status: 404 });
+    }
+    await request(server).get('/api/docs/').expect(200);
+  });
+
+  it('gives every operation a line on what it does, and the import its upload', async () => {
+    const { body } = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const document = body as Document;
+    const missing = Object.entries(document.paths).flatMap(([path, item]) =>
+      Object.entries(item)
+        .filter(([, operation]) => !operation.summary)
+        .map(([method]) => `${method.toUpperCase()} ${path}`),
+    );
+    expect(missing).toEqual([]);
+
+    const upload = document.paths['/api/import'].post.requestBody?.content['multipart/form-data'].schema;
+    expect(upload?.required).toEqual(['files']);
+    expect(upload?.properties.files).toMatchObject({ type: 'array', items: { type: 'string', format: 'binary' } });
+  });
+
+  it('describes both kinds of credential and says which routes take which', async () => {
+    const { body } = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const document = body as Document;
+    expect(document.components.securitySchemes).toMatchObject({
+      login: { type: 'http', scheme: 'bearer' },
+      apiToken: { type: 'http', scheme: 'bearer' },
+    });
+
+    const takes = (method: string, path: string) =>
+      document.paths[path][method].security.map((entry) => Object.keys(entry)[0]);
+    // Public, as the guard has it.
+    expect(takes('post', '/api/auth/login')).toEqual([]);
+    expect(takes('get', '/api/public/notes/{token}')).toEqual([]);
+    expect(takes('get', '/api/health')).toEqual([]);
+    // Either credential.
+    expect(takes('get', '/api/notes')).toEqual(['login', 'apiToken']);
+    expect(takes('get', '/api/auth/me')).toEqual(['login', 'apiToken']);
+    // A login only: the account and the tokens.
+    expect(takes('patch', '/api/auth/me')).toEqual(['login']);
+    expect(takes('post', '/api/auth/tokens')).toEqual(['login']);
+    expect(takes('delete', '/api/auth/tokens/{id}')).toEqual(['login']);
+    expect(takes('delete', '/api/auth/tokens')).toEqual(['login']);
+
+    // And for every route the app has, the document says what the guard will do.
+    const routes = registeredRoutes(app);
+    expect(routes.length).toBeGreaterThan(40);
+    for (const route of routes) {
+      const expected = route.isPublic ? [] : route.allowsToken ? ['login', 'apiToken'] : ['login'];
+      expect({ route: route.name, takes: takes(route.verb, route.documented) }).toEqual({
+        route: route.name,
+        takes: expected,
+      });
+    }
+
+    // No operation is left without a statement, and each has a group.
+    const operations = Object.values(document.paths).flatMap((item) => Object.values(item));
+    expect(operations.length).toBeGreaterThan(40);
+    expect(operations.every((operation) => Array.isArray(operation.security))).toBe(true);
+    expect(document.paths['/api/notes/{noteId}/versions'].get.tags).toEqual(['notes']);
+  });
+
+  it('takes the request bodies and queries from the classes the API validates with', async () => {
+    const { body } = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+    const { schemas } = (body as Document).components;
+
+    expect(schemas.RegisterDto.required).toEqual(['email', 'name', 'password']);
+    expect(schemas.RegisterDto.properties.password).toMatchObject({ type: 'string', minLength: 8, maxLength: 72 });
+    expect(schemas.RegisterDto.properties.email).toMatchObject({ format: 'email' });
+    expect(Object.keys(schemas.CreateNoteDto.properties)).toEqual(
+      expect.arrayContaining(['title', 'content', 'notebookId', 'tags', 'pinned', 'favorite']),
+    );
+    expect(schemas.CreateApiTokenDto.required).toEqual(['name', 'currentPassword']);
+
+    const query = (path: string) => (body as Document).paths[path].get.parameters?.map((parameter) => parameter.name);
+    expect(query('/api/notes')).toEqual(expect.arrayContaining(['notebookId', 'tag', 'sort', 'page', 'pageSize']));
+    expect(query('/api/search')).toEqual(expect.arrayContaining(['q', 'notebookId', 'tag', 'page']));
+  });
+});
+
+describe('api tokens', () => {
+  const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  it('work in place of a login, within their limits', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+
+    const currentPassword = 'password123';
+    await request(server).post('/api/auth/tokens').set(auth).send({ currentPassword }).expect(400);
+    await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'script', readOnly: null, currentPassword })
+      .expect(400);
+    // A login alone does not make a token: it would outlive that login.
+    await request(server).post('/api/auth/tokens').set(auth).send({ name: 'script' }).expect(400);
+    await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'script', currentPassword: 'wrong-one' })
+      .expect(403);
+    expect((await request(server).get('/api/auth/tokens').set(auth).expect(200)).body).toEqual([]);
+
+    const created = await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: ' script ', currentPassword })
+      .expect(201);
+    expect(created.body).toMatchObject({ name: 'script', readOnly: false, lastUsedAt: null });
+    expect(created.body.token).toMatch(/^nt_[\w-]{43}$/);
+    const token = bearer(created.body.token);
+
+    // Shown once: the list has the name, never the token or its hash.
+    const listed = await request(server).get('/api/auth/tokens').set(auth).expect(200);
+    expect(listed.body).toEqual([
+      { id: created.body.id, name: 'script', readOnly: false, lastUsedAt: null, createdAt: created.body.createdAt },
+    ]);
+
+    const note = await request(server).post('/api/notes').set(token).send({ title: 'From a script' }).expect(201);
+    const notes = await request(server).get('/api/notes').set(token).expect(200);
+    expect(notes.body.total).toBe(1);
+    await request(server).get('/api/auth/me').set(token).expect(200);
+    const used = await request(server).get('/api/auth/tokens').set(auth).expect(200);
+    expect(used.body[0].lastUsedAt).not.toBeNull();
+
+    // Managing the account and the tokens takes a login.
+    await request(server).get('/api/auth/tokens').set(token).expect(403);
+    await request(server).post('/api/auth/tokens').set(token).send({ name: 'more', currentPassword }).expect(403);
+    await request(server).delete('/api/auth/tokens').set(token).expect(403);
+    await request(server).delete(`/api/auth/tokens/${created.body.id}`).set(token).expect(403);
+    await request(server).patch('/api/auth/me').set(token).send({ name: 'Mallory' }).expect(403);
+    await request(server)
+      .patch('/api/auth/password')
+      .set(token)
+      .send({ currentPassword: 'password123', newPassword: 'password456' })
+      .expect(403);
+    await request(server).post('/api/auth/logout-all').set(token).expect(403);
+    await request(server).delete('/api/auth/me').set(token).send({ password: 'password123' }).expect(403);
+
+    const reader = await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'reader', readOnly: true, currentPassword })
+      .expect(201);
+    const readOnly = bearer(reader.body.token);
+    await request(server).get(`/api/notes/${note.body.id}`).set(readOnly).expect(200);
+    await request(server).get('/api/search?q=script').set(readOnly).expect(200);
+    await request(server).post('/api/notes').set(readOnly).send({ title: 'No' }).expect(403);
+    await request(server).patch(`/api/notes/${note.body.id}`).set(readOnly).send({ title: 'No' }).expect(403);
+    await request(server).delete(`/api/notes/${note.body.id}`).set(readOnly).expect(403);
+    await request(server).post(`/api/notes/${note.body.id}/share`).set(readOnly).expect(403);
+    await request(server).get(`/api/notes/${note.body.id}`).set(auth).expect(200);
+  });
+
+  it('outlive a password change, and can then be revoked all at once', async () => {
+    const server = app.getHttpServer();
+    const email = `rotate-${Date.now()}@example.com`;
+    const session = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+    const make = (name: string) =>
+      request(server)
+        .post('/api/auth/tokens')
+        .set(bearer(session.body.token))
+        .send({ name, currentPassword: 'password123' })
+        .expect(201);
+    const first = await make('first');
+    const second = await make('second');
+
+    const changed = await request(server)
+      .patch('/api/auth/password')
+      .set(bearer(session.body.token))
+      .send({ currentPassword: 'password123', newPassword: 'password456' })
+      .expect(200);
+    const auth = bearer(changed.body.token);
+
+    // Kept on purpose, and the new login can see that they are.
+    await request(server).get('/api/notes').set(bearer(first.body.token)).expect(200);
+    const kept = await request(server).get('/api/auth/tokens').set(auth).expect(200);
+    expect(kept.body).toHaveLength(2);
+
+    const stranger = await signUp();
+    expect((await request(server).delete('/api/auth/tokens').set(stranger.auth).expect(200)).body).toEqual({
+      revoked: 0,
+    });
+    await request(server).get('/api/notes').set(bearer(second.body.token)).expect(200);
+
+    expect((await request(server).delete('/api/auth/tokens').set(auth).expect(200)).body).toEqual({ revoked: 2 });
+    await request(server).get('/api/notes').set(bearer(first.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer(second.body.token)).expect(401);
+  });
+
+  it('get into the routes that are marked for them and into no other', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const created = await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'walker', currentPassword: 'password123' })
+      .expect(201);
+    const token = bearer(created.body.token);
+
+    const routes = registeredRoutes(app);
+    expect(routes.length).toBeGreaterThan(40);
+    const names = (list: typeof routes) => list.map((route) => route.name).sort();
+    const open = routes.filter((route) => !route.isPublic && route.allowsToken);
+    const closed = routes.filter((route) => !route.isPublic && !route.allowsToken);
+
+    // Every route nobody marked refuses a full-access token, whatever it is asked to do.
+    for (const route of closed) {
+      const response = await request(server)[route.verb](route.path).set(token).send({});
+      expect({ route: route.name, status: response.status, message: response.body.message }).toEqual({
+        route: route.name,
+        status: 403,
+        message: 'An API token cannot do this. Sign in instead.',
+      });
+    }
+
+    // Written out, so that opening a route to tokens, or making one public,
+    // cannot happen without this list changing with it.
+    expect(names(closed)).toEqual([
+      'ApiTokensController.create',
+      'ApiTokensController.list',
+      'ApiTokensController.revoke',
+      'ApiTokensController.revokeAll',
+      'AuthController.changePassword',
+      'AuthController.deleteAccount',
+      'AuthController.logoutEverywhere',
+      'AuthController.updateProfile',
+    ]);
+    expect(names(routes.filter((route) => route.isPublic))).toEqual([
+      'AuthController.login',
+      'AuthController.register',
+      'HealthController.check',
+      'PasswordResetController.confirm',
+      'PasswordResetController.request',
+      'PasswordResetController.status',
+      'PublicSharesController.view',
+    ]);
+    expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
+      'AuthController',
+      'NotebooksController',
+      'NotesController',
+      'SearchController',
+      'SharesController',
+      'TagsController',
+      'TransferController',
+      'TrashController',
+      'VersionsController',
+    ]);
+    expect(names(open.filter((route) => route.name.startsWith('AuthController')))).toEqual(['AuthController.me']);
+  });
+
+  it('outlive "sign out everywhere", and end with a revoke or with the account', async () => {
+    const server = app.getHttpServer();
+    const email = `tokens-${Date.now()}@example.com`;
+    const session = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+    const auth = bearer(session.body.token);
+    const make = (name: string) =>
+      request(server).post('/api/auth/tokens').set(auth).send({ name, currentPassword: 'password123' }).expect(201);
+    const first = await make('first');
+    const second = await make('second');
+
+    await request(server).post('/api/auth/logout-all').set(auth).expect(204);
+    await request(server).get('/api/notes').set(auth).expect(401);
+    await request(server).get('/api/notes').set(bearer(first.body.token)).expect(200);
+
+    const login = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
+    const again = bearer(login.body.token);
+    const stranger = await signUp();
+    await request(server).delete(`/api/auth/tokens/${first.body.id}`).set(stranger.auth).expect(404);
+    await request(server).delete(`/api/auth/tokens/${first.body.id}`).set(again).expect(204);
+    await request(server).delete(`/api/auth/tokens/${first.body.id}`).set(again).expect(404);
+    await request(server).get('/api/notes').set(bearer(first.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer(second.body.token)).expect(200);
+
+    await request(server).delete('/api/auth/me').set(again).send({ password: 'password123' }).expect(204);
+    await request(server).get('/api/notes').set(bearer(second.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer('nt_made-up')).expect(401);
   });
 });
 
@@ -705,6 +1114,115 @@ describe('renaming a note', () => {
   });
 });
 
+describe('editing in two places', () => {
+  type Auth = { Authorization: string };
+  const patch = (auth: Auth, id: string, body: object) =>
+    request(app.getHttpServer()).patch(`/api/notes/${id}`).set(auth).send(body);
+  const read = async (auth: Auth, id: string) =>
+    (await request(app.getHttpServer()).get(`/api/notes/${id}`).set(auth).expect(200)).body;
+  const create = async (auth: Auth, body: object) =>
+    (await request(app.getHttpServer()).post('/api/notes').set(auth).send(body).expect(201)).body;
+
+  it('refuses a save based on an old revision and hands back the note as it is', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const note = await create(auth, { title: 'Plan', content: 'One' });
+    expect(note.revision).toBe(0);
+
+    // Two tabs have the note open at revision 0. The first one to save gets through.
+    expect((await patch(auth, note.id, { content: 'From tab A', revision: 0 }).expect(200)).body.revision).toBe(1);
+    const refused = await patch(auth, note.id, { content: 'From tab B', tags: ['late'], revision: 0 }).expect(409);
+    expect(refused.body).toEqual({
+      statusCode: 409,
+      error: 'Conflict',
+      code: 'stale_revision',
+      message: expect.any(String),
+      note: expect.objectContaining({ id: note.id, content: 'From tab A', revision: 1, tags: [] }),
+    });
+    // Nothing of the refused request was applied, not even its tags.
+    expect(await read(auth, note.id)).toMatchObject({ content: 'From tab A', tags: [], revision: 1 });
+
+    // Pinning, tags and moving never conflict and never count as a revision.
+    const pinned = await patch(auth, note.id, { pinned: true, tags: ['later'], revision: 0 }).expect(200);
+    expect(pinned.body).toMatchObject({ pinned: true, tags: ['later'], content: 'From tab A', revision: 1 });
+    // Neither does saving the text the note already has.
+    expect((await patch(auth, note.id, { content: 'From tab A', revision: 1 }).expect(200)).body.revision).toBe(1);
+
+    // "Keep mine, put theirs in the history": based on the new revision, with a version forced.
+    const kept = await patch(auth, note.id, { content: 'From tab B', revision: 1, keepVersion: true }).expect(200);
+    expect(kept.body).toMatchObject({ content: 'From tab B', revision: 2 });
+    const versions = await request(server).get(`/api/notes/${note.id}/versions`).set(auth).expect(200);
+    const latest = await request(server).get(`/api/notes/${note.id}/versions/${versions.body[0].id}`).set(auth);
+    expect(latest.body.content).toBe('From tab A');
+
+    // A client that names no revision keeps working: the last write wins, and it still counts.
+    expect((await patch(auth, note.id, { title: 'Plan C' }).expect(200)).body).toMatchObject({
+      title: 'Plan C',
+      content: 'From tab B',
+      revision: 3,
+    });
+
+    for (const revision of [-1, 1.5, '3', 2147483648]) {
+      await patch(auth, note.id, { content: 'x', revision }).expect(400);
+    }
+  });
+
+  it('lets one of two saves that race from the same revision through, never both', async () => {
+    const { auth } = await signUp();
+    for (let round = 0; round < 5; round++) {
+      const note = await create(auth, { title: `Race ${round}`, content: 'Start' });
+      const answers = await Promise.all([
+        patch(auth, note.id, { content: 'First tab', revision: 0 }),
+        patch(auth, note.id, { content: 'Second tab', revision: 0 }),
+      ]);
+      expect(answers.map((answer) => answer.status).sort()).toEqual([200, 409]);
+      const [won] = answers.filter((answer) => answer.status === 200);
+      const [lost] = answers.filter((answer) => answer.status === 409);
+      expect(won.body.revision).toBe(1);
+      expect(lost.body.note).toMatchObject({ content: won.body.content, revision: 1 });
+      expect(await read(auth, note.id)).toMatchObject({ content: won.body.content, revision: 1 });
+    }
+  });
+
+  it('counts every change of the text, whoever makes it', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const target = await create(auth, { title: 'Atlas' });
+    const source = await create(auth, { title: 'Source', content: 'About [[Atlas]].' });
+
+    // Rewriting links after a rename is a change of the text of the other note.
+    await patch(auth, target.id, { title: 'Project Atlas', revision: 0 }).expect(200);
+    await request(server).post(`/api/notes/${target.id}/rename-links`).set(auth).send({ from: 'Atlas' }).expect(200);
+    expect(await read(auth, source.id)).toMatchObject({ content: 'About [[Project Atlas]].', revision: 1 });
+    // A tab that still has the old text of that note is told so.
+    await patch(auth, source.id, { content: 'About [[Atlas]] and more.', revision: 0 }).expect(409);
+
+    // Restoring a version too.
+    await patch(auth, source.id, { content: 'Rewritten', revision: 1 }).expect(200);
+    const versions = await request(server).get(`/api/notes/${source.id}/versions`).set(auth).expect(200);
+    const restored = await request(server)
+      .post(`/api/notes/${source.id}/versions/${versions.body.at(-1).id}/restore`)
+      .set(auth)
+      .expect(200);
+    expect(restored.body).toMatchObject({ content: 'About [[Atlas]].', revision: 3 });
+    await patch(auth, source.id, { content: 'Typed before the restore', revision: 2 }).expect(409);
+
+    // The trash does not touch the text.
+    await request(server).delete(`/api/notes/${source.id}`).set(auth).expect(204);
+    await request(server).post(`/api/trash/${source.id}/restore`).set(auth).expect(204);
+    expect((await read(auth, source.id)).revision).toBe(3);
+
+    // And so does a write that goes past the services: the database does the counting.
+    const prisma = app.get(PrismaService);
+    await prisma.note.update({ where: { id: source.id }, data: { pinned: true } });
+    expect((await read(auth, source.id)).revision).toBe(3);
+    await prisma.note.update({ where: { id: source.id }, data: { content: 'Changed by hand' } });
+    expect((await read(auth, source.id)).revision).toBe(4);
+    await prisma.$executeRaw`UPDATE notes SET title = 'By hand' WHERE id = ${source.id}::uuid`;
+    expect((await read(auth, source.id)).revision).toBe(5);
+  });
+});
+
 describe('sharing', () => {
   it('serves a read-only copy until the link is revoked', async () => {
     const { auth } = await signUp();
@@ -792,7 +1310,16 @@ describe('password guesses with a low throttle limit', () => {
     return bearer(response.body.token);
   };
 
-  it('caps the guesses against one account across the three routes together', async () => {
+  it('serves no API document when it is not set up, which is what API_DOCS=false does', async () => {
+    const server = limited.getHttpServer();
+    await request(server).get('/api/docs').expect(404);
+    await request(server).get('/api/docs/').expect(404);
+    await request(server).get('/api/docs-json').expect(404);
+    await request(server).get('/api/docs/swagger-ui.css').expect(404);
+    await request(server).get('/api/health').expect(200);
+  });
+
+  it('caps the guesses against one account across the routes that check the password', async () => {
     const server = limited.getHttpServer();
     const victim = await account('victim');
     const other = await account('other');
@@ -806,6 +1333,8 @@ describe('password guesses with a low throttle limit', () => {
         .send({ currentPassword: 'guess-2', newPassword: 'password456' });
     const guessOnDelete = (auth: { Authorization: string }) =>
       request(server).delete('/api/auth/me').set(auth).send({ password: 'guess-3' });
+    const guessOnToken = (auth: { Authorization: string }) =>
+      request(server).post('/api/auth/tokens').set(auth).send({ name: 'mine now', currentPassword: 'guess-4' });
 
     // One guess on each route uses up the three the account gets.
     await guessOnProfile(victim).expect(403);
@@ -818,11 +1347,13 @@ describe('password guesses with a low throttle limit', () => {
     expect(refused.headers['retry-after']).toBeDefined();
     await guessOnProfile(victim).expect(429);
     await guessOnDelete(victim).expect(429);
+    await guessOnToken(victim).expect(429);
 
     // The right password does not get through either until the minute is over.
     await request(server).delete('/api/auth/me').set(victim).send({ password: 'password123' }).expect(429);
 
     // Another account, from the same address, still has its own guesses.
     await guessOnPassword(other).expect(403);
+    await guessOnToken(other).expect(403);
   });
 });

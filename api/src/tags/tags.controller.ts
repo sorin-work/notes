@@ -1,17 +1,21 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
+import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { RenameTagDto } from './dto/rename-tag.dto';
 import { TagsService, TagView } from './tags.service';
 
+@AllowApiToken()
 @Controller('tags')
 export class TagsController {
   constructor(private readonly tags: TagsService) {}
 
+  /** Lists the tags with the number of notes each one is on. */
   @Get()
   list(@CurrentUser() user: AuthUser): Promise<TagView[]> {
     return this.tags.list(user.id);
   }
 
+  /** Renames a tag. Renaming it to the name of another tag merges the two. */
   @Patch(':id')
   rename(
     @CurrentUser() user: AuthUser,
@@ -21,6 +25,7 @@ export class TagsController {
     return this.tags.rename(user.id, id, dto);
   }
 
+  /** Deletes a tag. The notes it was on stay. */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {

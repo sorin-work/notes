@@ -8,6 +8,13 @@ import { user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { SettingsPage } from './SettingsPage';
 
+/** What the page asks for when it opens. */
+const loaded = {
+  'GET /api/auth/me': { body: user },
+  'GET /api/tags': { body: [] },
+  'GET /api/auth/tokens': { body: [] },
+};
+
 function renderSettings() {
   setToken('tok');
   return renderWithProviders(
@@ -20,8 +27,7 @@ function renderSettings() {
 describe('SettingsPage', () => {
   it('imports files and lists the ones it skipped', async () => {
     const calls = mockFetch({
-      'GET /api/auth/me': { body: user },
-      'GET /api/tags': { body: [] },
+      ...loaded,
       'POST /api/import': {
         status: 201,
         body: { imported: 2, notebooksCreated: 1, skipped: [{ file: 'photo.jpg', reason: 'Not a Markdown file' }] },
@@ -39,7 +45,7 @@ describe('SettingsPage', () => {
   });
 
   it('checks that the new passwords match before sending them', async () => {
-    const calls = mockFetch({ 'GET /api/auth/me': { body: user }, 'GET /api/tags': { body: [] } });
+    const calls = mockFetch({ ...loaded });
     renderSettings();
 
     await userEvent.type(screen.getByLabelText('Current password'), 'old-password');
@@ -53,8 +59,7 @@ describe('SettingsPage', () => {
 
   it('keeps this session going with the new token after a password change', async () => {
     mockFetch({
-      'GET /api/auth/me': { body: user },
-      'GET /api/tags': { body: [] },
+      ...loaded,
       'PATCH /api/auth/password': { body: { token: 'tok-2', user } },
     });
     renderSettings();
@@ -66,12 +71,51 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByText(/Password changed/)).toBeInTheDocument();
     expect(getToken()).toBe('tok-2');
+    expect(await screen.findByText('The account has no API tokens.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke all' })).not.toBeInTheDocument();
+  });
+
+  it('says after a password change how many API tokens still work, and revokes them all on one click', async () => {
+    let revoked = false;
+    const token = (id: string, name: string) => ({
+      id,
+      name,
+      readOnly: false,
+      lastUsedAt: null,
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+    const calls = mockFetch({
+      ...loaded,
+      'GET /api/auth/tokens': () => ({
+        body: revoked ? [] : [token('t1', 'backup script'), token('t2', 'old laptop')],
+      }),
+      'PATCH /api/auth/password': { body: { token: 'tok-2', user } },
+      'DELETE /api/auth/tokens': () => {
+        revoked = true;
+        return { body: { revoked: 2 } };
+      },
+    });
+    renderSettings();
+
+    await userEvent.type(screen.getByLabelText('Current password'), 'old-password');
+    await userEvent.type(screen.getByLabelText('New password'), 'new-password');
+    await userEvent.type(screen.getByLabelText('Repeat new password'), 'new-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Change password' }));
+
+    // "All signed out" would not be the whole truth: the tokens are kept, and said to be.
+    expect(await screen.findByText(/2 API tokens still work\./)).toBeInTheDocument();
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke all' }));
+
+    expect(await screen.findByText(/All API tokens are revoked/)).toBeInTheDocument();
+    expect(calls.filter((call) => call.method === 'DELETE').map((call) => call.url)).toEqual(['/api/auth/tokens']);
+    expect(await screen.findByText('No tokens yet.')).toBeInTheDocument();
   });
 
   it('saves a new name without asking for the password', async () => {
     const calls = mockFetch({
-      'GET /api/auth/me': { body: user },
-      'GET /api/tags': { body: [] },
+      ...loaded,
       'PATCH /api/auth/me': { body: { ...user, name: 'Ada Lovelace' } },
     });
     renderSettings();
@@ -89,8 +133,7 @@ describe('SettingsPage', () => {
 
   it('asks for the password when the email changes', async () => {
     const calls = mockFetch({
-      'GET /api/auth/me': { body: user },
-      'GET /api/tags': { body: [] },
+      ...loaded,
       'PATCH /api/auth/me': { body: { ...user, email: 'ada@example.com' } },
     });
     renderSettings();
@@ -113,8 +156,7 @@ describe('SettingsPage', () => {
 
   it('signs out everywhere, this browser included', async () => {
     const calls = mockFetch({
-      'GET /api/auth/me': { body: user },
-      'GET /api/tags': { body: [] },
+      ...loaded,
       'POST /api/auth/logout-all': { status: 204 },
     });
     renderSettings();
@@ -127,8 +169,7 @@ describe('SettingsPage', () => {
 
   it('deletes the account after asking for the password, and offers the export first', async () => {
     const calls = mockFetch({
-      'GET /api/auth/me': { body: user },
-      'GET /api/tags': { body: [] },
+      ...loaded,
       'DELETE /api/auth/me': { status: 204 },
     });
     renderSettings();
@@ -146,10 +187,74 @@ describe('SettingsPage', () => {
     expect(calls.find((call) => call.method === 'DELETE')?.body).toEqual({ password: 'demo-password' });
   });
 
+  it('shows a new API token once, with the name and the read-only choice sent along', async () => {
+    const token = {
+      id: 't1',
+      name: 'backup script',
+      readOnly: true,
+      lastUsedAt: null,
+      createdAt: '2026-01-01T00:00:00Z',
+    };
+    let created = false;
+    const calls = mockFetch({
+      ...loaded,
+      'GET /api/auth/tokens': () => ({ body: created ? [token] : [] }),
+      'POST /api/auth/tokens': () => {
+        created = true;
+        return { status: 201, body: { ...token, token: 'nt_secret-value' } };
+      },
+    });
+    renderSettings();
+
+    expect(await screen.findByText('No tokens yet.')).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Token name'), 'backup script');
+    await userEvent.click(screen.getByLabelText('Read-only'));
+    await userEvent.type(screen.getByLabelText('Password, to create the token'), 'demo-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByLabelText('New API token')).toHaveValue('nt_secret-value');
+    expect(screen.getByText(/Copy it now, it is not shown again/)).toBeInTheDocument();
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      name: 'backup script',
+      readOnly: true,
+      currentPassword: 'demo-password',
+    });
+    expect(await screen.findByText(/read-only · made/)).toHaveTextContent('never used');
+    expect(screen.getByLabelText('Token name')).toHaveValue('');
+    expect(screen.getByLabelText('Password, to create the token')).toHaveValue('');
+  });
+
+  it('revokes an API token after asking', async () => {
+    const calls = mockFetch({
+      ...loaded,
+      'GET /api/auth/tokens': {
+        body: [
+          {
+            id: 't1',
+            name: 'old laptop',
+            readOnly: false,
+            lastUsedAt: '2026-01-02T00:00:00Z',
+            createdAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+      'DELETE /api/auth/tokens/t1': { status: 204 },
+    });
+    renderSettings();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Revoke token' }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE')).toBe(true));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
   it('passes the axe checks, with the profile form filled in and the delete dialog open', async () => {
     mockFetch({
       'GET /api/auth/me': { body: user },
       'GET /api/tags': { body: [{ id: 't1', name: 'atlas', noteCount: 2 }] },
+      'GET /api/auth/tokens': { body: [] },
     });
     renderSettings();
     expect(await screen.findByDisplayValue(user.email)).toBeInTheDocument();

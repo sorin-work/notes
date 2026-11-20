@@ -135,7 +135,15 @@ export class PasswordResetService {
     return true;
   }
 
-  /** Sets the new password and signs the account out everywhere. */
+  /**
+   * Sets the new password, signs the account out everywhere and revokes its
+   * API tokens.
+   *
+   * The tokens go too because this is the way back into an account someone
+   * else may have been in: whoever knew the old password could have made a
+   * token, and the page this is called from has no login to show a list on.
+   * A password change in Settings keeps them and shows them instead.
+   */
   async reset(token: string, password: string, now = new Date()): Promise<void> {
     this.assertEnabled();
     const link = await this.prisma.passwordReset.findUnique({ where: { tokenHash: hashResetToken(token) } });
@@ -154,6 +162,7 @@ export class PasswordResetService {
       }
       // The other links of the account stop working with this one.
       await tx.passwordReset.deleteMany({ where: { userId: link.userId } });
+      await tx.apiToken.deleteMany({ where: { userId: link.userId } });
       await tx.user.update({
         where: { id: link.userId },
         data: { passwordHash, tokenVersion: { increment: 1 } },
