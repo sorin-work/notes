@@ -56,7 +56,8 @@ describe('ImportService', () => {
   });
 
   it('imports a Markdown file using its front matter', async () => {
-    const text = '---\ntitle: Weekly plan\ntags: [work, plan]\npinned: true\ncreated: 2026-01-02\n---\nSee [[Atlas]]';
+    const text =
+      '---\ntitle: Weekly plan\ntags: [work, plan]\npinned: true\ntemplate: true\ncreated: 2026-01-02\n---\nSee [[Atlas]]';
     const result = await service.import(USER, [file('plan.md', text)]);
 
     expect(result).toEqual({ imported: 1, notebooksCreated: 0, skipped: [] });
@@ -68,6 +69,7 @@ describe('ImportService', () => {
         content: 'See [[Atlas]]',
         pinned: true,
         favorite: false,
+        isTemplate: true,
         createdAt: new Date('2026-01-02'),
         updatedAt: new Date('2026-01-02'),
       }),
