@@ -52,13 +52,20 @@ export interface ServedFile {
 export function cleanFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? '';
   // eslint-disable-next-line no-control-regex
-  const cleaned = base.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_FILE_NAME_LENGTH);
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, MAX_FILE_NAME_LENGTH);
   return cleaned || 'file';
 }
 
 /** `![name](attachment:id)` for an image, `[name](attachment:id)` for anything else. */
 export function attachmentMarkdown(id: string, fileName: string, contentType: string): string {
-  const words = fileName.replace(/[[\]()\\]/g, ' ').replace(/\s+/g, ' ').trim() || 'file';
+  const words =
+    fileName
+      .replace(/[[\]()\\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || 'file';
   return `${contentType.startsWith('image/') ? '!' : ''}[${words}](attachment:${id})`;
 }
 

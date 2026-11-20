@@ -35,10 +35,7 @@ export class NoteAttachmentsController {
 
   /** The files of a note, each with an address that works without a login for a few minutes. */
   @Get()
-  list(
-    @CurrentUser() user: AuthUser,
-    @Param('noteId', ParseUUIDPipe) noteId: string,
-  ): Promise<AttachmentView[]> {
+  list(@CurrentUser() user: AuthUser, @Param('noteId', ParseUUIDPipe) noteId: string): Promise<AttachmentView[]> {
     return this.attachments.list(user.id, noteId);
   }
 

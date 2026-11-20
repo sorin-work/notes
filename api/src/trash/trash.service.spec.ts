@@ -1,4 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import type { AttachmentsService } from '../attachments/attachments.service';
 import { loadConfig } from '../config/config';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { TrashService } from './trash.service';
@@ -13,10 +14,12 @@ const config = loadConfig({
 describe('TrashService', () => {
   let prisma: PrismaMock;
   let service: TrashService;
+  let attachments: { idsOfNotes: jest.Mock; removeFiles: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new TrashService(asPrismaService(prisma), config);
+    attachments = { idsOfNotes: jest.fn().mockResolvedValue(['a1']), removeFiles: jest.fn() };
+    service = new TrashService(asPrismaService(prisma), config, attachments as unknown as AttachmentsService);
   });
 
   it('lists trashed notes with the date they will be purged', async () => {
@@ -45,11 +48,13 @@ describe('TrashService', () => {
   it('only deletes notes for good once they are in the trash', async () => {
     prisma.note.findFirst.mockResolvedValue({ id: 'n1', deletedAt: null });
     await expect(service.deletePermanently(USER, 'n1')).rejects.toBeInstanceOf(ConflictException);
-    expect(prisma.note.delete).not.toHaveBeenCalled();
+    expect(prisma.note.deleteMany).not.toHaveBeenCalled();
 
     prisma.note.findFirst.mockResolvedValue({ id: 'n1', deletedAt: new Date() });
+    prisma.note.deleteMany.mockResolvedValue({ count: 1 });
     await service.deletePermanently(USER, 'n1');
-    expect(prisma.note.delete).toHaveBeenCalledWith({ where: { id: 'n1' } });
+    expect(prisma.note.deleteMany).toHaveBeenCalledWith({ where: { id: 'n1' } });
+    expect(attachments.removeFiles).toHaveBeenCalledWith(['a1']);
   });
 
   it('404s for notes of other users', async () => {
@@ -61,6 +66,9 @@ describe('TrashService', () => {
     prisma.note.deleteMany.mockResolvedValue({ count: 3 });
     await expect(service.empty(USER)).resolves.toEqual({ deleted: 3 });
     expect(prisma.note.deleteMany).toHaveBeenCalledWith({ where: { userId: USER, deletedAt: { not: null } } });
+    // The files of their attachments go in the same step.
+    expect(attachments.idsOfNotes).toHaveBeenCalledWith({ userId: USER, deletedAt: { not: null } });
+    expect(attachments.removeFiles).toHaveBeenCalledWith(['a1']);
   });
 
   it('purges notes trashed before the retention period', async () => {
@@ -70,5 +78,6 @@ describe('TrashService', () => {
     expect(prisma.note.deleteMany).toHaveBeenCalledWith({
       where: { deletedAt: { lt: new Date('2026-03-31T00:00:00Z') } },
     });
+    expect(attachments.removeFiles).toHaveBeenCalledWith(['a1']);
   });
 });

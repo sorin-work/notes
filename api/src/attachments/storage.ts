@@ -21,10 +21,11 @@ export class AttachmentStorage {
 
   /** Writes the file in full under a temporary name first, so a half-written file is never served. */
   async write(id: string, bytes: Buffer): Promise<void> {
+    const target = this.path(id);
     await mkdir(this.config.attachmentsDir, { recursive: true, mode: 0o700 });
     const partial = join(this.config.attachmentsDir, `.${id}.partial`);
     await writeFile(partial, bytes, { mode: 0o600 });
-    await rename(partial, this.path(id));
+    await rename(partial, target);
   }
 
   open(id: string): ReadStream {
