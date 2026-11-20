@@ -1404,11 +1404,7 @@ describe('daily notes', () => {
     const post = async (path: string, body: object = {}) =>
       (await request(server).post(path).set(auth).send(body).expect(201)).body;
     const daily = (body: object, headers = auth) => request(server).post('/api/notes/daily').set(headers).send(body);
-    const today = {
-      date: '2026-11-20',
-      title: '20 November 2026',
-      placeholders: { date: '2026-11-20', time: '08:15' },
-    };
+    const today = { date: '2026-11-20', placeholders: { date: '2026-11-20', time: '08:15' } };
 
     // Nothing chosen yet: the defaults come with the account.
     const me = await request(server).get('/api/auth/me').set(auth).expect(200);
@@ -1468,50 +1464,84 @@ describe('daily notes', () => {
       .set(auth)
       .send({ dailyNotes: { dateFormat: 'iso' } })
       .expect(200);
-    const later = await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200);
+    const later = await daily({ date: '2026-11-20' }).expect(200);
     expect(later.body).toMatchObject({ id: note.id, title: 'A long Friday', revision: 1 });
 
     // Another day is another note. One that was written by hand under that day's title is taken for it.
     const byHand = await post('/api/notes', { title: 'november 21, 2026', content: 'Written the evening before.' });
-    const tomorrow = await daily({ date: '2026-11-21', title: '2026-11-21' }).expect(200);
+    const tomorrow = await daily({ date: '2026-11-21' }).expect(200);
     expect(tomorrow.body).toMatchObject({ id: byHand.id, content: 'Written the evening before.', revision: 0 });
     expect(tomorrow.body.updatedAt).toBe(byHand.updatedAt);
 
     // In the trash, the note of a day makes room for a new one and stays what it was.
     await request(server).delete(`/api/notes/${note.id}`).set(auth).expect(204);
-    const fresh = await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200);
+    const fresh = await daily({ date: '2026-11-20' }).expect(200);
     expect(fresh.body.id).not.toBe(note.id);
     expect(fresh.body.title).toBe('2026-11-20');
     await request(server).post(`/api/trash/${note.id}/restore`).set(auth).expect(204);
-    expect((await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
+    expect((await daily({ date: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
 
     // A copy of a daily note is an ordinary note, and each account has its own days.
     await post(`/api/notes/${fresh.body.id}/duplicate`);
-    expect((await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
-    const theirs = await daily({ date: '2026-11-20', title: '2026-11-20' }, other.auth).expect(200);
+    expect((await daily({ date: '2026-11-20' }).expect(200)).body.id).toBe(fresh.body.id);
+    const theirs = await daily({ date: '2026-11-20' }, other.auth).expect(200);
     expect(theirs.body.id).not.toBe(fresh.body.id);
     expect(theirs.body).toMatchObject({ content: '', notebookId: null, tags: [] });
+
+    // The title is written in the format stored now, also for a tab that read another one earlier.
+    await request(server)
+      .patch('/api/auth/preferences')
+      .set(auth)
+      .send({ dailyNotes: { dateFormat: 'us' } })
+      .expect(200);
+    expect((await daily({ date: '2026-11-23' }).expect(200)).body.title).toBe('November 23, 2026');
 
     // A template or a notebook that is gone is no longer used, and nothing fails over it.
     await request(server).delete(`/api/notes/${template.id}`).set(auth).expect(204);
     await request(server).delete(`/api/notebooks/${journal.id}`).set(auth).expect(200);
-    const plain = await daily({ date: '2026-11-22', title: '2026-11-22' }).expect(200);
+    const plain = await daily({ date: '2026-11-22' }).expect(200);
     expect(plain.body).toMatchObject({ content: '', notebookId: null, tags: [] });
   });
 
-  it('takes only real days, titles that are that day, and preferences that are the user’s own', async () => {
+  it('lets a note go from its day, after which neither the day nor its title leads back to it', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const daily = (date: string) => request(server).post('/api/notes/daily').set(auth).send({ date }).expect(200);
+
+    // Unrelated, but titled with a day: it is taken for that day.
+    const unrelated = await request(server).post('/api/notes').set(auth).send({ title: '2026-11-21', content: 'Mine' });
+    const adopted = await daily('2026-11-21');
+    expect(adopted.body).toMatchObject({ id: unrelated.body.id, dailyDate: '2026-11-21' });
+
+    await request(server).delete(`/api/notes/${unrelated.body.id}/daily`).set(other.auth).expect(404);
+    const released = await request(server).delete(`/api/notes/${unrelated.body.id}/daily`).set(auth).expect(200);
+    expect(released.body).toMatchObject({ title: '2026-11-21', content: 'Mine', dailyDate: null, revision: 0 });
+    expect(released.body.updatedAt).toBe(unrelated.body.updatedAt);
+
+    // The next "Today" makes a note of its own, and keeps it.
+    const fresh = await daily('2026-11-21');
+    expect(fresh.body.id).not.toBe(unrelated.body.id);
+    expect(fresh.body.dailyDate).toBe('2026-11-21');
+    expect((await daily('2026-11-21')).body.id).toBe(fresh.body.id);
+    // Released, the old note is not taken for that day again, not even when the new one goes.
+    await request(server).delete(`/api/notes/${fresh.body.id}`).set(auth).expect(204);
+    expect((await daily('2026-11-21')).body.id).not.toBe(unrelated.body.id);
+  });
+
+  it('takes only real days, no title, and preferences that are the user’s own', async () => {
     const { auth } = await signUp();
     const other = await signUp();
     const server = app.getHttpServer();
     const daily = (body: object) => request(server).post('/api/notes/daily').set(auth).send(body);
 
-    await daily({ date: '2026-02-30', title: '2026-02-30' }).expect(400);
-    await daily({ date: '20 November 2026', title: '20 November 2026' }).expect(400);
-    await daily({ date: '2026-11-20', title: 'My day' }).expect(400);
-    await daily({ date: '2026-11-20', title: '2026-11-21' }).expect(400);
-    await daily({ date: '2026-11-20' }).expect(400);
-    await daily({ date: '2026-11-20', title: '2026-11-20', notebookId: 'x' }).expect(400);
-    await request(server).post('/api/notes/daily').send({ date: '2026-11-20', title: '2026-11-20' }).expect(401);
+    await daily({ date: '2026-02-30' }).expect(400);
+    await daily({ date: '20 November 2026' }).expect(400);
+    await daily({}).expect(400);
+    // The title is the server's to write, from the format the account has now.
+    await daily({ date: '2026-11-20', title: '2026-11-20' }).expect(400);
+    await daily({ date: '2026-11-20', notebookId: 'x' }).expect(400);
+    await request(server).post('/api/notes/daily').send({ date: '2026-11-20' }).expect(401);
 
     const preferences = (body: object) => request(server).patch('/api/auth/preferences').set(auth).send(body);
     const theirNotebook = await request(server).post('/api/notebooks').set(other.auth).send({ name: 'Theirs' });
@@ -1519,6 +1549,9 @@ describe('daily notes', () => {
     await preferences({ dailyNotes: { notebookId: theirNotebook.body.id } }).expect(400);
     await preferences({ dailyNotes: { templateId: ordinary.body.id } }).expect(400);
     await preferences({ dailyNotes: { dateFormat: 'roman' } }).expect(400);
+    // There is always a format, and always a set of daily note choices: null is no value for either.
+    await preferences({ dailyNotes: { dateFormat: null } }).expect(400);
+    await preferences({ dailyNotes: null }).expect(400);
     await preferences({ dailyNotes: { notebookId: 'not-an-id' } }).expect(400);
     await preferences({ theme: 'dark' }).expect(400);
     const untouched = await request(server).get('/api/auth/me').set(auth).expect(200);
