@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
+import type { Notebook } from '../api/types';
 import { changeRole, inviteMember, listMembers, removeMember, revokeInvite, type Role } from '../api/members';
 import { formatDateTime } from '../lib/dates';
 import { Modal } from './Modal';
@@ -118,6 +119,29 @@ export function MembersDialog({ notebookId, name, onClose }: { notebookId: strin
             </>
           )}
         </>
+      )}
+    </Modal>
+  );
+}
+
+/** Who has a notebook that is shared with you: its owner and the other members. */
+export function MembersList({ notebook, onClose }: { notebook: Notebook; onClose(): void }) {
+  const members = useQuery({ queryKey: ['members', notebook.id], queryFn: () => listMembers(notebook.id) });
+  return (
+    <Modal title={`Who has “${notebook.name}”`} onClose={onClose}>
+      {members.isLoading && <Spinner />}
+      {members.error && <ErrorMessage error={members.error} />}
+      {members.data && (
+        <ul className="member-list">
+          <li>
+            <span>{members.data.owner.name}</span> <span className="muted">owner</span>
+          </li>
+          {members.data.members.map((member) => (
+            <li key={member.userId}>
+              <span>{member.name}</span> <span className="muted">{ROLE_LABELS[member.role]}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </Modal>
   );
