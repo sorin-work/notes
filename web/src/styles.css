@@ -814,8 +814,9 @@ mark {
   border-top: 1px solid var(--border);
 }
 
-.backlinks h3 {
-  margin-top: 0;
+.backlinks h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
 }
 
 .backlinks ul {

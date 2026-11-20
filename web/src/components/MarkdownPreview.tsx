@@ -1,5 +1,5 @@
-import { memo, MouseEvent } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import { ComponentProps, memo, MouseEvent } from 'react';
+import ReactMarkdown, { defaultUrlTransform, ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { linkifyWikiLinks, normalizeTitle, WIKI_PROTOCOL, wikiTarget } from '../lib/wikilinks';
 
@@ -15,6 +15,11 @@ const remarkPlugins = [remarkGfm];
 
 function urlTransform(url: string): string {
   return url.startsWith(WIKI_PROTOCOL) ? url : defaultUrlTransform(url);
+}
+
+/** The box of a task list item. It has no text of its own, so it is named here for screen readers. */
+function TaskBox({ node, ...props }: ComponentProps<'input'> & ExtraProps) {
+  return <input aria-label="Task" {...props} />;
 }
 
 export const MarkdownPreview = memo(function MarkdownPreview({
@@ -58,6 +63,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
               </a>
             );
           },
+          input: TaskBox,
         }}
       >
         {linkifyWikiLinks(content)}

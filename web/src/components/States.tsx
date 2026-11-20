@@ -12,9 +12,9 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
 
 export function FullPageSpinner() {
   return (
-    <div className="full-page-center">
+    <main className="full-page-center">
       <Spinner />
-    </div>
+    </main>
   );
 }
 

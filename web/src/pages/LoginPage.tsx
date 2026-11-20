@@ -27,7 +27,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="auth-page">
+    <main className="auth-page">
       <form className="auth-card form" onSubmit={submit}>
         <h1>Sign in to Notes</h1>
         <label className="field">
@@ -59,6 +59,6 @@ export function LoginPage() {
           New here? <Link to="/register">Create an account</Link>
         </p>
       </form>
-    </div>
+    </main>
   );
 }

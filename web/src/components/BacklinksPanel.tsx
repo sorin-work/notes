@@ -12,7 +12,7 @@ export function BacklinksPanel({ noteId }: { noteId: string }) {
 
   return (
     <section className="backlinks" aria-labelledby="backlinks-heading">
-      <h3 id="backlinks-heading">Backlinks{data && data.length > 0 && <span className="count">{data.length}</span>}</h3>
+      <h2 id="backlinks-heading">Backlinks{data && data.length > 0 && <span className="count">{data.length}</span>}</h2>
       {isLoading && <p className="muted">Loading…</p>}
       {isError && <p className="muted">Backlinks could not be loaded.</p>}
       {data && data.length === 0 && (
