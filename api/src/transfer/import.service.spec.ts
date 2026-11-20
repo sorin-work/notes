@@ -181,6 +181,17 @@ describe('ImportService', () => {
       expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'note-Trip & plans', ['travel', 'Two Words']);
     });
 
+    it('keeps a title with a slash or a dot as the title, in the notebook named after the file', async () => {
+      const result = await service.import(USER, [file('Work.enex', enex(note('Q1/Q2 plan', 'a') + note('.', 'b')))]);
+      expect(result).toMatchObject({ imported: 2, notebooksCreated: 1 });
+      expect(prisma.notebook.create).toHaveBeenCalledTimes(1);
+      expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: null, name: 'Work' } });
+      expect(prisma.note.create.mock.calls.map(([call]) => [call.data.title, call.data.notebookId])).toEqual([
+        ['Q1/Q2 plan', 'nb-1'],
+        ['.', 'nb-1'],
+      ]);
+    });
+
     it('drops scripts and styles, so nothing of the HTML survives', async () => {
       await service.import(USER, [
         file(
