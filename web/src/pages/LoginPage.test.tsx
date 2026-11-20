@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -40,8 +40,24 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     expect(await screen.findByText('Your notes')).toBeInTheDocument();
-    expect(calls[0]?.body).toEqual({ email: 'demo@example.com', password: 'demo-password' });
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      email: 'demo@example.com',
+      password: 'demo-password',
+    });
     expect(getToken()).toBe('tok-1');
+  });
+
+  it('offers "Forgot password?" only when the server can send mail', async () => {
+    mockFetch({ 'GET /api/auth/password-reset': { body: { enabled: true } } });
+    const first = renderAuth('/login');
+    expect(await screen.findByRole('link', { name: 'Forgot password?' })).toHaveAttribute('href', '/forgot-password');
+    first.unmount();
+
+    const calls = mockFetch({ 'GET /api/auth/password-reset': { body: { enabled: false } } });
+    renderAuth('/login');
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Forgot password?' })).not.toBeInTheDocument();
   });
 
   it('shows the error for wrong credentials', async () => {
