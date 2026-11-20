@@ -65,8 +65,9 @@ model PasswordReset {
   @@map("password_resets")
 }
 
-/// Notebooks nest one level deep: a notebook either has no parent or its
-/// parent is a top-level notebook. The service enforces this.
+/// Notebooks nest up to four levels deep (MAX_NOTEBOOK_DEPTH): a notebook
+/// has no parent or a parent at most three levels down. The service enforces
+/// this and keeps loops out, under a lock on the user's row.
 model Notebook {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
