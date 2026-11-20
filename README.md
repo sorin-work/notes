@@ -138,7 +138,8 @@ Logins, sign-ups, password resets and the account changes that ask for the
 password are limited per client address. The API sits behind nginx, so the
 stack sets `TRUST_PROXY=1`: the API then takes the address nginx reports in
 `X-Forwarded-For` instead of nginx's own, which would be the same for
-everyone and let one visitor use up the allowance of all.
+everyone and let one visitor use up the allowance of all. Requests made
+with an API token are counted per token instead, wherever they come from.
 
 That header is only worth believing when it comes from nginx. The stack also
 publishes the API port itself (4401), and whoever talks to that port
