@@ -751,7 +751,11 @@ names the text the editor started from. If the note already has text waiting
 that came from another tab, and is not that text, nothing is written over it:
 the editor asks the usual question, with the other tab's text as "theirs".
 "Keep mine, put theirs in the history" keeps the other text as a new note of
-its own. In the same way, the revision a change is based on is the one this
+its own, made once however often it is tried. "Keep mine" replaces the other
+text only while it is still exactly what the question showed. A note left with
+the question open keeps the other tab's waiting text untouched, and this tab's
+text becomes a new note, "(kept when leaving)"; a notice says which holds
+which, and the draft counts as saved only once that note is safely queued. In the same way, the revision a change is based on is the one this
 editor loaded or saved, or one this tab sent itself. When another tab sends a
 change of the note, an editor open on it here only says that it is out of
 date; its next change meets the other one as a conflict.
