@@ -1,10 +1,19 @@
-import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { hashPassword, verifyPassword } from './password';
 
 export interface PublicUser {
@@ -21,7 +30,11 @@ export interface AuthResult {
 
 export interface TokenPayload {
   sub: string;
-  email: string;
+  /**
+   * The account's tokenVersion when the token was issued. Tokens from before
+   * the column existed have none and count as version 0.
+   */
+  ver?: number;
 }
 
 export function toPublicUser(user: User): PublicUser {
@@ -56,29 +69,85 @@ export class AuthService {
   }
 
   async me(userId: string): Promise<PublicUser> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    return toPublicUser(user);
+    return toPublicUser(await this.find(userId));
   }
 
-  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<PublicUser> {
+    const user = await this.find(userId);
+    const data: { name?: string; email?: string } = {};
+    if (dto.name !== undefined && dto.name !== user.name) {
+      data.name = dto.name;
+    }
+    if (dto.email !== undefined && dto.email !== user.email) {
+      // The email is the login name, so changing it takes the password.
+      if (!dto.currentPassword) {
+        throw new BadRequestException('currentPassword is required to change the email');
+      }
+      await this.checkPassword(user, dto.currentPassword, 'Current password is incorrect');
+      if (await this.prisma.user.findUnique({ where: { email: dto.email } })) {
+        throw new ConflictException('An account with this email already exists');
+      }
+      data.email = dto.email;
+    }
+    if (Object.keys(data).length === 0) {
+      return toPublicUser(user);
+    }
+    const updated = await this.prisma.user.update({ where: { id: userId }, data });
+    if (data.email) {
+      // A reset link that is still out was mailed to the old address.
+      await this.prisma.passwordReset.deleteMany({ where: { userId } });
+    }
+    return toPublicUser(updated);
+  }
+
+  /**
+   * Ends every other session along with the old password. The caller gets a
+   * token for the new version, so the session that made the change goes on.
+   */
+  async changePassword(userId: string, dto: ChangePasswordDto): Promise<AuthResult> {
+    const user = await this.find(userId);
+    await this.checkPassword(user, dto.currentPassword, 'Current password is incorrect');
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await hashPassword(dto.newPassword), tokenVersion: { increment: 1 } },
+    });
+    // A reset link that is still out has no business working after this.
+    await this.prisma.passwordReset.deleteMany({ where: { userId } });
+    return this.issue(updated);
+  }
+
+  /** Makes every token issued so far worthless, the caller's included. */
+  async logoutEverywhere(userId: string): Promise<void> {
+    await this.prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
+  }
+
+  /** Notebooks, notes, tags, versions and share links go with the user (cascades in the schema). */
+  async deleteAccount(userId: string, dto: DeleteAccountDto): Promise<void> {
+    const user = await this.find(userId);
+    await this.checkPassword(user, dto.password, 'Password is incorrect');
+    await this.prisma.user.delete({ where: { id: userId } });
+  }
+
+  private async find(userId: string): Promise<User> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    if (!(await verifyPassword(dto.currentPassword, user.passwordHash))) {
-      throw new UnauthorizedException('Current password is incorrect');
+    return user;
+  }
+
+  /**
+   * 403 rather than 401: the session is fine, the confirmation is not. The
+   * web app signs out on any 401.
+   */
+  private async checkPassword(user: User, password: string, message: string): Promise<void> {
+    if (!(await verifyPassword(password, user.passwordHash))) {
+      throw new ForbiddenException(message);
     }
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash: await hashPassword(dto.newPassword) },
-    });
   }
 
   private async issue(user: User): Promise<AuthResult> {
-    const payload: TokenPayload = { sub: user.id, email: user.email };
+    const payload: TokenPayload = { sub: user.id, ver: user.tokenVersion };
     return { token: await this.jwt.signAsync(payload), user: toPublicUser(user) };
   }
 }

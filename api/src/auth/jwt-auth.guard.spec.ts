@@ -2,6 +2,7 @@ import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import type { AuthenticatedRequest } from '../common/current-user.decorator';
+import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { bearerToken, JwtAuthGuard } from './jwt-auth.guard';
 
 function contextFor(request: Partial<AuthenticatedRequest>): ExecutionContext {
@@ -15,16 +16,20 @@ function contextFor(request: Partial<AuthenticatedRequest>): ExecutionContext {
 describe('JwtAuthGuard', () => {
   const jwt = new JwtService({ secret: 'guard-test-secret-that-is-long-enough-01234' });
   let reflector: Reflector;
+  let prisma: PrismaMock;
   let guard: JwtAuthGuard;
 
   beforeEach(() => {
     reflector = new Reflector();
-    guard = new JwtAuthGuard(jwt, reflector);
+    prisma = createPrismaMock();
+    prisma.user.findUnique.mockResolvedValue({ email: 'ada@example.com', tokenVersion: 0 });
+    guard = new JwtAuthGuard(jwt, reflector, asPrismaService(prisma));
   });
 
   it('lets public routes through without a token', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(true);
     await expect(guard.canActivate(contextFor({ headers: {} }))).resolves.toBe(true);
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('rejects requests without a token', async () => {
@@ -46,11 +51,36 @@ describe('JwtAuthGuard', () => {
     await expect(guard.canActivate(contextFor(request))).rejects.toThrow('Invalid or expired token');
   });
 
-  it('puts the token owner on the request', async () => {
-    const token = jwt.sign({ sub: 'user-1', email: 'ada@example.com' });
+  it('puts the token owner on the request, with the email the account has now', async () => {
+    const token = jwt.sign({ sub: 'user-1', ver: 0 });
     const request: Partial<AuthenticatedRequest> = { headers: { authorization: `Bearer ${token}` } };
     await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
     expect(request.user).toEqual({ id: 'user-1', email: 'ada@example.com' });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      select: { email: true, tokenVersion: true },
+    });
+  });
+
+  it('rejects a token from before the token version was bumped', async () => {
+    prisma.user.findUnique.mockResolvedValue({ email: 'ada@example.com', tokenVersion: 3 });
+    const stale = { headers: { authorization: `Bearer ${jwt.sign({ sub: 'user-1', ver: 2 })}` } };
+    await expect(guard.canActivate(contextFor(stale))).rejects.toThrow('Invalid or expired token');
+    const current = { headers: { authorization: `Bearer ${jwt.sign({ sub: 'user-1', ver: 3 })}` } };
+    await expect(guard.canActivate(contextFor(current))).resolves.toBe(true);
+  });
+
+  it('treats a token without a version as version 0', async () => {
+    const old = { headers: { authorization: `Bearer ${jwt.sign({ sub: 'user-1', email: 'ada@example.com' })}` } };
+    await expect(guard.canActivate(contextFor(old))).resolves.toBe(true);
+    prisma.user.findUnique.mockResolvedValue({ email: 'ada@example.com', tokenVersion: 1 });
+    await expect(guard.canActivate(contextFor(old))).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('rejects a token whose account was deleted', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    const request = { headers: { authorization: `Bearer ${jwt.sign({ sub: 'user-1', ver: 0 })}` } };
+    await expect(guard.canActivate(contextFor(request))).rejects.toThrow('Invalid or expired token');
   });
 });
 

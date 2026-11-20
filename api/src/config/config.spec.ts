@@ -15,6 +15,9 @@ describe('loadConfig', () => {
       seedDemo: false,
       trashRetentionDays: 30,
       authThrottleLimit: 10,
+      mail: null,
+      appUrl: 'http://localhost:5181',
+      trustProxy: 0,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
   });
@@ -33,6 +36,66 @@ describe('loadConfig', () => {
     expect(config.seedDemo).toBe(true);
     expect(config.trashRetentionDays).toBe(7);
     expect(config.logLevels).toContain('debug');
+  });
+
+  it('reads the SMTP settings when a host is given', () => {
+    const config = loadConfig({
+      ...base,
+      SMTP_HOST: 'smtp.example.com',
+      SMTP_FROM: 'Notes <notes@example.com>',
+      SMTP_USER: 'mailer',
+      SMTP_PASSWORD: 'secret',
+      APP_URL: 'https://notes.example.com/',
+    });
+    expect(config.mail).toEqual({
+      host: 'smtp.example.com',
+      port: 587,
+      from: 'Notes <notes@example.com>',
+      user: 'mailer',
+      password: 'secret',
+      requireTls: true,
+    });
+    expect(config.appUrl).toBe('https://notes.example.com');
+    const mailpit = { ...base, SMTP_HOST: 'mailpit', SMTP_PORT: '1025', SMTP_FROM: 'a@b.c', APP_URL: 'http://x.test' };
+    expect(loadConfig({ ...mailpit, SMTP_REQUIRE_TLS: 'false' }).mail).toEqual({
+      host: 'mailpit',
+      port: 1025,
+      from: 'a@b.c',
+      user: undefined,
+      password: undefined,
+      requireTls: false,
+    });
+  });
+
+  it('requires TLS for mail unless SMTP_REQUIRE_TLS plainly says no', () => {
+    const mail = { ...base, SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'a@b.c', APP_URL: 'http://x.test' };
+    for (const value of [undefined, '', 'true', 'yes', 'fasle', 'smtp.example.com']) {
+      expect(loadConfig({ ...mail, SMTP_REQUIRE_TLS: value }).mail?.requireTls).toBe(true);
+    }
+    for (const value of ['false', 'FALSE', '0', 'no', ' off ']) {
+      expect(loadConfig({ ...mail, SMTP_REQUIRE_TLS: value }).mail?.requireTls).toBe(false);
+    }
+  });
+
+  it('turns mail off without SMTP_HOST, and wants a sender and the app address with it', () => {
+    expect(loadConfig({ ...base, SMTP_FROM: 'a@b.c', SMTP_PORT: '25' }).mail).toBeNull();
+    expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com', APP_URL: 'http://x.test' })).toThrow(
+      'SMTP_FROM is required',
+    );
+    expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'a@b.c' })).toThrow(
+      'APP_URL is required when SMTP_HOST is set',
+    );
+  });
+
+  it('counts no proxy as trusted unless TRUST_PROXY gives a number of hops', () => {
+    expect(loadConfig({ ...base, TRUST_PROXY: '1' }).trustProxy).toBe(1);
+    expect(() => loadConfig({ ...base, TRUST_PROXY: 'true' })).toThrow('TRUST_PROXY');
+    expect(() => loadConfig({ ...base, TRUST_PROXY: '-1' })).toThrow('TRUST_PROXY');
+  });
+
+  it('rejects an APP_URL that is not an http address', () => {
+    expect(() => loadConfig({ ...base, APP_URL: 'notes.example.com' })).toThrow('APP_URL');
+    expect(() => loadConfig({ ...base, APP_URL: 'ftp://notes.example.com' })).toThrow('APP_URL');
   });
 
   it('requires DATABASE_URL', () => {
