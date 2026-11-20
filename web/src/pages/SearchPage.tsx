@@ -9,6 +9,7 @@ import { EmptyState, ErrorMessage, Spinner } from '../components/States';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { formatRelative } from '../lib/dates';
 import { readFilters, withFilters } from '../lib/filters';
+import { joinPages } from '../lib/pages';
 import { splitHighlights } from '../lib/text';
 
 function Snippet({ text }: { text: string }) {
@@ -19,16 +20,6 @@ function Snippet({ text }: { text: string }) {
       )}
     </>
   );
-}
-
-/** Drops the hits that an earlier page already had. */
-function withoutRepeats<T extends { id: string }>(hits: T[]): T[] {
-  const seen = new Set<string>();
-  return hits.filter((hit) => {
-    if (seen.has(hit.id)) return false;
-    seen.add(hit.id);
-    return true;
-  });
 }
 
 export function SearchPage() {
@@ -73,9 +64,7 @@ export function SearchPage() {
     getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
     enabled: q.length > 0,
   });
-  // Pages are cut by position. A note that was added or removed between two
-  // requests shifts the rest, and the next page can then repeat a hit.
-  const hits = withoutRepeats(results.data?.pages.flatMap((page) => page.items) ?? []);
+  const hits = joinPages(results.data?.pages);
   const total = results.data?.pages[0]?.total ?? 0;
   const filtered = notebook !== null || tag !== null;
 
