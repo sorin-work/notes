@@ -417,8 +417,9 @@ title made only of very common words ("The Who") finds nothing, and only the
 The list shows the line of the mention that the Link button will wrap. The
 button changes the other note: its old text is saved as a version first, so
 the change can be undone from its history, and its "last edited" time stays as
-it was. If that note has been edited since the list was made, nothing is
-changed and the list is loaded again.
+it was. The request names the revision of the note that the mention was found
+in. If the note has been edited since, nothing is changed and the list is
+loaded again.
 
 When a rename leaves links dangling, the editor shows how many notes still
 link to the old title and offers to update them, naming both titles. The

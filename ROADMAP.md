@@ -433,12 +433,12 @@ inside one of them as whole words, with the same title key as
 `NoteLink.targetKey`. Titles under three characters get no mentions, and
 neither do titles that cannot be written as a link, titles that another note
 has too, and "Untitled". The list is paged, only the 200 newest candidates are
-read, and each note comes with the line, the position and the version of the
-mention it shows. "Link" (`POST /notes/:id/mentions/:sourceId/link`) takes
-those three, and wraps that mention inside one transaction if the note still
-has that version. It saves the old text as a version, syncs the links and
+read, and each note comes with the line and the position of the mention it
+shows and the revision of the note. "Link" (`POST
+/notes/:id/mentions/:sourceId/link`) takes those three and wraps that mention
+through `writeNoteText`, tied to that revision, so a note that has changed
+since is left alone. It saves the old text as a version, syncs the links and
 leaves `updatedAt` alone. Still open: a title of only very common words finds
 nothing, because the index drops those words. Common titles ("Ideas") are as
 noisy as predicted, and there is no way to dismiss a mention. Only the first
-mention in a note is offered at a time. The version is a hash of the text
-until notes have a revision number.
+mention in a note is offered at a time.
