@@ -965,6 +965,15 @@ mark {
   margin: 0.5rem 0 0;
 }
 
+.capture-form {
+  max-width: 40rem;
+}
+
+.capture-form textarea {
+  font-family: var(--mono);
+  resize: vertical;
+}
+
 /* The parts of the Account card: profile, password, sessions, delete. */
 .card > .form + .form {
   margin-top: 1.25rem;
