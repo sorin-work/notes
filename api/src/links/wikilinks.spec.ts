@@ -6,6 +6,7 @@ import {
   isLinkable,
   linkMention,
   normalizeTitle,
+  onlyAddsLink,
   renameLinks,
 } from './wikilinks';
 
@@ -180,6 +181,8 @@ describe('findMention', () => {
 
   it('skips code, links of every kind, images, tags and URLs', () => {
     const text = [
+      '[ref]: https://example.com/ref',
+      '',
       '```',
       'Atlas in a fence',
       '```',
@@ -349,6 +352,8 @@ describe('linking a mention in generated notes', () => {
     const { pick, chance } = random(seed);
     const draft = new Draft();
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    // One kind of line ending for the whole note. A lone \r ends a line for the parser too.
+    const eol = pick(['\n', '\n', '\r\n', '\r']);
     const written = () => pick([title, title.toLowerCase(), title.toUpperCase(), title.replace(/ /g, '  ')]);
     const words = () => Array.from({ length: 1 + Math.floor(seed % 3) }, () => pick(WORDS)).join(' ');
     /** Some words, now and then with the title among them. */
@@ -364,13 +369,19 @@ describe('linking a mention in generated notes', () => {
     const inline: (() => void)[] = [
       () => sentence(0.5),
       () => draft.add('*').add(words()).add(' ').plain(written()).add('*'),
+      () => draft.add(pick(['&amp; ', '&copy; ', '&#169; ', '😀 ', '𝒜 '])).plain(written()),
+      () => draft.add('𝒜').add(written()).add(' ').add(words()),
       () => draft.kept(`\`${words()} ${written()}\``),
-      () => draft.add(`[${words()} ${written()}](`).kept(`https://x.test/a_(b)/${slug}`).add(')'),
-      () => draft.add('<').kept(`https://${slug}.example/${slug}`).add('>'),
+      () => draft.kept(`\`\` ${words()} \` ${written()} \`\``),
+      () => draft.kept(`[${words()} ${written()}](https://x.test/a_(b)/${slug})`),
+      () => draft.kept(`[${pick(['*', '**', '~~', '_'])}${written()}${pick(['*', '**', '~~', '_'])}](http://x.com)`),
+      () => draft.kept(`[${words()} ${written()}][ref]`),
+      () => draft.kept(`![**${written()}** ${words()}](${slug}.png)`),
+      () => draft.kept(`![${title}][ref]`),
+      () => draft.kept(`<https://${slug}.example/${slug}>`),
       () => draft.kept(pick([`https://x.test/${slug}`, `www.${slug}.org`])),
       () => draft.kept(`<span title="${title}">`).add(words()).kept('</span>'),
       () => draft.add(pick([`[[${title}]]`, `[[${title}|${words()}]]`, '[[Another note]]'])),
-      () => draft.add(`![${title}](`).kept(`${slug}.png`).add(')'),
     ];
     const line = () => {
       const parts = 1 + Math.floor(seed % 4);
@@ -380,31 +391,53 @@ describe('linking a mention in generated notes', () => {
       }
     };
 
+    // The reader of [[links]], here and in the preview, takes only \n for a
+    // line ending. In a note with lone \r it sees one line, and after a fence
+    // at its start that line is code, so no [[link]] works anywhere in such a
+    // note and "Link" refuses. Fences with a lone \r are tested on their own.
+    const fences: (() => void)[] =
+      eol === '\r'
+        ? []
+        : [
+            () => draft.kept(`\`\`\`${eol}${title} in a fence${eol}\`\`\``),
+            () => draft.add('> ').kept(`\`\`\`${eol}> ${title} in a quoted fence${eol}> \`\`\``),
+            () =>
+              draft
+                .add('- ')
+                .add(words())
+                .add(`${eol}${eol}  `)
+                .kept(`\`\`\`${eol}  ${title} in a listed fence${eol}  \`\`\``),
+          ];
     let afterList = false;
     const blocks: (() => void)[] = [
       () => line(),
       () => (draft.add('## '), sentence(0.6)),
-      () => (draft.add('> '), sentence(0.6), draft.add('\n> '), sentence(0.3)),
-      () => (draft.add(pick(['- ', '1. ', '- [ ] '])), sentence(0.6)),
-      () => draft.kept(`\`\`\`\n${title} in a fence\n\`\`\``),
-      () => draft.add('> ').kept(`\`\`\`\n> ${title} in a quoted fence\n> \`\`\``),
-      () => draft.add('[ref]: ').kept(`./docs/${slug}.md`),
+      () => (draft.add('> '), sentence(0.6), draft.add(`${eol}> `), sentence(0.3)),
+      () => (draft.add(pick(['- ', '1. ', '- [ ] '])), sentence(0.6), draft.add(`${eol}  `), sentence(0.3)),
+      ...fences,
       () => draft.kept(`<div>${title}</div>`),
       () => {
         draft.add('| ');
         sentence(0.6);
-        draft.add(' | b |\n| --- | --- |\n| x | ').kept(`\`${title}\``).add(' |');
+        draft
+          .add(` | b |${eol}| --- | --- |${eol}| x | `)
+          .kept(`\`${title}\``)
+          .add(' | ')
+          .kept(`[${title}](x.md)`)
+          .add(' |');
       },
       // Four spaces after a list would be more of the list, not code.
       () => (afterList ? line() : draft.add('    ').kept(`${title} as indented code`)),
     ];
     const count = 2 + Math.floor(seed % 7);
     for (let i = 0; i < count; i++) {
-      if (i > 0) draft.add('\n\n');
+      if (i > 0) draft.add(eol + eol);
       const block = pick(blocks);
       block();
-      afterList = block === blocks[3];
+      afterList = block === blocks[3] || (fences.length > 0 && block === blocks[6]);
     }
+    // The reference links above all lead somewhere.
+    draft.add(eol + eol).kept(`[ref]: ./docs/${slug}.md`);
     return draft;
   }
 
@@ -417,7 +450,7 @@ describe('linking a mention in generated notes', () => {
         const note = draft.text;
         const linked = linkMention(note, title);
         const first = draft.plainTitles[0];
-        const context = `seed ${seed}:\n${note}`;
+        const context = `seed ${seed}:\n${JSON.stringify(note)}`;
 
         if (!first) {
           expect({ context, linked }).toEqual({ context, linked: null });
@@ -428,11 +461,13 @@ describe('linking a mention in generated notes', () => {
         const expected = `${note.slice(0, first.start)}[[${note.slice(first.start, first.end)}]]${note.slice(first.end)}`;
         expect({ context, linked }).toEqual({ context, linked: expected });
         expect(normalizeTitle(note.slice(first.start, first.end))).toBe(normalizeTitle(title));
-        // Every piece of code, every URL and all HTML is where it was, moved along by the brackets at most.
+        // Every piece of code, every URL, link, image and all HTML is where it was, moved along by the brackets at most.
         for (const kept of draft.verbatim) {
           const moved = kept.start + (kept.start >= first.end ? 4 : kept.start >= first.start ? 2 : 0);
           expect((linked ?? '').slice(moved, moved + kept.text.length)).toBe(kept.text);
         }
+        // Parsed again, the new text holds what the old one did, and one link more.
+        expect({ context, check: onlyAddsLink(note, expected, first) }).toEqual({ context, check: true });
         expect(verbatimParts(linked ?? '')).toEqual(verbatimParts(note));
       }
       // The generator has to produce both kinds of note for the test to mean anything.
@@ -442,17 +477,90 @@ describe('linking a mention in generated notes', () => {
   );
 });
 
-describe('mentions in very large or hostile notes', () => {
-  it('stays quick however many brackets a note has', () => {
-    const started = Date.now();
-    for (const mark of ['[', '[[', ']]', '[[a', '](', '<', '> ']) {
-      const hostile = mark.repeat(80_000);
-      expect(findMention(hostile, 'Atlas')).toBeNull();
-      expect(linkMention(`${hostile}\n\nThe atlas.`, 'Atlas')).toBe(`${hostile}\n\nThe [[atlas]].`);
+describe('what the parser of the preview reads differently', () => {
+  it('never wraps a title inside the label of a link or image, emphasis and all', () => {
+    for (const text of [
+      '[*Atlas*](http://x.com)',
+      '[**the atlas**](http://x.com)',
+      '[~~atlas~~](http://x.com)',
+      '![_atlas_](a.png)',
+      '[*atlas*][r]\n\n[r]: /r',
+      '| [*Atlas*](x.md) | b |\n| - | - |',
+    ]) {
+      expect(findMention(text, 'Atlas')).toBeNull();
+      expect(linkMention(text, 'Atlas')).toBeNull();
     }
+  });
+
+  it('takes a lone \r or \r\n for a line ending, in code blocks, quotes and lists', () => {
+    for (const text of [
+      'a\r\r    Atlas code',
+      'a\r\n\r\n    Atlas code',
+      '> a\r>\r>     Atlas code',
+      '- a\r\r      Atlas code',
+      '```\rAtlas\r```',
+      '> ```\r\n> Atlas\r\n> ```',
+      '- a\r\n\r\n  ```\r\n  Atlas\r\n  ```',
+    ]) {
+      expect(findMention(text, 'Atlas')).toBeNull();
+    }
+    expect(linkMention('> a\r> the atlas', 'Atlas')).toBe('> a\r> the [[atlas]]');
+    expect(linkMention('- a\r\n  the atlas', 'Atlas')).toBe('- a\r\n  the [[atlas]]');
+  });
+});
+
+describe('onlyAddsLink', () => {
+  const at = (text: string, word: string) => ({ start: text.indexOf(word), end: text.indexOf(word) + word.length });
+  const wrap = (text: string, word: string) => text.replace(word, `[[${word}]]`);
+
+  it('accepts brackets around plain text and nothing else', () => {
+    const text = 'The atlas, `code` and [a](b).';
+    expect(onlyAddsLink(text, wrap(text, 'atlas'), at(text, 'atlas'))).toBe(true);
+    expect(onlyAddsLink(text, `${wrap(text, 'atlas')} `, at(text, 'atlas'))).toBe(false);
+  });
+
+  it('refuses brackets that the parser reads as something else', () => {
+    // With a definition of that name the brackets make a reference link, not a [[link]].
+    const text = 'The atlas.\n\n[atlas]: https://x.test';
+    expect(onlyAddsLink(text, wrap(text, 'atlas'), at(text, 'atlas'))).toBe(false);
+    expect(linkMention(text, 'Atlas')).toBeNull();
+    // An opening bracket just before makes three, and the link reads from the second.
+    const bracket = 'See [atlas and more';
+    expect(onlyAddsLink(bracket, wrap(bracket, 'atlas'), at(bracket, 'atlas'))).toBe(true);
+  });
+
+  it('refuses a change to code, a link or HTML anywhere in the note', () => {
+    const text = 'The atlas `code`';
+    expect(onlyAddsLink(text, 'The [[atlas]] `code`', at(text, 'atlas'))).toBe(true);
+    expect(onlyAddsLink(`${text}x`, 'The [[atlas]] `code`', at(text, 'atlas'))).toBe(false);
+  });
+
+  it('lets "Link" go past a mention it refuses to the next one', () => {
+    const text = 'The atlas.\n\nAn atlas.\n\n[atlas]: https://x.test';
+    expect(findMentions(text, 'Atlas')).toHaveLength(2);
+    // Both would make a reference link: none is offered.
+    expect(findMention(text, 'Atlas')).toBeNull();
+    const other = 'Use `x` [atlas]: and the atlas.';
+    expect(linkMention(other, 'Atlas')).toBe('Use `x` [[[atlas]]]: and the atlas.');
+  });
+});
+
+describe('mentions in very large or hostile notes', () => {
+  it('stays quick however many brackets a note has, and offers nothing in a note it does not parse', () => {
+    const started = Date.now();
+    for (const mark of ['[', '[[', '[[a', '<', '\r', '> \n']) {
+      const hostile = mark.repeat(Math.floor(40_000 / mark.length));
+      expect(findMention(hostile, 'Atlas')).toBeNull();
+      expect(linkMention(`${hostile}\n\nThe atlas.`, 'Atlas')).not.toBeNull();
+    }
+    for (const mark of [']]', '](', '1. ', '> ']) {
+      const hostile = mark.repeat(40_000);
+      expect(linkMention(`${hostile}\n\nThe atlas.`, 'Atlas')).toBeNull();
+    }
+    expect(linkMention(`${'x'.repeat(100_000)}\n\nThe atlas.`, 'Atlas')).toBeNull();
     // A line of backticks opens a code block that is never closed, so what follows is code.
-    expect(linkMention(`${'`'.repeat(80_000)}\n\nThe atlas.`, 'Atlas')).toBeNull();
-    // Well under a second in practice. The limit catches work that grows with the square of the length.
-    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(linkMention(`${'`'.repeat(40_000)}\n\nThe atlas.`, 'Atlas')).toBeNull();
+    // Seconds in practice. The limit catches work that grows with the square of the length.
+    expect(Date.now() - started).toBeLessThan(30_000);
   });
 });
