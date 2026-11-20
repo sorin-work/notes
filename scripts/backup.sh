@@ -167,8 +167,12 @@ archive_files() {
 }
 
 # The files are archived first, the database after. A file deleted in
-# between is in the archive without a row, and the API sweeps it out; the
-# other way round, a row would point at a file that is not there.
+# between is in the archive without a row, and the API sweeps it out after
+# a restore. A file uploaded in between is the other way round: its row is
+# in the dump and the file is not in the archive. After a restore that note
+# shows the file as missing, and the export and the JSON backup leave it out
+# and list it. Without stopping the API there is no moment at which both are
+# taken together; a dump of a stopped stack has no such gap.
 dump() {
   name="notes-$(date -u +%Y%m%dT%H%M%SZ).dump"
   partial="$dir/.$name.partial"
@@ -306,6 +310,12 @@ SQL
 # itself and regular files named like an attachment id. No links, no other
 # names, no paths, so extracting it cannot write anywhere else.
 archive_is_clean() {
+  # BusyBox tar lists a hard link as a regular file, with " -> target"
+  # after the name; GNU tar says "link to". Either is refused here, before
+  # anything else is looked at.
+  if tar -tvf "$1" 2>/dev/null | grep -q -e ' -> ' -e ' link to '; then
+    return 1
+  fi
   tar -tf "$1" >"$1.names" 2>/dev/null || { rm -f "$1.names"; return 1; }
   tar -tvf "$1" 2>/dev/null | cut -c1 >"$1.types" || { rm -f "$1.names" "$1.types"; return 1; }
   clean=0
@@ -342,6 +352,13 @@ stage_files() {
     fail "could not unpack $(basename "$1"). Nothing was restored."
   fi
   rm -f "$check"
+  # Whatever the listing said, what came out has to be plain files and the
+  # folder: nothing else, and no file with a second name somewhere, which a
+  # hard link would be. Checked before anything changes an owner.
+  if [ -n "$(find "$incoming_files" -mindepth 1 \( ! -type f ! -type d \) -o \( -type f -links +1 \))" ]; then
+    rm -rf "$incoming_files"
+    fail "$(basename "$1") unpacked into something other than plain files. Nothing was restored."
+  fi
   # The API reads and writes these files, so they belong to whoever owns the folder.
   if [ "$(id -u)" = 0 ]; then
     chown -R "$(stat -c %u:%g "$files_dir")" "$incoming_files" 2>/dev/null || true
@@ -352,15 +369,30 @@ stage_files() {
 # like an attachment id are moved; anything else in the folder is left alone.
 swap_files() {
   replaced_files="$files_dir/.replaced"
-  rm -rf "$replaced_files"
+  # A .replaced left by an earlier restore that failed half way holds files
+  # someone may still want. It is moved aside, not removed.
+  if [ -e "$replaced_files" ]; then
+    kept="$files_dir/.replaced-$(date -u +%Y%m%dT%H%M%SZ)"
+    mv "$replaced_files" "$kept"
+    log "warning: $replaced_files from an earlier restore was moved to $kept. Remove it once it is not needed." >&2
+  fi
   mkdir "$replaced_files"
   for entry in $(ls -A "$files_dir" | grep -E "$ATTACHMENT_NAME"); do
-    mv "$files_dir/$entry" "$replaced_files/"
+    mv "$files_dir/$entry" "$replaced_files/" || swap_failed "$entry"
   done
   for entry in $(ls -A "$incoming_files" | grep -E "$ATTACHMENT_NAME"); do
-    mv "$incoming_files/$entry" "$files_dir/"
+    mv "$incoming_files/$entry" "$files_dir/" || swap_failed "$entry"
   done
   rm -rf "$incoming_files" "$replaced_files"
+}
+
+# A file could not be moved after the database was already restored.
+swap_failed() {
+  log "could not move $1 while putting the restored files in place. The database is restored." >&2
+  log "The files that were in use are in $replaced_files, the restored ones still in $incoming_files." >&2
+  log "To go back to the old files: mv $replaced_files/* $files_dir/ (and restore the matching dump)." >&2
+  log "To finish instead: mv $incoming_files/* $files_dir/ and remove $replaced_files." >&2
+  exit 1
 }
 
 # Replaces $PGDATABASE with a dump, in an order that never leaves the server

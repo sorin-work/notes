@@ -495,6 +495,63 @@ for bad in link name folder; do
   echo "ok: $case_name"
 done
 
+# A tar archive with one hard link entry, named $2, to $3, written byte by
+# byte, since no tar here makes one that points out of its folder.
+field() {
+  printf '%s' "$1"
+  head -c $(($2 - ${#1})) /dev/zero
+}
+link_archive() {
+  {
+    field "$2" 100
+    field 0000644 8
+    field 0000000 8
+    field 0000000 8
+    field 00000000000 12
+    field 00000000000 12
+    printf '        '
+    printf '1'
+    field "$3" 100
+    printf 'ustar\00000'
+    head -c 247 /dev/zero
+  } >"$1"
+  sum=$(od -An -tu1 -v "$1" | awk '{ for (i = 1; i <= NF; i++) s += $i } END { print s }')
+  printf '%06o\0 ' "$sum" | dd of="$1" bs=1 seek=148 conv=notrunc 2>/dev/null
+  head -c 1024 /dev/zero >>"$1"
+}
+
+files_begin "files: an archive with a hard link to a file outside is refused, and the file outside is untouched"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+mkdir -p "$work/out"
+echo victim >"$work/out/victim"
+before=$(stat -c '%u:%g %h' "$work/out/victim")
+# The way the files folder and the outside file sit next to each other: <work>/files/.restoring/<id> -> ../../out/victim.
+link_archive "$(archive_of "$dump")" "$A1" ../../out/victim
+echo "in use" >"$FILES/$A2"
+run_restore "$dump"
+[ "$status" -ne 0 ] || fail "the archive was taken"
+[ "$(database notes)" = original ] || fail "notes holds '$(database notes)'"
+[ "$(ls -A "$FILES")" = "$A2" ] || fail "the folder holds: $(ls -A "$FILES" | tr '\n' ' ')"
+[ "$(stat -c '%u:%g %h' "$work/out/victim")" = "$before" ] || fail "the file outside changed: $(stat -c '%u:%g %h' "$work/out/victim")"
+[ "$(cat "$work/out/victim")" = victim ] || fail "the file outside was written to"
+echo "ok: $case_name"
+
+files_begin "files: a .replaced left by an earlier restore is moved aside, not removed"
+dump=$(old_dump -3600)
+echo original >"$STATE/dbs/notes"
+rm -rf "$work/source" && mkdir "$work/source"
+echo restored >"$work/source/$A1"
+make_archive "$(archive_of "$dump")"
+mkdir "$FILES/.replaced"
+echo "kept from before" >"$FILES/.replaced/$A3"
+run_restore "$dump"
+[ "$status" -eq 0 ] || fail "the restore failed"
+kept=$(ls -d "$FILES"/.replaced-* 2>/dev/null | head -n 1)
+[ -n "$kept" ] && [ "$(cat "$kept/$A3")" = "kept from before" ] || fail "the earlier .replaced is gone"
+grep -q "was moved to" "$STATE/log" || fail "the log does not say where it went"
+echo "ok: $case_name"
+
 files_begin "files: the database does not load: the files are untouched"
 dump=$(old_dump -3600)
 echo original >"$STATE/dbs/notes"
