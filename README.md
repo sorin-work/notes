@@ -303,6 +303,9 @@ notes at a time. The format is versioned. This is version 1:
   "format": "notes-backup",
   "version": 1,
   "exportedAt": "2026-11-20T21:00:00.000Z",
+  "preferences": {
+    "dailyNotes": { "notebookId": "…", "templateId": "…", "dateFormat": "iso" }
+  },
   "notebooks": [
     {
       "id": "…",
@@ -332,6 +335,9 @@ notes at a time. The format is versioned. This is version 1:
       "tags": ["q1"],
       "pinned": false,
       "favorite": false,
+      "isTemplate": false,
+      "dailyDate": "2026-11-20",
+      "dailyReleased": false,
       "revision": 7,
       "createdAt": "…",
       "updatedAt": "…",
@@ -346,12 +352,13 @@ All times are UTC. `deletedAt` is set for a note in the trash. `versions` is
 the note's history, oldest first. Notebooks come before the notebooks inside
 them. `shareLinks` is a record of what was shared. It has no link addresses
 and no password hashes, so the file opens nothing for whoever holds it.
-Templates are not in it, because the app has none yet.
+Templates are notes with `isTemplate`, and `dailyDate` marks the daily note
+of a day. `preferences` holds the daily note choices, with ids from the file.
 
 `POST /import/backup` with the file as `file` (Settings, "Restore") puts a
 backup into an account that has no notes, notebooks or tags yet: the same
-notes with their history, revisions, tags, notebooks and trash, under new
-ids, with links synced. The whole file is checked against the app's limits
+notes with their history, revisions, tags, notebooks, trash, templates,
+daily notes and daily note choices, under new ids, with links synced. The whole file is checked against the app's limits
 first, and it is written in one transaction, so a refused or failed restore
 leaves the account empty. An account that has something in it gets `409`. A
 backup may be up to 200 MB. Share links are not made again: a new link would

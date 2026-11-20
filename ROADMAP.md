@@ -390,7 +390,7 @@ unless told not to. The second step added the export formats. "Print" in the
 browser gives the note alone, black on white, with link addresses written
 out, so "Save as PDF" makes a clean page. A full JSON backup of one account,
 versioned and streamed, holds the trash, version history, revisions,
-notebooks, tags and a record of the share links without their tokens or
+notebooks, tags, templates, daily notes and a record of the share links without their tokens or
 password hashes. It restores into an empty account in one transaction.
 Share links are not made again, since the file holds nothing that would open
 them. Still open: Evernote attachments,
