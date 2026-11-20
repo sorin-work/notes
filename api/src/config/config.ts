@@ -43,6 +43,12 @@ export interface AppConfig {
    * is the proxy for everyone. With 1 it is the address the proxy reports.
    */
   trustProxy: number;
+  /** The folder the files of attachments are kept in. */
+  attachmentsDir: string;
+  /** Bytes one attachment may have. */
+  attachmentMaxBytes: number;
+  /** Bytes all attachments of one account may have together. */
+  attachmentAccountBytes: number;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -120,6 +126,13 @@ function appUrlFrom(value: string | undefined, mailIsOn: boolean): string {
   return raw.replace(/\/+$/, '');
 }
 
+/** Uploads are held in memory while they are checked, so one file has a ceiling. */
+function attachmentMaxMb(value: string | undefined): number {
+  const mb = toInt('ATTACHMENT_MAX_MB', value, 10, 1);
+  if (mb > 50) throw new ConfigError(`ATTACHMENT_MAX_MB can be 50 at most, got "${value}"`);
+  return mb;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) {
@@ -150,5 +163,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appUrl: appUrlFrom(env.APP_URL, mail !== null),
     apiDocs: !saysNo(env.API_DOCS),
     trustProxy: toInt('TRUST_PROXY', env.TRUST_PROXY, 0, 0),
+    attachmentsDir: env.ATTACHMENTS_DIR?.trim() || './data/attachments',
+    attachmentMaxBytes: attachmentMaxMb(env.ATTACHMENT_MAX_MB) * 1024 * 1024,
+    attachmentAccountBytes: toInt('ATTACHMENT_ACCOUNT_MB', env.ATTACHMENT_ACCOUNT_MB, 500, 1) * 1024 * 1024,
   };
 }
