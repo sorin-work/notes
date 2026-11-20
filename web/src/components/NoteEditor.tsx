@@ -192,8 +192,8 @@ function LoadedEditor({ note }: { note: Note }) {
     });
   };
 
-  const onToggleTask = (line: number) => {
-    const next = toggleTask(content, line);
+  const onToggleTask = (line: number, checked: boolean) => {
+    const next = toggleTask(content, line, checked);
     if (next === content) return;
     // Replacing the text moves the caret in the source to the end. The text
     // is as long as it was, so the selection can go back where it was.

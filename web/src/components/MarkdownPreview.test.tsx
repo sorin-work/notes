@@ -67,7 +67,11 @@ describe('MarkdownPreview', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Read Atlas data model' }));
     await userEvent.click(nested);
     await userEvent.click(screen.getByRole('checkbox', { name: 'Second loose item' }));
-    expect(onToggleTask.mock.calls).toEqual([[8], [9], [13]]);
+    expect(onToggleTask.mock.calls).toEqual([
+      [8, false],
+      [9, true],
+      [13, false],
+    ]);
   });
 
   it('opens normal links in a new tab and drops javascript: URLs', () => {
