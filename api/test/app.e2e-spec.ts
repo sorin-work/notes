@@ -697,6 +697,7 @@ describe('api tokens', () => {
       'PasswordResetController.confirm',
       'PasswordResetController.request',
       'PasswordResetController.status',
+      'PublicSharesController.unlock',
       'PublicSharesController.view',
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
@@ -1130,6 +1131,129 @@ describe('sharing', () => {
     await request(server).delete(`/api/notes/${note.body.id}/share`).set(auth).expect(204);
     await request(server).get(`/api/public/notes/${share.body.token}`).expect(404);
   });
+
+  const shareOf = async (auth: { Authorization: string }, title = 'Recipe') => {
+    const server = app.getHttpServer();
+    const note = await request(server).post('/api/notes').set(auth).send({ title, content: 'Bread' }).expect(201);
+    const share = await request(server).post(`/api/notes/${note.body.id}/share`).set(auth).expect(200);
+    return {
+      noteId: note.body.id as string,
+      token: share.body.token as string,
+      path: `/api/notes/${note.body.id}/share`,
+    };
+  };
+
+  it('asks readers for the password, which travels in the body, and never tells anyone to keep a copy', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const { token, path } = await shareOf(auth);
+
+    await request(server).patch(path).set(auth).send({ password: 'short' }).expect(400);
+    const set = await request(server).patch(path).set(auth).send({ password: 'open sesame' }).expect(200);
+    expect(set.body).toMatchObject({ token, hasPassword: true, expiresAt: null, expired: false });
+    expect(JSON.stringify(set.body)).not.toContain('open sesame');
+    expect(set.body).not.toHaveProperty('passwordHash');
+
+    // Enough to show a prompt, and nothing of the note.
+    const prompt = await request(server).get(`/api/public/notes/${token}`).expect(403);
+    expect(prompt.body).toEqual({
+      statusCode: 403,
+      error: 'Forbidden',
+      message: 'This note is protected by a password',
+      passwordRequired: true,
+    });
+    expect(prompt.headers['cache-control']).toBe('no-store');
+    // A password in the address is not looked at.
+    await request(server).get(`/api/public/notes/${token}?password=open%20sesame`).expect(403);
+
+    const wrong = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'open says me' })
+      .expect(403);
+    expect(wrong.body).toMatchObject({ passwordRequired: true, message: 'That password is not right' });
+    expect(wrong.headers['cache-control']).toBe('no-store');
+    await request(server).post(`/api/public/notes/${token}`).send({}).expect(400);
+
+    const opened = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    expect(opened.body).toMatchObject({ title: 'Recipe', content: 'Bread' });
+    expect(opened.headers['cache-control']).toBe('no-store');
+
+    // Taking the password away opens the same link again.
+    await request(server).patch(path).set(auth).send({ password: null }).expect(200);
+    const open = await request(server).get(`/api/public/notes/${token}`).expect(200);
+    expect(open.headers['cache-control']).toBe('no-store');
+  });
+
+  it('stops working when it runs out, and then looks like a link that never was', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const { auth } = await signUp();
+    const { noteId, token, path } = await shareOf(auth);
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    await request(server).patch(path).set(auth).send({ expiresAt: 'next week' }).expect(400);
+    await request(server).patch(path).set(auth).send({ expiresAt: '2020-01-01T00:00:00Z' }).expect(400);
+    const limited = await request(server)
+      .patch(path)
+      .set(auth)
+      .send({ expiresAt: soon, password: 'open sesame' })
+      .expect(200);
+    expect(limited.body).toMatchObject({ expiresAt: soon, expired: false, hasPassword: true });
+    await request(server).get(`/api/public/notes/${token}`).expect(403);
+
+    // The hour passes.
+    await prisma.shareLink.update({ where: { noteId }, data: { expiresAt: new Date(Date.now() - 1000) } });
+
+    const never = await request(server).get('/api/public/notes/there-is-no-such-link').expect(404);
+    const expired = await request(server).get(`/api/public/notes/${token}`).expect(404);
+    const expiredWithPassword = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'open sesame' })
+      .expect(404);
+    const expiredWithGuess = await request(server)
+      .post(`/api/public/notes/${token}`)
+      .send({ password: 'guess' })
+      .expect(404);
+    // Not even that it once had a password shows.
+    expect(expired.body).toEqual(never.body);
+    expect(expiredWithPassword.body).toEqual(never.body);
+    expect(expiredWithGuess.body).toEqual(never.body);
+    expect(expired.headers['cache-control']).toBe('no-store');
+
+    // The owner sees what happened, and can give it more time.
+    const seen = await request(server).get(path).set(auth).expect(200);
+    expect(seen.body.share).toMatchObject({ token, expired: true, hasPassword: true });
+    await request(server).patch(path).set(auth).send({ expiresAt: null }).expect(200);
+    await request(server).post(`/api/public/notes/${token}`).send({ password: 'open sesame' }).expect(200);
+  });
+
+  it('counts the views of others, not the owner looking at their own note', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const stranger = await signUp();
+    const { token, path } = await shareOf(auth);
+    const views = async () => (await request(server).get(path).set(auth).expect(200)).body.share.viewCount as number;
+
+    await request(server).get(`/api/public/notes/${token}`).set(auth).expect(200);
+    expect(await views()).toBe(0);
+
+    await request(server).get(`/api/public/notes/${token}`).expect(200);
+    await request(server).get(`/api/public/notes/${token}`).set(stranger.auth).expect(200);
+    await request(server).get(`/api/public/notes/${token}`).set({ Authorization: 'Bearer not-a-token' }).expect(200);
+    expect(await views()).toBe(3);
+
+    // Behind a password too, and a refused attempt is not a view.
+    await request(server).patch(path).set(auth).send({ password: 'open sesame' }).expect(200);
+    await request(server).get(`/api/public/notes/${token}`).expect(403);
+    await request(server).post(`/api/public/notes/${token}`).send({ password: 'wrong one' }).expect(403);
+    await request(server).post(`/api/public/notes/${token}`).set(auth).send({ password: 'open sesame' }).expect(200);
+    expect(await views()).toBe(3);
+    await request(server).post(`/api/public/notes/${token}`).send({ password: 'open sesame' }).expect(200);
+    expect(await views()).toBe(4);
+  });
 });
 
 describe('import and export', () => {
@@ -1180,12 +1304,13 @@ describe('password guesses with a low throttle limit', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(APP_CONFIG)
-      .useValue({ ...loadConfig(), authThrottleLimit: 3 })
+      .useValue({ ...loadConfig(), authThrottleLimit: 3, publicThrottleLimit: 5 })
       .overrideProvider(MAIL_TRANSPORT)
       .useValue(fakeTransport)
       .compile();
     limited = moduleRef.createNestApplication();
-    setupApp(limited);
+    // One proxy is trusted, so that a test can come from several addresses by sending X-Forwarded-For.
+    setupApp(limited, { trustProxy: 1 });
     await limited.init();
   });
 
@@ -1208,6 +1333,44 @@ describe('password guesses with a low throttle limit', () => {
     await request(server).get('/api/docs-json').expect(404);
     await request(server).get('/api/docs/swagger-ui.css').expect(404);
     await request(server).get('/api/health').expect(200);
+  });
+
+  it('lets a client read a handful of shared notes a minute, and counts password attempts per link and per client', async () => {
+    const server = limited.getHttpServer();
+    const owner = await account('sharer');
+    const share = async (title: string) => {
+      const note = await request(server).post('/api/notes').set(owner).send({ title }).expect(201);
+      const link = await request(server)
+        .post(`/api/notes/${note.body.id}/share`)
+        .set(owner)
+        .send({ password: 'open sesame' })
+        .expect(200);
+      return `/api/public/notes/${link.body.token as string}`;
+    };
+    const first = await share('First');
+    const second = await share('Second');
+    const from = (address: string) => ({ 'X-Forwarded-For': address });
+
+    // Reading: five a minute for one address, with the roomy allowance and not the strict one.
+    for (let i = 0; i < 5; i++) {
+      await request(server).get(first).set(from('203.0.113.1')).expect(403);
+    }
+    await request(server).get(first).set(from('203.0.113.1')).expect(429);
+    await request(server).get(first).set(from('203.0.113.2')).expect(403);
+
+    // Guessing from a new address every time: the link itself runs out of attempts after three.
+    await request(server).post(first).set(from('198.51.100.1')).send({ password: 'guess-1' }).expect(403);
+    await request(server).post(first).set(from('198.51.100.2')).send({ password: 'guess-2' }).expect(403);
+    await request(server).post(first).set(from('198.51.100.3')).send({ password: 'guess-3' }).expect(403);
+    await request(server).post(first).set(from('198.51.100.4')).send({ password: 'guess-4' }).expect(429);
+    // The right password does not get through either until the minute is over.
+    await request(server).post(first).set(from('198.51.100.5')).send({ password: 'open sesame' }).expect(429);
+
+    // Another link is not affected, until one address has used up its own three attempts on it.
+    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'guess-1' }).expect(403);
+    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'guess-2' }).expect(403);
+    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'open sesame' }).expect(200);
+    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'open sesame' }).expect(429);
   });
 
   it('caps the guesses against one account across the routes that check the password', async () => {
