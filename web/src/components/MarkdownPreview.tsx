@@ -1,6 +1,7 @@
 import { ComponentProps, createContext, memo, MouseEvent, useContext } from 'react';
 import ReactMarkdown, { defaultUrlTransform, ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { countLines } from '../lib/tasks';
 import { linkifyWikiLinks, normalizeTitle, WIKI_PROTOCOL, wikiTarget } from '../lib/wikilinks';
 
 interface MarkdownPreviewProps {
@@ -11,9 +12,10 @@ interface MarkdownPreviewProps {
   missingTitles?: Set<string>;
   /**
    * Called when the box of a task list item is clicked, with the line of the
-   * source the item starts on (counted from 1). Without it, boxes are read-only.
+   * source the item starts on (counted from 1) and whether the box showed as
+   * ticked. Without it, boxes are read-only.
    */
-  onToggleTask?: (line: number) => void;
+  onToggleTask?: (line: number, checked: boolean) => void;
 }
 
 type HastElement = NonNullable<ExtraProps['node']>;
@@ -25,7 +27,7 @@ function urlTransform(url: string): string {
 }
 
 /** What to call when a task box is clicked. Not set where the preview is read-only. */
-const ToggleTaskContext = createContext<((line: number) => void) | undefined>(undefined);
+const ToggleTaskContext = createContext<((line: number, checked: boolean) => void) | undefined>(undefined);
 /** The task list item a checkbox sits in. The parser gives the item a source position, the checkbox has none. */
 const TaskItemContext = createContext<{ line: number; label: string } | null>(null);
 
@@ -62,12 +64,13 @@ function TaskBox({ node: _node, ...props }: ComponentProps<'input'> & ExtraProps
   const item = useContext(TaskItemContext);
   // Read-only: the box as the parser made it, which is disabled.
   if (!onToggleTask || !item) return <input {...props} />;
+  const checked = props.checked === true;
   return (
     <input
       type="checkbox"
-      checked={props.checked === true}
+      checked={checked}
       aria-label={item.label || 'Task'}
-      onChange={() => onToggleTask(item.line)}
+      onChange={() => onToggleTask(item.line, checked)}
     />
   );
 }
@@ -81,9 +84,13 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   if (!content.trim()) {
     return <p className="preview-empty">Nothing to preview yet.</p>;
   }
+  const linkified = linkifyWikiLinks(content);
+  // Boxes are found in the source by line number, and the parser reads the
+  // linkified text. Should the two ever differ in their lines, boxes stay read-only.
+  const sameLines = onToggleTask !== undefined && countLines(linkified) === countLines(content);
   return (
     <div className="markdown">
-      <ToggleTaskContext value={onToggleTask}>
+      <ToggleTaskContext value={sameLines ? onToggleTask : undefined}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           urlTransform={urlTransform}
@@ -119,7 +126,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
             input: TaskBox,
           }}
         >
-          {linkifyWikiLinks(content)}
+          {linkified}
         </ReactMarkdown>
       </ToggleTaskContext>
     </div>

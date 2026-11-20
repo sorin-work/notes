@@ -1155,6 +1155,12 @@ ul.error-box {
   width: min(64rem, 100%);
 }
 
+.modal-top {
+  align-self: start;
+  margin-top: 12vh;
+  max-height: calc(88vh - 2rem);
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -1173,6 +1179,34 @@ ul.error-box {
 
 .confirm-message p {
   margin-top: 0;
+}
+
+.switcher-input {
+  width: 100%;
+}
+
+.switcher-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+}
+
+.switcher-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+}
+
+.switcher-list li {
+  padding: 0.4rem 0.6rem;
+  border-radius: 5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switcher-list li.active {
+  background: var(--accent-soft);
 }
 
 .history {

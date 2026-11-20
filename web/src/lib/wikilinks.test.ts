@@ -19,6 +19,23 @@ describe('linkifyWikiLinks', () => {
     expect(linkifyWikiLinks(markdown)).toBe('```\n[[In code]]\n```\n`[[inline]]` and [Real](wiki:Real)');
   });
 
+  it('puts a line break that was inside a link in front of it', () => {
+    expect(linkifyWikiLinks('Notes for [[Project\rAtlas]] this week')).toBe(
+      'Notes for \r[Project Atlas](wiki:Project%20Atlas) this week',
+    );
+  });
+
+  it.each([
+    'Notes for [[Project\rAtlas]] this week\r\r- [ ] one\r- [ ] two',
+    '[[Recipes#Bre\rad]]\n- [ ] one',
+    '[[Atlas|\rthe project\r]] and\r\n[[Atlas|the\rproject]]',
+    'before\r[[Weekly\r\rreview]]\r\nafter',
+    '`[[in\rcode]]` and [[Real\r]]\n```\n[[fenced\r]]\n```',
+  ])('keeps the line endings of %j', (text) => {
+    const lineEndings = (value: string) => value.match(/\r\n?|\n/g);
+    expect(lineEndings(linkifyWikiLinks(text))).toEqual(lineEndings(text));
+  });
+
   it('escapes brackets in the link text', () => {
     expect(linkifyWikiLinks('[[Note|a [b] c]]')).toBe('[[Note|a [b] c]]');
     expect(linkifyWikiLinks('[[Q&A]]')).toBe('[Q&A](wiki:Q%26A)');

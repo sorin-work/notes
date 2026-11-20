@@ -27,6 +27,10 @@ Markdown import/export.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted.
+- **Quick switcher**: `Ctrl+K` (`Cmd+K` on a Mac) opens a small dialog with
+  the notes edited last. Type part of a title, press Enter, and you are in
+  that note with the cursor in its text, or on the preview when only the
+  preview is showing.
 - **Version history**: while you edit, the previous text is saved as a
   version at most every ten minutes (the last 50 are kept). Any version can be
   previewed and restored; restoring saves the current text first. The Changes
@@ -46,6 +50,7 @@ Markdown import/export.
 | ------------------ | --------------------------------- |
 | `Alt+N`            | New note                          |
 | `/`                | Search                            |
+| `Ctrl+K` / `Cmd+K` | Go to a note by its title         |
 | `Ctrl+S` / `Cmd+S` | Save now                          |
 | `Ctrl+E` / `Cmd+E` | Switch between edit/split/preview |
 
@@ -216,7 +221,7 @@ Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Re
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
 | `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
-| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Link completion and lookup                |
+| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |

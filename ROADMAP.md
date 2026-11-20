@@ -10,8 +10,7 @@ What the app does today is in the [README](README.md).
 - **Next**: small or well understood. I would start with these.
 - **Later**: worth doing, but bigger or waiting on a decision.
 - **Maybe**: not sure yet that they are worth the extra complexity.
-- **Shipped**: done. Kept at the end, with what was built and how it differs
-  from the plan.
+- **Shipped**: built. The notes at the end say how each one turned out.
 
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
@@ -22,7 +21,7 @@ couple of weekends, **L** several weeks of spare time.
 | --- | -------------------------------------- | ------- | -------- | ---- | ---------- |
 | 1   | Clickable task lists in the preview    | Shipped | frontend | S    | -          |
 | 2   | Changes view in version history        | Shipped | frontend | S    | -          |
-| 3   | Quick switcher                         | Next    | frontend | S    | -          |
+| 3   | Quick switcher                         | Shipped | frontend | S    | -          |
 | 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
 | 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
 | 6   | Accessibility pass                     | Next    | frontend | M    | -          |
@@ -40,21 +39,6 @@ couple of weekends, **L** several weeks of spare time.
 | 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
 
 ## Next
-
-### 3. Quick switcher
-
-`Ctrl+K` / `Cmd+K` opens a small dialog: type part of a title, press Enter,
-land on the note. Quicker than the sidebar search when I know the name.
-
-- `GET /notes/titles?q=` already does prefix-then-contains matching for `[[`
-  completion and can be used as it is.
-- Built on `Modal`, with the key handler next to the `/` shortcut in
-  `Layout`. The option handling around `LinkSuggestions` (active index, arrow
-  keys, Enter) is close to what is needed and could move into a shared hook.
-- Notes first. Notebooks, tags and actions ("New note", "Empty trash") can
-  follow once the dialog exists.
-- The shortcut table in the README and the hint on the empty `NotesPage`
-  need the new key.
 
 ### 4. Search filters, phrases and paging
 
@@ -364,13 +348,18 @@ Two ways to get more out of the links that are already stored.
 
 Clicking a task box in the editor's preview flips `[ ]` and `[x]` on that
 line of the note. The change goes through the normal autosave, so versions
-behave as they do for typing. Built as planned: `MarkdownPreview` takes
-`onToggleTask(line)`, and boxes stay disabled on shared pages, in version
-history and for notes in the trash. Added on top: each box is named after its
-item for screen readers, it keeps keyboard focus after a click, and the caret
-in the source stays where it was. Still open: clicking does nothing in two
-rare layouts, a box on a different line from its list marker and a task on
-the first line of a footnote definition.
+behave as they do for typing. Boxes stay disabled on shared pages, in version
+history and for notes in the trash. Different from the plan: `onToggleTask`
+gets the line and the state the box showed, and the text only changes when
+that line holds a box in that state, with a space or the end of the line
+after it. Line numbers did not always match the source: `linkifyWikiLinks`
+dropped a lone `\r` inside a link, which the parser counts as a line ending.
+It now keeps every line ending, and boxes go read-only should the preview and
+the source ever differ in their number of lines. Added on top: each box is
+named after its item for screen readers, it keeps keyboard focus after a
+click, and the caret in the source stays where it was. Still open: clicking
+does nothing in two rare layouts, a box on a different line from its list
+marker and a task on the first line of a footnote definition.
 
 ### 2. Changes view in version history
 
@@ -386,3 +375,17 @@ plain message. Added on top: unchanged stretches are folded to three lines
 around each change. Still open: changes inside a line are not highlighted,
 folded lines cannot be expanded, and two versions cannot be compared with
 each other.
+
+### 3. Quick switcher
+
+`Ctrl+K` (`Cmd+K` on a Mac, where `Ctrl+K` deletes to the end of the line)
+opens a dialog built on `Modal` that lists the notes edited last and, once I
+type, the titles from `GET /notes/titles?q=`, which is used as it was. Arrow
+keys and Enter pick a note, and the cursor lands in its text, or on the
+preview in preview mode. The arrow key handling moved out of `NoteEditor` into
+`useActiveOption` and is shared with the `[[` suggestions. Beyond the design:
+Enter pressed before the list is up to date waits for the answer instead of
+opening a stale row, the note that is already open is left out, and the key
+does nothing while another dialog is open. Still open: notebooks, tags and
+actions in the list. Notes that share a title look the same there, and the
+dialog has no button, so it needs a keyboard.

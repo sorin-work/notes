@@ -1,7 +1,34 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { toggleTask } from '../lib/tasks';
+import * as wikilinks from '../lib/wikilinks';
 import { MarkdownPreview } from './MarkdownPreview';
+
+/** The preview with its text in state and boxes wired to toggleTask, as in the editor. */
+function Checklist({ initial, onText }: { initial: string; onText: (text: string) => void }) {
+  const [content, setContent] = useState(initial);
+  return (
+    <MarkdownPreview
+      content={content}
+      onToggleTask={(line, checked) => {
+        const next = toggleTask(content, line, checked);
+        setContent(next);
+        onText(next);
+      }}
+    />
+  );
+}
+
+/** Renders `text`, clicks the box with that name and returns the text afterwards. */
+async function clickBox(text: string, name: string): Promise<string> {
+  const onText = vi.fn<(text: string) => void>();
+  render(<Checklist initial={text} onText={onText} />);
+  await userEvent.click(screen.getByRole('checkbox', { name }));
+  expect(onText).toHaveBeenCalledTimes(1);
+  return onText.mock.calls[0]?.[0] ?? '';
+}
 
 describe('MarkdownPreview', () => {
   it('renders Markdown with GitHub extensions', () => {
@@ -67,7 +94,35 @@ describe('MarkdownPreview', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Read Atlas data model' }));
     await userEvent.click(nested);
     await userEvent.click(screen.getByRole('checkbox', { name: 'Second loose item' }));
-    expect(onToggleTask.mock.calls).toEqual([[8], [9], [13]]);
+    expect(onToggleTask.mock.calls).toEqual([
+      [8, false],
+      [9, true],
+      [13, false],
+    ]);
+  });
+
+  it.each(['\n', '\r\n', '\r'])('ticks the clicked box in a text with %j line endings', async (eol) => {
+    const lines = ['# List', '', '- [ ] one', '- [x] two', '- [ ] three', ''];
+    const text = await clickBox(lines.join(eol), 'three');
+    expect(text).toBe(lines.join(eol).replace('[ ] three', '[x] three'));
+    expect(screen.getByRole('checkbox', { name: 'three' })).toBeChecked();
+  });
+
+  it.each(['one', 'three'])('ticks %j below a link with a line break in it', async (name) => {
+    const text = 'Notes for [[Project\rAtlas]] this week\r\r- [ ] one\r- [ ] two\r- [ ] three';
+    expect(await clickBox(text, name)).toBe(text.replace(`[ ] ${name}`, `[x] ${name}`));
+  });
+
+  it('leaves a link definition alone when the box of the item is on the next line', async () => {
+    const text = '- [x]: https://example.com/spec\n  [ ] read the spec';
+    expect(await clickBox(text, 'read the spec')).toBe(text);
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+  });
+
+  it('keeps boxes read-only when the preview and the source differ in their lines', () => {
+    vi.spyOn(wikilinks, 'linkifyWikiLinks').mockImplementation((text) => text.replace('\n', ' '));
+    render(<MarkdownPreview content={'Intro\n\n- [ ] one'} onToggleTask={vi.fn()} />);
+    expect(screen.getByRole('checkbox')).toBeDisabled();
   });
 
   it('opens normal links in a new tab and drops javascript: URLs', () => {
