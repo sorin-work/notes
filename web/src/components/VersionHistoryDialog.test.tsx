@@ -13,7 +13,7 @@ describe('VersionHistoryDialog', () => {
     ];
     const calls = mockFetch({
       'GET /api/notes/n1/versions': { body: versions },
-      'GET /api/notes/n1/versions/v2': { body: { ...versions[0], content: '# Newer draft' } },
+      'GET /api/notes/n1/versions/v2': { body: { ...versions[0], content: '# Newer draft\n\n- [x] Outline' } },
       'GET /api/notes/n1/versions/v1': { body: { ...versions[1], content: '# First draft' } },
       'POST /api/notes/n1/versions/v1/restore': { body: note({ content: '# First draft' }) },
     });
@@ -22,6 +22,7 @@ describe('VersionHistoryDialog', () => {
     renderWithProviders(<VersionHistoryDialog noteId="n1" onClose={onClose} onRestored={onRestored} />);
 
     expect(await screen.findByRole('heading', { name: 'Newer draft' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: /5 characters/ }));
     expect(await screen.findByRole('heading', { name: 'First draft' })).toBeInTheDocument();
 
