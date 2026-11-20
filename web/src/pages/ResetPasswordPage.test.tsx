@@ -79,13 +79,16 @@ describe('ResetPasswordPage', () => {
     await userEvent.type(screen.getByLabelText('Repeat new password'), 'battery-staple');
     await userEvent.click(screen.getByRole('button', { name: 'Set the new password' }));
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Password changed');
+    const done = await screen.findByRole('status');
+    expect(done).toHaveTextContent('Password changed');
+    // Says what happened to the tokens too: they are gone with the logins.
+    expect(done).toHaveTextContent('every API token of the account has been revoked');
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
       token: 'abc-123',
       password: 'battery-staple',
     });
     expect(getToken()).toBeNull();
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+    expect(screen.getByRole('link', { name: 'Sign in with the new password' })).toHaveAttribute('href', '/login');
   });
 
   it('says so when the link has been used or has run out', async () => {

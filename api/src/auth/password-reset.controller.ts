@@ -25,6 +25,11 @@ export class PasswordResetController {
     this.resets.request(dto.email);
   }
 
+  /**
+   * Sets a new password with the token from the mail. Every login of the
+   * account ends and every API token is revoked, so the answer is empty:
+   * signing in with the new password comes next.
+   */
   @Public()
   @UseGuards(ThrottlerGuard)
   @Post('confirm')

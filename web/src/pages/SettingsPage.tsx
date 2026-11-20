@@ -2,12 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
 import { changePassword, deleteAccount, logoutEverywhere, updateProfile } from '../api/auth';
 import { deleteTag, listTags, renameTag } from '../api/tags';
+import { createApiToken, listApiTokens, revokeApiToken } from '../api/tokens';
 import { exportAll, importFiles } from '../api/transfer';
-import type { Tag, User } from '../api/types';
+import type { ApiToken, CreatedApiToken, Tag, User } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { ErrorMessage } from '../components/States';
 import { Theme, useTheme } from '../hooks/useTheme';
+import { formatRelative } from '../lib/dates';
 
 export function SettingsPage() {
   const { user } = useAuth();
@@ -24,6 +27,7 @@ export function SettingsPage() {
       <AppearanceSection />
       <ImportExportSection />
       <TagsSection />
+      <ApiTokensSection />
     </div>
   );
 }
@@ -157,7 +161,10 @@ function PasswordForm() {
       {mismatch && <p className="field-error">The new passwords do not match.</p>}
       {change.error && <ErrorMessage error={change.error} />}
       {change.isSuccess && (
-        <p className="success">Password changed. Every other browser and device has been signed out.</p>
+        <>
+          <p className="success">Password changed. Every other browser and device has been signed out.</p>
+          <ApiTokensStillWorking />
+        </>
       )}
       <div className="form-actions start">
         <button type="submit" className="button button-primary" disabled={change.isPending}>
@@ -176,7 +183,7 @@ function SessionsSection() {
       <h3>Sessions</h3>
       <p className="muted">
         A login lasts a week. If you left one open somewhere, this signs you out in every browser and on every device,
-        this one included.
+        this one included. API tokens are not signed out: revoke those under API tokens.
       </p>
       {signOut.error && <ErrorMessage error={signOut.error} />}
       <div className="form-actions start">
@@ -447,6 +454,153 @@ function TagsSection() {
           busy={remove.isPending}
           onConfirm={() => remove.mutate(removing.id)}
           onCancel={() => setRemoving(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+function ApiTokensSection() {
+  const queryClient = useQueryClient();
+  const tokens = useQuery({ queryKey: ['api-tokens'], queryFn: listApiTokens });
+  const [name, setName] = useState('');
+  const [readOnly, setReadOnly] = useState(false);
+  const [password, setPassword] = useState('');
+  const [created, setCreated] = useState<CreatedApiToken | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [revoking, setRevoking] = useState<ApiToken | null>(null);
+
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['api-tokens'] });
+  const create = useMutation({
+    mutationFn: () => createApiToken(name, readOnly, password),
+    onSuccess: (token) => {
+      setCreated(token);
+      setCopied(false);
+      setName('');
+      setReadOnly(false);
+      setPassword('');
+      refresh();
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => revokeApiToken(id),
+    onSuccess: (_result, id) => {
+      setRevoking(null);
+      if (created?.id === id) setCreated(null);
+      refresh();
+    },
+  });
+
+  const copy = async () => {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.token);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>API tokens</h2>
+      <p className="muted">
+        For scripts. A request that sends a token as <code>Authorization: Bearer nt_…</code> is treated as yours. A
+        token can read and change notes, or only read them if it is read-only. It cannot change the account or manage
+        tokens. Tokens do not expire. Signing out everywhere and changing the password leave them alone, and only a
+        password reset by mail revokes them all, so revoke the ones you no longer use. Making one takes your password,
+        because it outlives every login.
+      </p>
+      {tokens.error && <ErrorMessage error={tokens.error} />}
+      {tokens.data?.length === 0 && <p className="muted">No tokens yet.</p>}
+      <ul className="tag-admin">
+        {tokens.data?.map((token) => (
+          <li key={token.id}>
+            <span>
+              {token.name}{' '}
+              <span className="muted">
+                {token.readOnly && '· read-only '}· made {formatRelative(token.createdAt)} ·{' '}
+                {token.lastUsedAt ? `last used ${formatRelative(token.lastUsedAt)}` : 'never used'}
+              </span>
+            </span>
+            <span className="tag-admin-actions">
+              <button type="button" className="link-button danger" onClick={() => setRevoking(token)}>
+                Revoke
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {created && (
+        <div className="import-result" role="status">
+          <label className="field">
+            <span>The token for “{created.name}”. Copy it now, it is not shown again.</span>
+            <div className="input-row">
+              <input
+                readOnly
+                value={created.token}
+                aria-label="New API token"
+                onFocus={(event) => event.target.select()}
+              />
+              <button type="button" className="button" onClick={copy}>
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </label>
+        </div>
+      )}
+
+      <form
+        className="form narrow"
+        onSubmit={(event) => {
+          event.preventDefault();
+          create.mutate();
+        }}
+      >
+        <h3>New token</h3>
+        <label className="field">
+          <span>Token name</span>
+          <input
+            maxLength={100}
+            placeholder="What it is for, such as backup script"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+          />
+        </label>
+        <label className="radio">
+          <input type="checkbox" checked={readOnly} onChange={(event) => setReadOnly(event.target.checked)} />
+          Read-only
+        </label>
+        <label className="field">
+          <span>Password, to create the token</span>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </label>
+        {create.error && <ErrorMessage error={create.error} />}
+        <div className="form-actions start">
+          <button type="submit" className="button button-primary" disabled={create.isPending}>
+            Create token
+          </button>
+        </div>
+      </form>
+
+      {revoke.error && <ErrorMessage error={revoke.error} />}
+      {revoking && (
+        <ConfirmDialog
+          title={`Revoke “${revoking.name}”?`}
+          message={<p>Whatever uses this token stops working at once. A revoked token cannot be brought back.</p>}
+          confirmLabel="Revoke token"
+          danger
+          busy={revoke.isPending}
+          onConfirm={() => revoke.mutate(revoking.id)}
+          onCancel={() => setRevoking(null)}
         />
       )}
     </section>

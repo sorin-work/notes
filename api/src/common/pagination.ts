@@ -1,3 +1,4 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
@@ -5,6 +6,9 @@ import { IsInt, IsOptional, Max, Min } from 'class-validator';
 export const MAX_PAGE = 100_000;
 
 export class PaginationQuery {
+  // The two below have a default instead of a "?", which the API document
+  // would read as "required" and of no known type. So it is told.
+  @ApiPropertyOptional({ type: 'integer' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -12,6 +16,7 @@ export class PaginationQuery {
   @Max(MAX_PAGE)
   page = 1;
 
+  @ApiPropertyOptional({ type: 'integer' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
