@@ -161,6 +161,12 @@ describe('unlinkExcept', () => {
     );
   });
 
+  it('writes out an alias as it stands in the note, inline code and all', () => {
+    expect(unlinkExcept('[[Secret|see `x` here]] and [[Starter|the `y`]]', shared)).toBe(
+      'see `x` here and [[Starter|the `y`]]',
+    );
+  });
+
   it('leaves no trace of a title that was behind an alias, or of a heading', () => {
     const text = unlinkExcept(
       '[[Secret plan|a plan]] and [[Secret plan#Budget]] and [[Budget 2026#Q1|numbers]]',

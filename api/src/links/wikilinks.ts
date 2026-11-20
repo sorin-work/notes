@@ -62,14 +62,17 @@ function* findLinks(markdown: string): Generator<LinkInText> {
       const from = lineStart + match.index;
       const start = from + 2;
       const end = start + match[1].length;
+      const to = from + match[0].length;
+      // From the note itself, not the blanked line: inline code in an alias is part of what is shown.
+      const alias = match[2] === undefined ? null : markdown.slice(to - 2 - match[2].length, to - 2).trim();
       yield {
         title: match[1].trim().replace(/\s+/g, ' '),
-        alias: match[2]?.trim() || null,
+        alias: alias || null,
         start,
         end,
         plain: markdown.slice(start, end) === match[1],
         from,
-        to: from + match[0].length,
+        to,
       };
     }
   }
