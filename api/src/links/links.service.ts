@@ -132,18 +132,19 @@ export class LinksService {
   }
 
   /**
-   * Notes outside the trash as nodes, and the links between them as edges,
-   * in one query. A link leads to the note its title resolves to: the most
-   * recently edited one with that title, as everywhere else. Links to notes
-   * outside the graph, to missing notes and from a note to itself are left
-   * out of the edges. Each node says how many links it has in all, so that a
-   * note whose links all lead outside the graph is not taken for one without.
+   * Working notes (outside the trash, not templates) as nodes, and the links
+   * between them as edges, in one query. A link leads to the note its title
+   * resolves to: the most recently edited one with that title, as everywhere
+   * else. Links to notes outside the graph, to missing notes, to templates
+   * and from a note to itself are left out of the edges. Each node says how
+   * many links it has in all, so that a note whose links all lead outside the
+   * graph is not taken for one without.
    *
    * `notebookIds` narrows the graph to those notebooks, or with "none" to
    * the notes outside any notebook. `tag` narrows it to the notes with that tag.
    */
   async graph(userId: string, filter: { notebookIds?: string[] | 'none'; tag?: string } = {}): Promise<Graph> {
-    const conditions = [Prisma.sql`n.user_id = ${userId}::uuid`, Prisma.sql`n.deleted_at IS NULL`];
+    const conditions = [Prisma.sql`n.user_id = ${userId}::uuid`, workingNoteSql('n')];
     if (filter.notebookIds === 'none') {
       conditions.push(Prisma.sql`n.notebook_id IS NULL`);
     } else if (filter.notebookIds) {
@@ -170,16 +171,16 @@ export class LinksService {
         FROM (
           SELECT id, ${titleKey('title')} AS key, updated_at
           FROM notes
-          WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+          WHERE user_id = ${userId}::uuid AND ${workingNoteSql('notes')}
         ) named
         ORDER BY key, updated_at DESC
       ),
       connected AS (
         SELECT DISTINCT link.source_id AS source, titled.id AS target
         FROM note_links link
-        JOIN notes origin ON origin.id = link.source_id
+        JOIN notes n ON n.id = link.source_id
         JOIN titled ON titled.key = link.target_key
-        WHERE origin.user_id = ${userId}::uuid AND origin.deleted_at IS NULL AND link.source_id <> titled.id
+        WHERE n.user_id = ${userId}::uuid AND ${workingNoteSql('n')} AND link.source_id <> titled.id
       ),
       linked AS (
         SELECT connected.source, connected.target

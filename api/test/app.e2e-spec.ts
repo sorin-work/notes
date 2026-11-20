@@ -1423,6 +1423,8 @@ describe('graph', () => {
     });
     const alone = await post('/api/notes', { title: 'Alone', content: 'No links.' });
     const gone = await post('/api/notes', { title: 'Gone', content: 'See [[Hub]].' });
+    // A template is no node, and its link to the hub is no edge and is not counted.
+    await post('/api/notes', { title: 'Hub template', content: 'See [[Hub]].', isTemplate: true });
     await request(server).delete(`/api/notes/${gone}`).set(auth).expect(204);
     await post('/api/notes', { title: 'Hub', content: 'See [[Plan]].' }, other.auth);
 
