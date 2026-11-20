@@ -156,36 +156,53 @@ describe('NoteEditor', () => {
   });
 
   describe('after a rename', () => {
-    /** Routes for a note that answers with what was last saved, as the API does. */
-    function renameRoutes(count: number) {
+    /**
+     * Routes for a note that answers with what was last saved, as the API
+     * does. `left` is how many notes still link to the old title.
+     */
+    function renameRoutes(left: number, afterUpdate = { left: 0, skipped: 0 }) {
       let saved = note();
       return baseRoutes({
         'GET /api/notes/n1': () => ({ body: saved }),
         'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
           saved = { ...saved, ...(body as object) };
+          saved.title = saved.title.trim() || 'Untitled';
           return { body: saved };
         },
-        'GET /api/notes/n1/rename-links': { body: { count } },
-        'POST /api/notes/n1/rename-links': () => ({ body: { updated: count, title: saved.title } }),
+        'GET /api/notes/n1/rename-links': () => ({ body: { count: left } }),
+        'POST /api/notes/n1/rename-links': () => {
+          const updated = left - afterUpdate.skipped;
+          left = afterUpdate.left;
+          const noteIds = Array.from({ length: updated }, (_, index) => `linking-${index}`);
+          return { body: { updated, skipped: afterUpdate.skipped, title: saved.title, noteIds } };
+        },
       });
     }
 
+    /** Types a new title and leaves the field, the way Tab or a click into the text does. */
     async function rename(to: string) {
       const title = await screen.findByLabelText('Title');
       await userEvent.clear(title);
-      await userEvent.type(title, to);
+      if (to) await userEvent.type(title, to);
+      await userEvent.tab();
     }
 
-    it('offers to update the links other notes have to the old title', async () => {
+    const askedForLinks = (calls: { url: string }[]) => calls.filter((call) => call.url.includes('/rename-links'));
+
+    it('offers to update the links other notes have to the old title, naming both titles', async () => {
       const calls = mockFetch(renameRoutes(2));
       renderEditor();
       await rename('Atlas v2');
 
       // The offer comes once the new title is saved, and names the title the note was opened with.
-      const update = await screen.findByRole('button', { name: 'Update 2 links' });
-      expect(screen.getByText(/2 notes still link to “Project Atlas”/)).toBeInTheDocument();
-      const asked = calls.filter((call) => call.url.startsWith('/api/notes/n1/rename-links'));
-      expect(asked.at(-1)).toMatchObject({ method: 'GET', url: '/api/notes/n1/rename-links?from=Project+Atlas' });
+      const update = await screen.findByRole('button', {
+        name: 'Update 2 links from [[Project Atlas]] to [[Atlas v2]]',
+      });
+      expect(screen.getByText(/2 notes still link to \[\[Project Atlas\]\]/)).toBeInTheDocument();
+      expect(askedForLinks(calls).at(-1)).toMatchObject({
+        method: 'GET',
+        url: '/api/notes/n1/rename-links?from=Project+Atlas',
+      });
       expect(calls.some((call) => call.method === 'POST')).toBe(false);
 
       await userEvent.click(update);
@@ -198,19 +215,68 @@ describe('NoteEditor', () => {
       expect(patched).toBeLessThan(posted);
     });
 
+    it('offers nothing while the title is still being typed', async () => {
+      const calls = mockFetch(renameRoutes(2));
+      renderEditor();
+      const title = await screen.findByLabelText('Title');
+      await userEvent.clear(title);
+      await userEvent.type(title, 'Atlas');
+
+      // The half typed title is saved by the autosave, but the cursor is still in the field.
+      await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true), { timeout: 2000 });
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
+      expect(askedForLinks(calls)).toEqual([]);
+      expect(screen.queryByText(/still link/)).not.toBeInTheDocument();
+
+      await userEvent.type(title, ' v2');
+      await userEvent.tab();
+      expect(
+        await screen.findByRole('button', { name: 'Update 2 links from [[Project Atlas]] to [[Atlas v2]]' }),
+      ).toBeInTheDocument();
+    });
+
+    it('offers nothing for a title that was emptied and is saved as "Untitled"', async () => {
+      const calls = mockFetch(renameRoutes(2));
+      renderEditor();
+      await rename('');
+
+      await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true), { timeout: 2000 });
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
+      expect(askedForLinks(calls)).toEqual([]);
+      expect(screen.queryByText(/still link/)).not.toBeInTheDocument();
+    });
+
     it('can be told "Not now", and asks again when the title changes once more', async () => {
       const calls = mockFetch(renameRoutes(1));
       renderEditor();
       await rename('Atlas v2');
 
-      expect(await screen.findByText(/1 note still links to “Project Atlas”/)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Update 1 link' })).toBeInTheDocument();
+      expect(await screen.findByText(/1 note still links to \[\[Project Atlas\]\]/)).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Update 1 link from [[Project Atlas]] to [[Atlas v2]]' }),
+      ).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: 'Not now' }));
       expect(screen.queryByText(/still links/)).not.toBeInTheDocument();
 
       await userEvent.type(screen.getByLabelText('Title'), '.1');
-      expect(await screen.findByText(/1 note still links to “Project Atlas”/)).toBeInTheDocument();
+      await userEvent.tab();
+      expect(await screen.findByText(/1 note still links to \[\[Project Atlas\]\]/)).toBeInTheDocument();
       expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    });
+
+    it('says how many notes were left behind and keeps the offer for them', async () => {
+      mockFetch(renameRoutes(3, { left: 1, skipped: 2 }));
+      renderEditor();
+      await rename('Atlas v2');
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Update 3 links from [[Project Atlas]] to [[Atlas v2]]' }),
+      );
+
+      // One of the two can be tried again, the other one cannot be rewritten at all.
+      expect(await screen.findByText(/2 notes were left as they are/)).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', { name: 'Update 1 link from [[Project Atlas]] to [[Atlas v2]]' }),
+      ).toBeInTheDocument();
     });
   });
 

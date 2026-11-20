@@ -37,8 +37,18 @@ export const resolveTitle = (title: string) =>
 export const orphanedLinkCount = (id: string, from: string) =>
   api<{ count: number }>(withQuery(`/notes/${id}/rename-links`, { from }));
 
+export interface RenamedLinks {
+  updated: number;
+  /** Notes that still link to the old title: edited meanwhile, too long, or a link that is not rewritten. */
+  skipped: number;
+  /** The title the links point at now. */
+  title: string;
+  /** The notes whose text changed on the server. */
+  noteIds: string[];
+}
+
 /** Points those links at the title the note has now. */
 export const renameLinks = (id: string, from: string) =>
-  api<{ updated: number; title: string }>(`/notes/${id}/rename-links`, json('POST', { from }));
+  api<RenamedLinks>(`/notes/${id}/rename-links`, json('POST', { from }));
 
 export const exportNote = (id: string, title: string) => download(`/notes/${id}/export`, `${title}.md`);
