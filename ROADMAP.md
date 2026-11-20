@@ -24,7 +24,7 @@ couple of weekends, **L** several weeks of spare time.
 | 3   | Quick switcher                         | Shipped | frontend | S    | -          |
 | 4   | Search filters, phrases and paging     | Shipped | both     | M    | -          |
 | 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
-| 6   | Accessibility pass                     | Next    | frontend | M    | -          |
+| 6   | Accessibility pass                     | Shipped | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Later   | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
@@ -60,26 +60,6 @@ a rename orphans links, the editor should offer "Update N links".
   confirms, or a flag on the `PATCH`. I lean towards separate, because the
   title autosaves on every pause and rewriting links halfway through typing a
   new title would be wrong.
-
-### 6. Accessibility pass
-
-The basics are there (labels, focus styles, `aria-current`, dialogs with
-`role="dialog"`), but I have never gone through the whole app with only a
-keyboard or with a screen reader. Gaps I already know about:
-
-- `Modal` moves focus in and puts it back on close, but does not trap Tab, so
-  focus can wander into the page behind the dialog.
-- The `[[` suggestion list has `role="listbox"`, but the textarea does not
-  point at it (`aria-controls`, `aria-activedescendant`), so the options are
-  not announced.
-- No "skip to content" link. Getting from the sidebar to the editor is a lot
-  of tabbing.
-- No `prefers-reduced-motion` rule for the spinner and the sliding sidebar in
-  `styles.css`.
-- Arrow keys do not move through `NoteList`.
-- Add an automated check (axe, through `vitest-axe` or similar) to the page
-  tests so regressions fail CI. Colour contrast in both themes needs checking
-  by hand, since jsdom cannot do it.
 
 ## Later
 
@@ -376,6 +356,29 @@ while the search page is open is no longer overwritten by the text that was in
 the box. Still open: `tag:foo` and `notebook:Work` typed into the box,
 filtering on more than one tag, and the sidebar links, which replace the
 filters instead of adding to them.
+
+### 6. Accessibility pass
+
+Every gap on the list is closed. `Modal` keeps Tab inside the dialog, gives
+the keys to the dialog on top when two are open, and still puts the focus back
+on close. The note textarea points at the `[[` suggestions with
+`aria-controls` and `aria-activedescendant`. The quick switcher already did,
+and now also says how many notes it found. Two skip links lead to the content
+and, when a note is open, to the note. `prefers-reduced-motion` stops the
+spinner, which shows its label instead, and the sliding menu. Up, Down, Home
+and End move through `NoteList`. The page and dialog tests run axe through
+`vitest-axe` with one helper. Only `color-contrast` is off, and `region` for
+parts rendered without the layout. What axe found is fixed: task boxes without
+a name, a heading level skipped above the backlinks, pages without a `main`
+landmark and a second banner inside dialogs. Contrast is covered by
+`styles.contrast.test.ts`, which computes the ratios of the colour pairs in
+`styles.css` for both themes. Muted text, the accent, the danger red, the
+favourite star and the outline of text fields were changed to reach AA. Beyond
+the list: the title field shows its focus, and on narrow screens the closed
+menu is out of reach of Tab. Still open: nobody has used the app with a real
+screen reader yet, the contrast test only knows the pairs listed in it, every
+note in `NoteList` is still its own Tab stop, and the focus does not move into
+the menu when it opens on a narrow screen.
 
 ### 7. Scheduled backups
 
