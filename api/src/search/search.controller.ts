@@ -1,10 +1,11 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { IsString, MaxLength } from 'class-validator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { Page, PaginationQuery } from '../common/pagination';
+import { Page } from '../common/pagination';
+import { NoteFilterQuery } from '../notes/dto/note.dto';
 import { SearchHit, SearchService } from './search.service';
 
-export class SearchQuery extends PaginationQuery {
+export class SearchQuery extends NoteFilterQuery {
   @IsString()
   @MaxLength(200)
   q: string;

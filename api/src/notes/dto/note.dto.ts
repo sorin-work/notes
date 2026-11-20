@@ -87,7 +87,8 @@ export class UpdateNoteDto {
 export const NOTE_SORTS = ['updated', 'created', 'title'] as const;
 export type NoteSort = (typeof NOTE_SORTS)[number];
 
-export class ListNotesQuery extends PaginationQuery {
+/** The notebook and tag filters that the note list and the search share. */
+export class NoteFilterQuery extends PaginationQuery {
   /** A notebook id, or "none" for notes that are not in a notebook. */
   @IsOptional()
   @Matches(/^(none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i, {
@@ -99,7 +100,9 @@ export class ListNotesQuery extends PaginationQuery {
   @IsString()
   @MaxLength(MAX_TAG_LENGTH)
   tag?: string;
+}
 
+export class ListNotesQuery extends NoteFilterQuery {
   @IsOptional()
   @ToBoolean()
   @IsBoolean()
