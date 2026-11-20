@@ -67,7 +67,8 @@ export function SharedNotePage() {
           </div>
         </form>
       ) : (
-        first.error && <ErrorMessage error={first.error} />
+        // Not once the note is open: after the right password the first answer is still the 403 that asked for it.
+        !note && first.error && <ErrorMessage error={first.error} />
       )}
       {note && (
         <article className="shared-note">

@@ -82,6 +82,9 @@ describe('SharedNotePage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Sourdough bread' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+    // Nothing of the refusals is left on the page: not the wrong password, not the first "needs a password".
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/protected by a password/)).not.toBeInTheDocument();
     const posts = calls.filter((call) => call.method === 'POST');
     expect(posts.map((call) => call.body)).toEqual([{ password: 'open says me' }, { password: 'open sesame' }]);
     expect(calls.every((call) => !call.url.includes('open'))).toBe(true);
