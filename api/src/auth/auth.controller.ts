@@ -31,9 +31,16 @@ export class AuthController {
     return this.auth.me(user.id);
   }
 
+  /** Answers with a new token: the old one stopped working with the old password. */
+  @UseGuards(ThrottlerGuard)
   @Patch('password')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto): Promise<void> {
+  changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto): Promise<AuthResult> {
     return this.auth.changePassword(user.id, dto);
+  }
+
+  @Post('logout-all')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  logoutEverywhere(@CurrentUser() user: AuthUser): Promise<void> {
+    return this.auth.logoutEverywhere(user.id);
   }
 }

@@ -12,6 +12,8 @@ model User {
   email        String   @unique
   name         String
   passwordHash String   @map("password_hash")
+  /// Carried in every login token. Bumping it ends all sessions at once.
+  tokenVersion Int      @default(0) @map("token_version")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 

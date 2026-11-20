@@ -10,6 +10,7 @@ describe('AuthController', () => {
     login: jest.fn(),
     me: jest.fn(),
     changePassword: jest.fn(),
+    logoutEverywhere: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -41,9 +42,18 @@ describe('AuthController', () => {
     expect(auth.me).toHaveBeenCalledWith('1');
   });
 
-  it('changes the password of the current user', async () => {
+  it('changes the password of the current user and hands back the new token', async () => {
+    auth.changePassword.mockResolvedValue({ token: 't2', user: { id: '1' } });
     const dto = { currentPassword: 'old-password', newPassword: 'new-password' };
-    await controller.changePassword({ id: '1', email: 'ada@example.com' }, dto);
+    await expect(controller.changePassword({ id: '1', email: 'ada@example.com' }, dto)).resolves.toEqual({
+      token: 't2',
+      user: { id: '1' },
+    });
     expect(auth.changePassword).toHaveBeenCalledWith('1', dto);
+  });
+
+  it('signs the current user out everywhere', async () => {
+    await controller.logoutEverywhere({ id: '1', email: 'ada@example.com' });
+    expect(auth.logoutEverywhere).toHaveBeenCalledWith('1');
   });
 });

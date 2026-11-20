@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { AuthService } from './auth.service';
@@ -14,6 +14,7 @@ describe('AuthService', () => {
     email: 'ada@example.com',
     name: 'Ada',
     passwordHash: '',
+    tokenVersion: 0,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
   };
@@ -40,7 +41,7 @@ describe('AuthService', () => {
       expect(await verifyPassword('correct-horse', data.passwordHash)).toBe(true);
       expect(result.user).toEqual({ id: user.id, email: user.email, name: 'Ada', createdAt: user.createdAt });
       expect(result.user).not.toHaveProperty('passwordHash');
-      expect(jwt.verify(result.token)).toMatchObject({ sub: user.id, email: user.email });
+      expect(jwt.verify(result.token)).toMatchObject({ sub: user.id, ver: 0 });
     });
 
     it('refuses an email that is already registered', async () => {
@@ -58,6 +59,12 @@ describe('AuthService', () => {
       const result = await service.login({ email: user.email, password: 'correct-horse' });
       expect(result.user.email).toBe(user.email);
       expect(jwt.verify(result.token).sub).toBe(user.id);
+    });
+
+    it('puts the current token version in the token', async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...user, tokenVersion: 4 });
+      const result = await service.login({ email: user.email, password: 'correct-horse' });
+      expect(jwt.verify(result.token).ver).toBe(4);
     });
 
     it('gives the same error for a wrong password and an unknown email', async () => {
@@ -87,20 +94,36 @@ describe('AuthService', () => {
   });
 
   describe('changePassword', () => {
-    it('stores a new hash when the current password matches', async () => {
+    it('stores a new hash, bumps the token version and returns a token for it', async () => {
       prisma.user.findUnique.mockResolvedValue(user);
-      prisma.user.update.mockResolvedValue(user);
-      await service.changePassword(user.id, { currentPassword: 'correct-horse', newPassword: 'battery-staple' });
-      const { passwordHash } = prisma.user.update.mock.calls[0][0].data;
+      prisma.user.update.mockResolvedValue({ ...user, tokenVersion: 1 });
+      const result = await service.changePassword(user.id, {
+        currentPassword: 'correct-horse',
+        newPassword: 'battery-staple',
+      });
+      const { passwordHash, tokenVersion } = prisma.user.update.mock.calls[0][0].data;
       expect(await verifyPassword('battery-staple', passwordHash)).toBe(true);
+      expect(tokenVersion).toEqual({ increment: 1 });
+      expect(jwt.verify(result.token)).toMatchObject({ sub: user.id, ver: 1 });
     });
 
     it('refuses when the current password is wrong', async () => {
       prisma.user.findUnique.mockResolvedValue(user);
       await expect(
         service.changePassword(user.id, { currentPassword: 'wrong-one', newPassword: 'battery-staple' }),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logoutEverywhere', () => {
+    it('bumps the token version', async () => {
+      prisma.user.update.mockResolvedValue({ ...user, tokenVersion: 1 });
+      await service.logoutEverywhere(user.id);
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: user.id },
+        data: { tokenVersion: { increment: 1 } },
+      });
     });
   });
 });

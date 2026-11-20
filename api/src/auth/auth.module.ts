@@ -16,7 +16,8 @@ import { JwtAuthGuard } from './jwt-auth.guard';
         signOptions: { expiresIn: config.jwtExpiresIn as `${number}d` },
       }),
     }),
-    // Only the sign-up and login routes use the ThrottlerGuard.
+    // Only the routes that take a password use the ThrottlerGuard: sign-up,
+    // login, and the account changes that ask for it again.
     ThrottlerModule.forRootAsync({
       inject: [APP_CONFIG],
       useFactory: (config: AppConfig) => [{ ttl: 60_000, limit: config.authThrottleLimit }],

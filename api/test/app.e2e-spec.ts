@@ -83,6 +83,52 @@ describe('auth', () => {
   });
 });
 
+describe('account', () => {
+  const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  it('ends the other sessions when the password changes', async () => {
+    const server = app.getHttpServer();
+    const email = `sessions-${Date.now()}@example.com`;
+    const laptop = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+    const phone = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
+
+    await request(server)
+      .patch('/api/auth/password')
+      .set(bearer(laptop.body.token))
+      .send({ currentPassword: 'wrong-one', newPassword: 'password456' })
+      .expect(403);
+    const changed = await request(server)
+      .patch('/api/auth/password')
+      .set(bearer(laptop.body.token))
+      .send({ currentPassword: 'password123', newPassword: 'password456' })
+      .expect(200);
+
+    await request(server).get('/api/notes').set(bearer(phone.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer(laptop.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer(changed.body.token)).expect(200);
+  });
+
+  it('signs out everywhere', async () => {
+    const server = app.getHttpServer();
+    const email = `everywhere-${Date.now()}@example.com`;
+    const first = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+    const second = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
+
+    await request(server).post('/api/auth/logout-all').set(bearer(first.body.token)).expect(204);
+
+    await request(server).get('/api/auth/me').set(bearer(first.body.token)).expect(401);
+    await request(server).get('/api/auth/me').set(bearer(second.body.token)).expect(401);
+    const again = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
+    await request(server).get('/api/auth/me').set(bearer(again.body.token)).expect(200);
+  });
+});
+
 describe('notes', () => {
   it('creates, edits, lists and trashes notes', async () => {
     const { auth } = await signUp();
