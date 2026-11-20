@@ -395,13 +395,15 @@ model, with the name, the read-only flag, `lastUsedAt` and the date. In
 `JwtAuthGuard` a bearer value that starts with `nt_` is looked up by that
 hash instead of being verified as a JWT, and the same place refuses what a
 token may not do: anything but `GET` for a read-only one, and for every token
-the routes marked `@SessionOnly()`, which are the token endpoints under
-`/auth/tokens` and the account changes. Decided on the open points: no scopes
+any route that is not marked `@AllowApiToken()`. Marked are the notes
+themselves and `GET /auth/me`, so the account, the tokens and whatever is
+added later take a login. Decided on the open points: no scopes
 beyond read-only, and requests are throttled per token
 (`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
 minute. Making a token takes the password, so a stolen login cannot make
-itself a credential that outlives it. "Sign out everywhere", a password
-change and a password reset leave tokens alone, but after the last two the
-app lists the tokens that still work and offers to revoke them all at once.
+itself a credential that outlives it. "Sign out everywhere" and a password
+change leave tokens alone, and after a password change the app says how many
+still work and offers to revoke them all at once. A password reset by mail
+revokes them.
 Still to come in a second step: the OpenAPI document at `/api/docs` and the
 `/capture` page.

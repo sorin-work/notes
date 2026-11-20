@@ -422,8 +422,9 @@ stored, and it works once within an hour. It is in the fragment of the link,
 which browsers keep to themselves, so it does not show up in a server log.
 `POST /auth/password-reset/confirm` with `{ token, password }` sets the
 password, bumps the token version, so every session of the account ends, and
-ends the account's other links. Its answer is a new login for the browser
-that did it, like the answer of a password change. Asking again does not cancel a link that is
+ends the account's other links. It revokes the account's API tokens as
+well, because a reset is the way back into an account that someone else may
+have got into. Asking again does not cancel a link that is
 already out. An account has three of them at a time at most, which also
 means three mails an hour at most, and further requests do nothing until one
 runs out or is used. The mail holds fixed text and the link, nothing from
@@ -446,15 +447,19 @@ token is shown once, when it is made, and only its SHA-256 hash is stored. It ac
 - No token can touch the account: listing, making or revoking tokens,
   changing the name, email or password, deleting the account and signing out
   everywhere all answer `403`. `GET /auth/me` works. Sign in for the rest.
+  In the code a route takes a token only when it is marked
+  `@AllowApiToken()`, so a route added later is closed to tokens until
+  someone opens it.
 - Each token may make `API_TOKEN_THROTTLE_LIMIT` requests a minute, 120
   unless set. After that the answer is `429` with a `Retry-After` header.
 
-Tokens do not expire. Changing the password and signing out everywhere end
+Tokens do not expire. Signing out everywhere and changing the password end
 logins, not tokens: a script that stops without a word is worse than one
-that goes on. Instead, after a password change or a reset the web app lists
-the tokens that still work and offers to revoke them all in one click
-(`DELETE /auth/tokens`). A token ends when it is revoked or the account is
-deleted. An account can have 20 of them.
+that goes on. After a password change the web app says how many tokens
+still work and offers to revoke them all in one click
+(`DELETE /auth/tokens`). A password reset by mail does revoke them all. A
+token also ends when it is revoked by itself or the account is deleted. An
+account can have 20 of them.
 
 | Method & path                                                  | What it does                              |
 | -------------------------------------------------------------- | ----------------------------------------- |
