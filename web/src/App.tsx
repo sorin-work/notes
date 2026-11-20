@@ -1,10 +1,12 @@
 import { Navigate, Route, Routes } from 'react-router';
 import { GuestOnly, RequireAuth } from './auth/guards';
 import { Layout } from './components/Layout';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
 import { NotesPage } from './pages/NotesPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { RegisterPage } from './pages/RegisterPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SharedNotePage } from './pages/SharedNotePage';
@@ -29,6 +31,9 @@ export function App() {
           </GuestOnly>
         }
       />
+      {/* Open to everyone: someone who forgot the password can still be signed in somewhere. */}
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/s/:token" element={<SharedNotePage />} />
       <Route
         element={

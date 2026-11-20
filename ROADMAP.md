@@ -29,7 +29,7 @@ couple of weekends, **L** several weeks of spare time.
 | 8   | Edit conflict detection                | Later   | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Later   | both     | M    | -          |
-| 11  | Account settings and sessions          | Later   | both     | M    | -          |
+| 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Later   | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
@@ -121,28 +121,10 @@ A share link is all or nothing: one note, public until I stop sharing.
   text because `MarkdownPreview` gets no `onWikiLink` there. When the target
   is shared as well (always true inside a shared notebook) it could link to
   that share.
-- The public endpoint is not rate limited (`ThrottlerGuard` is only on
-  sign-up and login) and every fetch bumps `viewCount`, my own included.
-  Throttle it, and skip the count when the request carries the owner's token.
-
-### 11. Account settings and sessions
-
-Settings can change the password and nothing else about the account.
-
-- Change name and email: `PATCH /auth/me`, asking for the current password
-  when the email changes. The Account card in `SettingsPage` shows both
-  read-only for now.
-- Delete account: `DELETE /auth/me` with the password. The schema already
-  cascades from `User` to notebooks, notes and tags, so it is one delete plus
-  a confirm dialog that offers the export first.
-- Sign out everywhere: logins are stateless JWTs valid for `JWT_EXPIRES_IN`
-  (seven days) and `JwtAuthGuard` only checks the signature, so changing the
-  password does not end a forgotten session. A `tokenVersion` on `User`, put
-  in the token and compared in the guard, fixes that at the price of a user
-  lookup per request.
-- Password reset by email belongs here too, but needs outgoing mail (SMTP
-  settings, and something like mailpit in compose for development). I would
-  do it last.
+- The public endpoint is not rate limited (`ThrottlerGuard` is only on the
+  routes that take a password) and every fetch bumps `viewCount`, my own
+  included. Throttle it, and skip the count when the request carries the
+  owner's token.
 
 ### 12. More import sources and export formats
 
@@ -258,7 +240,8 @@ shows up in their sidebar. Depends on item 8.
   `where: { id, userId }`. That has to become one shared access check: the
   owner, or a member of the note's notebook.
 - `NotebookMember` model with a role (read or edit). Inviting an address that
-  has no account yet needs outgoing mail.
+  has no account yet needs a mail, which `MailService` can send since the
+  password reset.
 - Tricky: tags belong to a user (`@@unique([userId, name])`) and `[[links]]`
   resolve by title among one user's notes (`LinksService.resolveKeys`). In a
   shared notebook, whose tags and whose titles? The simplest rule is that
@@ -341,26 +324,31 @@ filters instead of adding to them.
 
 ### 6. Accessibility pass
 
-Every gap on the list is closed. `Modal` keeps Tab inside the dialog, gives
-the keys to the dialog on top when two are open, and still puts the focus back
-on close. The note textarea points at the `[[` suggestions with
-`aria-controls` and `aria-activedescendant`. The quick switcher already did,
-and now also says how many notes it found. Two skip links lead to the content
-and, when a note is open, to the note. `prefers-reduced-motion` stops the
-spinner, which shows its label instead, and the sliding menu. Up, Down, Home
-and End move through `NoteList`. The page and dialog tests run axe through
-`vitest-axe` with one helper. Only `color-contrast` is off, and `region` for
-parts rendered without the layout. What axe found is fixed: task boxes without
-a name, a heading level skipped above the backlinks, pages without a `main`
-landmark and a second banner inside dialogs. Contrast is covered by
+Every gap on the list is closed. `Modal` keeps Tab inside the dialog and gives
+the keys to the dialog on top when two are open. Opening a second dialog from
+a first leaves the focus in the second. On close the focus goes back to where
+it was, or to the main region when that control is gone. The note textarea
+points at the `[[` suggestions with `aria-controls` and
+`aria-activedescendant`. The quick switcher already did, and now also says how
+many notes it found. Two skip links lead to the content and, when a note is
+open, to the note. `prefers-reduced-motion` stops the spinner, which shows its
+label instead, and the sliding menu. Up, Down, Home and End move through
+`NoteList`. The page and dialog tests run axe through `vitest-axe` with one
+helper, on every page of the app including sign-in, sign-up and the password
+reset pages. Only `color-contrast` is off, and `region` for parts rendered
+without the layout. What axe found is fixed: task boxes without a name, a
+heading level skipped above the backlinks, pages without a `main` landmark and
+a second banner inside dialogs. Contrast is covered by
 `styles.contrast.test.ts`, which computes the ratios of the colour pairs in
 `styles.css` for both themes. Muted text, the accent, the danger red, the
-favourite star and the outline of text fields were changed to reach AA. Beyond
-the list: the title field shows its focus, and on narrow screens the closed
-menu is out of reach of Tab. Still open: nobody has used the app with a real
-screen reader yet, the contrast test only knows the pairs listed in it, every
-note in `NoteList` is still its own Tab stop, and the focus does not move into
-the menu when it opens on a narrow screen.
+colour of links to missing notes, the favourite star and the outline of text
+fields were changed to reach AA. Beyond the list: the title field shows its
+focus, on narrow screens the closed menu is out of reach of Tab, and `/` no
+longer opens that menu on a wide screen, where its shade had squeezed the
+page. Still open: nobody has used the app with a real screen reader yet, the
+contrast test only knows the pairs listed in it, every note in `NoteList` is
+still its own Tab stop, and the focus does not move into the menu when it
+opens on a narrow screen.
 
 ### 7. Scheduled backups
 
@@ -378,6 +366,33 @@ restore into a scratch database and a row count of every table. Still open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
+
+### 11. Account settings and sessions
+
+Settings can now change the name and the email (`PATCH /auth/me`, the email
+only with the current password), delete the account with everything in it
+(`DELETE /auth/me` with the password, behind a dialog that offers the export
+first) and sign out everywhere (`POST /auth/logout-all`). Sessions end
+through a `tokenVersion` on `User` that every token carries and
+`JwtAuthGuard` compares on each request, at the price of one small query per
+request. Changing the password bumps it too and gives the browser that made
+the change a new token. Different from the design: a wrong password on these
+routes answers `403` instead of `401`, because the web app signs out on any
+`401`, and the routes are throttled like login.
+
+Password reset by email came last, as planned. "Forgot password?" on the
+sign-in page mails a link that works once, for an hour. Only a hash of its
+token is stored, using it signs the account out everywhere and ends the
+account's other links, and the request answers the same whether or not the
+address has an account. An account has three links out at most, and asking
+again never cancels one, so nobody can keep a stranger's link from working
+or flood a mailbox. Mail goes out through nodemailer over SMTP (`SMTP_HOST`
+and friends), over TLS unless told otherwise, with mailpit in
+`docker-compose.yml` to catch it during development. Without SMTP settings
+the reset is off and the link is hidden. Along the way the throttles learned
+to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
+address is not verified, the mail is plain text in English only, and nothing
+but the API log tells me when a mail could not be sent.
 
 ### 18. Graph view and unlinked mentions
 

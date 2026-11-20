@@ -16,6 +16,9 @@ function isSwitcherKey(event: KeyboardEvent): boolean {
   return modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k';
 }
 
+/** The width below which styles.css turns the sidebar into a menu. */
+const NARROW_SCREEN = '(max-width: 820px)';
+
 /** The skip links move the focus without putting their "#id" in the address. */
 function skipTo(event: MouseEvent<HTMLAnchorElement>) {
   event.preventDefault();
@@ -32,8 +35,9 @@ export function Layout() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === '/' && !isTyping(event.target) && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        // On a narrow screen the sidebar is hidden until the menu is open, and a hidden box cannot take the focus.
-        flushSync(() => setMenuOpen(true));
+        // On a narrow screen the sidebar is a menu that is hidden until it is open, and a hidden box cannot
+        // take the focus. A wide screen has no menu to open.
+        if (window.matchMedia?.(NARROW_SCREEN).matches) flushSync(() => setMenuOpen(true));
         document.getElementById('global-search')?.focus();
       } else if (isSwitcherKey(event)) {
         // Unlike "/", this one has to work while typing: the editor is where it is used most.

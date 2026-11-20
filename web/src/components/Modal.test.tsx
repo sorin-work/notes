@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useCallback, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -51,6 +51,76 @@ describe('Modal', () => {
 
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
+  });
+
+  it('leaves the focus in a dialog that is opened from another one', async () => {
+    // The outer dialog gets a new onClose on every render, as most callers pass one.
+    function Nested() {
+      const [confirming, setConfirming] = useState(false);
+      return (
+        <Modal title="Version history" onClose={() => undefined}>
+          <button type="button">First version</button>
+          <button type="button" onClick={() => setConfirming(true)}>
+            Restore
+          </button>
+          {confirming && (
+            <Modal title="Restore this version?" onClose={() => setConfirming(false)}>
+              <button type="button">Yes, restore</button>
+            </Modal>
+          )}
+        </Modal>
+      );
+    }
+    render(<Nested />);
+    expect(screen.getByRole('button', { name: 'First version' })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    expect(screen.getByRole('button', { name: 'Yes, restore' })).toHaveFocus();
+    await userEvent.tab();
+    expect(
+      within(screen.getByRole('dialog', { name: 'Restore this version?' })).getByRole('button', { name: 'Close' }),
+    ).toHaveFocus();
+
+    // Closing the inner one goes back to the button that opened it, not to the first one.
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Restore this version?' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restore' })).toHaveFocus();
+  });
+
+  it('puts the focus on the main region when what opened the dialog is gone', async () => {
+    function Trashable() {
+      const [open, setOpen] = useState(false);
+      const [trashed, setTrashed] = useState(false);
+      return (
+        <main>
+          <h1>Notes</h1>
+          {!trashed && (
+            <button type="button" onClick={() => setOpen(true)}>
+              Delete
+            </button>
+          )}
+          {open && (
+            <Modal title="Move to trash?" onClose={() => setOpen(false)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setTrashed(true);
+                  setOpen(false);
+                }}
+              >
+                Move to trash
+              </button>
+            </Modal>
+          )}
+        </main>
+      );
+    }
+    render(<Trashable />);
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveFocus();
   });
 
   it('gives Escape to the dialog on top only', async () => {
