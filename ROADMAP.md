@@ -31,7 +31,7 @@ couple of weekends, **L** several weeks of spare time.
 | 10  | Share link options                     | Later   | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
-| 13  | Personal API tokens                    | Later   | both     | M    | -          |
+| 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
@@ -189,27 +189,6 @@ That covers Obsidian and this app, and not much else.
   `@media print` rules) gives PDF through the browser. A full JSON backup
   that includes the trash and version history would cover what the zip
   leaves out.
-
-### 13. Personal API tokens
-
-To script against the API today you log in with email and password and get a
-seven-day JWT. I want long-lived tokens that I create and revoke in Settings,
-for things like a shell alias that appends a line to a note or a cron job
-that downloads the export.
-
-- `ApiToken` model: name, hash of the token, a read-only flag, `lastUsedAt`.
-  The token itself is shown once, when it is created.
-- `JwtAuthGuard` gets a second path: a bearer value with a known prefix (say
-  `nt_`) is looked up by hash instead of being verified as a JWT.
-  `bearerToken()` stays as it is.
-- Endpoints under `/auth/tokens` and a card in `SettingsPage`.
-- Document the API while at it. `@nestjs/swagger` can build an OpenAPI
-  document mostly from the existing DTO classes, served at `/api/docs`, and
-  the endpoint table in the README can then shrink.
-- Undecided: scopes beyond read-only, and rate limiting for token requests
-  (only the auth routes are throttled). A "save this page" bookmarklet is
-  better done as a `/capture?title=&url=` page in the web app, which needs
-  neither a token nor CORS.
 
 ### 14. Offline mode and installable app
 
@@ -399,3 +378,20 @@ through nodemailer over plain SMTP (`SMTP_HOST` and friends), with mailpit in
 the reset is off and the link is hidden. Still open: a new email address is
 not verified, the mail is plain text in English only, and nothing but the API
 log tells me when a mail could not be sent.
+
+### 13. Personal API tokens
+
+Settings has an "API tokens" card: name a token, tick read-only if it should
+only read, copy it once. Only its SHA-256 hash is kept in the new `ApiToken`
+model, with the name, the read-only flag, `lastUsedAt` and the date. In
+`JwtAuthGuard` a bearer value that starts with `nt_` is looked up by that
+hash instead of being verified as a JWT, and the same place refuses what a
+token may not do: anything but `GET` for a read-only one, and for every token
+the routes marked `@SessionOnly()`, which are the token endpoints under
+`/auth/tokens` and the account changes. Decided on the open points: no scopes
+beyond read-only, and requests are throttled per token
+(`API_TOKEN_THROTTLE_LIMIT` a minute). `lastUsedAt` is written at most once a
+minute. "Sign out everywhere" and a password change leave tokens alone. Still
+to come in a second step: the OpenAPI document at `/api/docs` and the
+`/capture` page. Still open after that: a token made from a stolen login
+outlives signing out, so creating one could ask for the password.
