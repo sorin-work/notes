@@ -66,6 +66,8 @@ Markdown import/export.
   link shows as its words. Notes and notebooks that a shared notebook makes
   public say so, and moving something into a shared notebook asks first.
   Stopping sharing kills the link; notes in the trash are never served.
+  A shared notebook never shows its templates: they are not listed, cannot
+  be opened through it, and a link to one reads as its words.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
@@ -642,7 +644,8 @@ A notebook is shared the same way under `/notebooks/:id/share`. Its link
 answers with `"kind": "notebook"`, the name and the list of its notes, and
 `GET /public/notes/:token/:noteId` gives one of them. Which notes belong to
 the notebook is looked up with every request: a note added later is there,
-and one that is moved out or put in the trash answers `404` from then on.
+and one that is moved out, put in the trash or turned into a template
+answers `404` from then on.
 The answer to the right password has an `access` value. Sent back in an
 `X-Share-Access` header it opens the notes of the notebook for an hour, so
 the password is typed once and only real attempts count against the limit.
