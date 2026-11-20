@@ -10,32 +10,33 @@ What the app does today is in the [README](README.md).
 - **Next**: small or well understood. I would start with these.
 - **Later**: worth doing, but bigger or waiting on a decision.
 - **Maybe**: not sure yet that they are worth the extra complexity.
+- **Shipped**: done. What was built is at the end of this file.
 
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
 
 ## Overview
 
-| #   | Item                                   | Group | Area     | Size | Depends on |
-| --- | -------------------------------------- | ----- | -------- | ---- | ---------- |
-| 1   | Clickable task lists in the preview    | Next  | frontend | S    | -          |
-| 2   | Changes view in version history        | Next  | frontend | S    | -          |
-| 3   | Quick switcher                         | Next  | frontend | S    | -          |
-| 4   | Search filters, phrases and paging     | Next  | both     | M    | -          |
-| 5   | Rename a note without breaking links   | Next  | both     | M    | -          |
-| 6   | Accessibility pass                     | Next  | frontend | M    | -          |
-| 7   | Scheduled backups                      | Next  | infra    | S    | -          |
-| 8   | Edit conflict detection                | Later | both     | M    | -          |
-| 9   | Attachments and pasted images          | Later | both     | L    | -          |
-| 10  | Share link options                     | Later | both     | M    | -          |
-| 11  | Account settings and sessions          | Later | both     | M    | -          |
-| 12  | More import sources and export formats | Later | both     | M    | -          |
-| 13  | Personal API tokens                    | Later | both     | M    | -          |
-| 14  | Offline mode and installable app       | Later | both     | L    | 8          |
-| 15  | Deeper notebook nesting                | Maybe | both     | M    | -          |
-| 16  | Templates and daily notes              | Maybe | both     | M    | -          |
-| 17  | Notebooks shared with other accounts   | Maybe | both     | L    | 8          |
-| 18  | Graph view and unlinked mentions       | Maybe | both     | M    | -          |
+| #   | Item                                   | Group   | Area     | Size | Depends on |
+| --- | -------------------------------------- | ------- | -------- | ---- | ---------- |
+| 1   | Clickable task lists in the preview    | Next    | frontend | S    | -          |
+| 2   | Changes view in version history        | Next    | frontend | S    | -          |
+| 3   | Quick switcher                         | Next    | frontend | S    | -          |
+| 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
+| 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
+| 6   | Accessibility pass                     | Next    | frontend | M    | -          |
+| 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
+| 8   | Edit conflict detection                | Later   | both     | M    | -          |
+| 9   | Attachments and pasted images          | Later   | both     | L    | -          |
+| 10  | Share link options                     | Later   | both     | M    | -          |
+| 11  | Account settings and sessions          | Later   | both     | M    | -          |
+| 12  | More import sources and export formats | Later   | both     | M    | -          |
+| 13  | Personal API tokens                    | Later   | both     | M    | -          |
+| 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
+| 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
+| 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
+| 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
+| 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
 
 ## Next
 
@@ -148,22 +149,6 @@ keyboard or with a screen reader. Gaps I already know about:
 - Add an automated check (axe, through `vitest-axe` or similar) to the page
   tests so regressions fail CI. Colour contrast in both themes needs checking
   by hand, since jsdom cannot do it.
-
-### 7. Scheduled backups
-
-Everything lives in the `db-data` volume. The only backup today is
-remembering to click "Export all notes", and that zip leaves out the trash,
-version history and share links.
-
-- A `backup` service in `docker-compose.yml` behind a compose profile that
-  runs `pg_dump` (already in the `postgres:17-alpine` image) once a day into
-  a mounted folder and keeps the last N dumps.
-- A "Backup and restore" section in the README with the restore command.
-- A restore that is never tested is not a backup: a CI step that dumps the
-  end-to-end test database, restores it into a scratch database and compares
-  row counts would cover it.
-- Undecided: cron inside a container is clumsy. A shell loop with `sleep` is
-  probably enough for one dump a day.
 
 ## Later
 
@@ -388,3 +373,20 @@ Two ways to get more out of the links that are already stored.
   ("Ideas") will be noisy.
 - A cheaper first step: an "Orphans" filter for notes with no links in or
   out.
+
+## Shipped
+
+### 7. Scheduled backups
+
+A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
+`scripts/backup.sh` in the `postgres:17-alpine` image: a `pg_dump` into
+`./backups` once a day, keeping the newest seven. It is a shell loop with
+`sleep` rather than cron, and it goes by the age of the newest dump, so a
+restart does not add one. Beyond the design, the same script restores
+(`backup restore <file>`), loading the dump into a new database that replaces
+the old one only when the load worked. The README has the commands, and CI
+runs `scripts/check-backup.sh` after the end-to-end tests: three dumps while
+keeping two, a restore into a scratch database and a row count of every
+table. Still open: the dumps are not encrypted, they stay on the same machine
+unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
+apart from the service log.
