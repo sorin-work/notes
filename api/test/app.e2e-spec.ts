@@ -10,14 +10,35 @@ import JSZip from 'jszip';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
 process.env.AUTH_THROTTLE_LIMIT ??= '1000';
 process.env.SEED_DEMO = 'false';
+// Mail is switched on, but nothing leaves the process: the transport below
+// stands in for SMTP and keeps what it is given.
+process.env.SMTP_HOST = 'smtp.invalid';
+process.env.SMTP_FROM = 'Notes <notes@example.com>';
+process.env.APP_URL = 'http://notes.test';
 
 let app: INestApplication<App>;
 let counter = 0;
+
+const outbox: (OutgoingMail & { from: string })[] = [];
+const fakeTransport: MailTransport = {
+  sendMail: (message) => Promise.resolve(void outbox.push(message)),
+};
+
+/** Reset mails are sent after the request has been answered, so give them a moment. */
+async function mailTo(address: string): Promise<OutgoingMail & { from: string }> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const mail = outbox.find((message) => message.to === address);
+    if (mail) return mail;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`No mail to ${address}`);
+}
 
 async function signUp(): Promise<{ token: string; auth: { Authorization: string } }> {
   const email = `e2e-${Date.now()}-${++counter}@example.com`;
@@ -29,7 +50,10 @@ async function signUp(): Promise<{ token: string; auth: { Authorization: string 
 }
 
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(MAIL_TRANSPORT)
+    .useValue(fakeTransport)
+    .compile();
   app = moduleRef.createNestApplication();
   setupApp(app);
   await app.init();
@@ -181,6 +205,65 @@ describe('account', () => {
     await request(server).get('/api/notes').set(auth).expect(401);
     await request(server).get(`/api/public/notes/${share.body.token}`).expect(404);
     await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(401);
+  });
+});
+
+describe('password reset', () => {
+  const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  it('sets a new password through the mailed link and ends every session', async () => {
+    const server = app.getHttpServer();
+    const email = `forgot-${Date.now()}@example.com`;
+    const session = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+
+    const status = await request(server).get('/api/auth/password-reset').expect(200);
+    expect(status.body).toEqual({ enabled: true });
+
+    const asked = await request(server)
+      .post('/api/auth/password-reset')
+      .send({ email: email.toUpperCase() })
+      .expect(204);
+    expect(asked.text).toBe('');
+
+    const mail = await mailTo(email);
+    expect(mail.from).toBe('Notes <notes@example.com>');
+    const token = /^http:\/\/notes\.test\/reset-password\?token=([\w-]+)$/m.exec(mail.text)?.[1];
+    expect(token).toBeDefined();
+
+    await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'short' }).expect(400);
+    await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password456' }).expect(204);
+
+    await request(server).get('/api/auth/me').set(bearer(session.body.token)).expect(401);
+    await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(401);
+    await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+
+    // The link worked once.
+    await request(server).post('/api/auth/password-reset/confirm').send({ token, password: 'password789' }).expect(400);
+    await request(server).post('/api/auth/login').send({ email, password: 'password456' }).expect(200);
+  });
+
+  it('answers the same for an address without an account, and mails nothing', async () => {
+    const server = app.getHttpServer();
+    const nobody = `nobody-${Date.now()}@example.com`;
+    const known = `somebody-${Date.now()}@example.com`;
+    await request(server).post('/api/auth/register').send({ email: known, name: 'Ada', password: 'password123' });
+
+    const forNobody = await request(server).post('/api/auth/password-reset').send({ email: nobody }).expect(204);
+    const forKnown = await request(server).post('/api/auth/password-reset').send({ email: known }).expect(204);
+    expect(forNobody.text).toBe(forKnown.text);
+
+    // The request for the unknown address came first, so it is done by now.
+    await mailTo(known);
+    expect(outbox.some((message) => message.to === nobody)).toBe(false);
+
+    await request(server).post('/api/auth/password-reset').send({ email: 'not-an-email' }).expect(400);
+    await request(server)
+      .post('/api/auth/password-reset/confirm')
+      .send({ token: 'made-up-token', password: 'password456' })
+      .expect(400);
   });
 });
 
