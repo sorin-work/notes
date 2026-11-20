@@ -30,6 +30,7 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { notify } from '../lib/notices';
+import { cannotReachServer, onSent, outboxEntryFor, queueText, resolveEntry, useOutbox } from '../lib/outbox';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { fromTemplate } from '../lib/templates';
@@ -89,8 +90,10 @@ function LoadedEditor({ note }: { note: Note }) {
   const titleRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
-  const [title, setTitle] = useState(note.title);
-  const [content, setContent] = useState(note.content);
+  // Text kept on this device that the server has not seen yet is newer than the note it came with.
+  const [queuedAtOpen] = useState(() => outboxEntryFor(note.id));
+  const [title, setTitle] = useState(queuedAtOpen?.title ?? note.title);
+  const [content, setContent] = useState(queuedAtOpen?.content ?? note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
   // A move into a shared notebook waits for a yes: it makes the note public.
@@ -107,7 +110,7 @@ function LoadedEditor({ note }: { note: Note }) {
   // The revision the text in this editor is based on. `note.revision` will
   // not do: the cached note is refreshed and changed by other things, while
   // the text here only moves on with a save, a restore or a settled conflict.
-  const revision = useRef(note.revision);
+  const revision = useRef(queuedAtOpen?.baseRevision ?? note.revision);
   // Set by "keep mine, put theirs in the history" for the save that follows.
   const keepTheirs = useRef(false);
 
@@ -148,12 +151,26 @@ function LoadedEditor({ note }: { note: Note }) {
     async (draft: Draft) => {
       const isText = (server: Note, sent: Draft) =>
         server.title === savedTitle(sent.title) && server.content === sent.content;
+      // While this note has text waiting on the device, newer text joins it
+      // there, so that the changes to the note reach the server in order.
+      if (ownerId && outboxEntryFor(note.id)) {
+        await queueText(ownerId, note.id, draft, revision.current);
+        return;
+      }
       for (;;) {
         const changes = { ...draft, revision: revision.current, keepVersion: keepTheirs.current || undefined };
         try {
           adopt(await updateNote(note.id, changes));
           break;
         } catch (error) {
+          if (ownerId && cannotReachServer(error)) {
+            // Kept on the device and sent when the server can be reached. The
+            // text may have arrived all the same; the outbox will recognise it.
+            await queueText(ownerId, note.id, draft, revision.current, [...unanswered.current, draft]);
+            unanswered.current = [];
+            keepTheirs.current = false;
+            return;
+          }
           const theirs = staleNote(error);
           if (theirs && isText(theirs, draft)) {
             // The server already holds exactly this text. There is nothing to decide.
@@ -243,6 +260,35 @@ function LoadedEditor({ note }: { note: Note }) {
     farewell,
   );
   const theirs = staleNote(autosave.conflict);
+
+  // What this note has waiting on the device. When the outbox sends it, the
+  // text here is on the server, at the revision the answer names.
+  const queued = useOutbox().find((entry) => entry.noteId === note.id) ?? null;
+  useEffect(
+    () =>
+      onSent((saved) => {
+        if (saved.id !== note.id) return;
+        revision.current = saved.revision;
+        unanswered.current = [];
+      }),
+    [note.id],
+  );
+  // The outbox met a newer note on the server. It keeps the text and asks, here, the usual question.
+  const [queuedQuestionClosed, setQueuedQuestionClosed] = useState(false);
+  const takeTheirsQueued = useMutation({
+    mutationFn: async () => {
+      const current = await getNote(note.id).catch(() => queued?.theirs ?? null);
+      await resolveEntry(note.id, 'theirs');
+      return current;
+    },
+    onSuccess: (current) => {
+      if (!current) return;
+      autosave.discard();
+      setTitle(current.title);
+      setContent(current.content);
+      adopt(current);
+    },
+  });
 
   // Signing out asks whether everything is saved, and can give the draft up.
   useEffect(
@@ -584,7 +630,9 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const words = countWords(content);
   const statusText = {
-    saved: `Saved ${formatRelative(note.updatedAt)}`,
+    saved: queued
+      ? 'Kept on this device, to be sent when the server can be reached'
+      : `Saved ${formatRelative(note.updatedAt)}`,
     pending: 'Unsaved changes',
     saving: 'Saving…',
     error: 'Could not save. Retrying on the next change.',
@@ -885,6 +933,31 @@ function LoadedEditor({ note }: { note: Note }) {
             refreshLists();
           }}
         />
+      )}
+      {queued?.state === 'conflict' && !queuedQuestionClosed && (
+        <ConflictDialog
+          onKeepBoth={() => void resolveEntry(note.id, 'both')}
+          onKeepMine={() => void resolveEntry(note.id, 'mine')}
+          onTakeTheirs={() => takeTheirsQueued.mutate()}
+          busy={takeTheirsQueued.isPending}
+          error={takeTheirsQueued.error}
+          onClose={() => setQueuedQuestionClosed(true)}
+        />
+      )}
+      {queued?.state === 'conflict' && queuedQuestionClosed && (
+        <div className="banner banner-info" role="alert">
+          <span>
+            Changes made here without a connection meet a newer version of this note. Nothing is sent until you decide.
+          </span>
+          <button type="button" className="button button-primary" onClick={() => setQueuedQuestionClosed(false)}>
+            Decide what to keep
+          </button>
+        </div>
+      )}
+      {queued?.state === 'stuck' && (
+        <div className="banner banner-info" role="alert">
+          <span>Changes made here without a connection could not be sent: {queued.problem}</span>
+        </div>
       )}
       {dialog === 'conflict' && theirs && (
         <ConflictDialog
