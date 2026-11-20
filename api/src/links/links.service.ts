@@ -81,12 +81,25 @@ export class LinksService {
   }
 
   /**
-   * Whether a note outside the trash has this title. Links to a title lead
-   * somewhere only then. Pass the transaction to ask from inside one.
+   * Whether a note outside the trash has this title, leaving the note
+   * `except` out of it. Links to a title lead somewhere only then. Pass the
+   * transaction as `db` to ask from inside one.
    */
-  async titleTaken(userId: string, title: string, db: RawQueries = this.prisma): Promise<boolean> {
-    const key = normalizeTitle(title);
-    return (await this.resolveKeys(userId, [key], db)).has(key);
+  async titleTaken(
+    userId: string,
+    title: string,
+    { except = null, db = this.prisma }: { except?: string | null; db?: RawQueries } = {},
+  ): Promise<boolean> {
+    // The same comparison as in resolveKeys below.
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT id
+      FROM notes
+      WHERE user_id = ${userId}::uuid
+        AND deleted_at IS NULL
+        AND lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) = ${normalizeTitle(title)}
+        AND (${except}::uuid IS NULL OR id <> ${except}::uuid)
+      LIMIT 1`;
+    return rows.length > 0;
   }
 
   /** The most recently edited note outside the trash with this title. */
@@ -99,16 +112,12 @@ export class LinksService {
     return note;
   }
 
-  private async resolveKeys(
-    userId: string,
-    keys: string[],
-    db: RawQueries = this.prisma,
-  ): Promise<Map<string, string>> {
+  private async resolveKeys(userId: string, keys: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     if (keys.length === 0) return result;
     // Titles are matched case-insensitively. Prisma cannot express
     // lower(title) IN (...), so this compares in SQL directly.
-    const rows = await db.$queryRaw<{ id: string; key: string }[]>`
+    const rows = await this.prisma.$queryRaw<{ id: string; key: string }[]>`
       SELECT DISTINCT ON (key) id, key
       FROM (
         SELECT id, lower(regexp_replace(btrim(title), '\\s+', ' ', 'g')) AS key, updated_at

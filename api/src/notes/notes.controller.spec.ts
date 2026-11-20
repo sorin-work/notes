@@ -53,12 +53,10 @@ describe('NotesController', () => {
 
   it('counts and rewrites the links a rename left behind', async () => {
     notes.orphanedLinkCount.mockResolvedValue(3);
-    notes.renameLinks.mockResolvedValue({ updated: 3, title: 'Project Atlas' });
+    const renamed = { updated: 3, skipped: 0, title: 'Project Atlas', noteIds: ['n2', 'n3', 'n4'] };
+    notes.renameLinks.mockResolvedValue(renamed);
     await expect(controller.orphanedLinks(user, 'n1', { from: 'Atlas' })).resolves.toEqual({ count: 3 });
-    await expect(controller.renameLinks(user, 'n1', { from: 'Atlas' })).resolves.toEqual({
-      updated: 3,
-      title: 'Project Atlas',
-    });
+    await expect(controller.renameLinks(user, 'n1', { from: 'Atlas' })).resolves.toEqual(renamed);
     expect(notes.orphanedLinkCount).toHaveBeenCalledWith('user-1', 'n1', 'Atlas');
     expect(notes.renameLinks).toHaveBeenCalledWith('user-1', 'n1', 'Atlas');
   });

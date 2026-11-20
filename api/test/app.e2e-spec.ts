@@ -313,7 +313,13 @@ describe('renaming a note', () => {
     expect(await orphaned(auth, target.id, 'Project')).toEqual({ count: 0 });
 
     const renamed = await renameLinks(auth, target.id, { from: ' atlas ' }).expect(200);
-    expect(renamed.body).toEqual({ updated: 2, title: 'Project Atlas' });
+    expect(renamed.body).toEqual({
+      updated: 2,
+      skipped: 0,
+      title: 'Project Atlas',
+      noteIds: expect.arrayContaining([sync.id, ideas.id]),
+    });
+    expect(renamed.body.noteIds).toHaveLength(2);
 
     const syncAfter = await getNote(auth, sync.id);
     expect(syncAfter.content).toBe(
@@ -385,6 +391,20 @@ describe('renaming a note', () => {
     expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
     expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
     expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+
+    // A note with no title is stored as "Untitled", which is nothing to link to.
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: '' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.updated).toBe(0);
+
+    // When a second note has the new title, the links could end up leading to that one.
+    const namesake = await createNote(auth, 'Plan');
+    await request(server).patch(`/api/notes/${target.id}`).set(auth).send({ title: 'plan' }).expect(200);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 0 });
+    expect((await renameLinks(auth, target.id, { from: 'Atlas' }).expect(200)).body.noteIds).toEqual([]);
+    expect((await getNote(auth, source.id)).content).toBe('About [[Atlas]].');
+    await request(server).delete(`/api/notes/${namesake.id}`).set(auth).expect(204);
+    expect(await orphaned(auth, target.id, 'Atlas')).toEqual({ count: 1 });
 
     await renameLinks(auth, target.id, {}).expect(400);
     await renameLinks(auth, target.id, { from: '   ' }).expect(400);
