@@ -17,9 +17,9 @@ import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
 import { Backlink, LinksService, OutgoingLink } from '../links/links.service';
 import { ExportService } from '../transfer/export.service';
-import { CreateNoteDto, ListNotesQuery, ResolveQuery, TitleQuery, UpdateNoteDto } from './dto/note.dto';
+import { CreateNoteDto, ListNotesQuery, RenameLinksDto, ResolveQuery, TitleQuery, UpdateNoteDto } from './dto/note.dto';
 import type { NoteSummary, NoteView } from './note-view';
-import { NotesService } from './notes.service';
+import { NotesService, RenamedLinks } from './notes.service';
 
 @Controller('notes')
 export class NotesController {
@@ -77,6 +77,27 @@ export class NotesController {
   @Get(':id/links')
   outgoing(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<OutgoingLink[]> {
     return this.links.outgoing(user.id, id);
+  }
+
+  /** How many notes still link to `from`, the title this note had before it was renamed. */
+  @Get(':id/rename-links')
+  async orphanedLinks(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: RenameLinksDto,
+  ): Promise<{ count: number }> {
+    return { count: await this.notes.orphanedLinkCount(user.id, id, query.from) };
+  }
+
+  /** Rewrites those links to the title the note has now. */
+  @Post(':id/rename-links')
+  @HttpCode(HttpStatus.OK)
+  renameLinks(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RenameLinksDto,
+  ): Promise<RenamedLinks> {
+    return this.notes.renameLinks(user.id, id, dto.from);
   }
 
   @Get(':id/export')
