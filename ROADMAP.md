@@ -402,20 +402,31 @@ but the API log tells me when a mail could not be sent.
 
 ### 18. Graph view and unlinked mentions
 
-The Orphans view and the unlinked mentions are built. The graph is the other
-half and follows in a change of its own. Orphans is a view in the sidebar,
-`GET /notes?orphans=true`, for notes that link nowhere and that no note
-outside the trash links to. It combines with the notebook and tag selects.
-Under the backlinks, `UnlinkedMentions` lists the notes that write the title
-of the open note without linking to it (`GET /notes/:id/mentions`). The
-full-text index names the candidates with a phrase query, and `findMention`
-beside `extractWikiLinks` then reads each one: whole words, the same title key
-as `NoteLink.targetKey`, nothing inside code, links, images or URLs. Titles
-under three characters get no mentions, and neither do titles that cannot be
-written as a link. The list is paged, and only the 200 newest candidates are
-read. "Link" (`POST /notes/:id/mentions/:sourceId/link`) wraps the first
-mention in the other note inside one transaction, saves its old text as a
-version, syncs its links and leaves its `updatedAt` alone. Still open: a title
-of only very common words finds nothing, because the index drops those words.
-Common titles ("Ideas") are as noisy as predicted, and there is no way to
-dismiss a mention. Only the first mention in a note is offered at a time.
+Both halves are built, and the Orphans view with them. Orphans is a view in
+the sidebar, `GET /notes?orphans=true`, for notes that link nowhere and that
+no note outside the trash links to. It combines with the notebook and tag
+selects. Under the backlinks, `UnlinkedMentions` lists the notes that write
+the title of the open note without linking to it (`GET /notes/:id/mentions`).
+The full-text index names the candidates with a phrase query, and
+`findMention` beside `extractWikiLinks` then reads each one: whole words, the
+same title key as `NoteLink.targetKey`, nothing inside code, links, images or
+URLs. Titles under three characters get no mentions, and neither do titles
+that cannot be written as a link. The list is paged, and only the 200 newest
+candidates are read. "Link" (`POST /notes/:id/mentions/:sourceId/link`) wraps
+the first mention in the other note inside one transaction, saves its old text
+as a version, syncs its links and leaves its `updatedAt` alone.
+
+The graph is a page of its own. `GET /links/graph` returns nodes and resolved
+edges from one query, with titles matched by the SQL expression `resolveKeys`
+uses, for the 300 notes edited last at most. `layoutGraph` runs d3-force to
+its end in a plain function, so the page draws the settled picture as SVG and
+animates nothing. It can be dragged and zoomed, a click on a dot opens the
+note, and the notebook and tag selects narrow it down. The same notes and
+links are listed in words under the picture, which is what a screen reader
+gets. The page is loaded on demand, so d3-force is not in the main bundle.
+
+Still open: a title of only very common words finds no mentions, because the
+index drops those words. Common titles ("Ideas") are as noisy as predicted,
+and a mention cannot be dismissed. Only the first mention in a note is offered
+at a time. In the graph, dots cannot be moved by hand, links have no
+arrowheads, and above 300 notes only the filters show the rest.

@@ -62,6 +62,12 @@ Markdown import/export.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
+- **Graph**: a page that draws every note as a dot and every link as a line,
+  to spot clusters and notes nothing leads to. Drag it, zoom with the wheel or
+  the buttons, and click a dot to open the note. The notebook and tag selects
+  narrow it down. It draws 300 notes at most, the ones edited last, and says
+  so when there are more. Under the picture the same notes and links are
+  listed in words.
 - **Keyboard and screen readers**: skip links lead past the sidebar to the
   content and to the open note, dialogs keep Tab inside them, the arrow keys
   move through the note list, and the link suggestions and the quick switcher
@@ -85,7 +91,7 @@ Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 | Part     | Tech                                                                               |
 | -------- | ---------------------------------------------------------------------------------- |
 | API      | TypeScript, NestJS 11, Prisma 6, PostgreSQL 17, JWT auth, class-validator          |
-| Web      | React 19, TypeScript, Vite, React Router, TanStack Query, react-markdown           |
+| Web      | React 19, TypeScript, Vite, React Router, TanStack Query, react-markdown, d3-force |
 | Tests    | Jest + Supertest for the API, Vitest + Testing Library + axe for the web app       |
 | Tooling  | ESLint, Prettier, GitHub Actions                                                   |
 | Delivery | Docker Compose: Postgres, the API, and nginx serving the web app and proxying /api |
@@ -335,7 +341,8 @@ api/
     notebooks/          notebooks and their one level of nesting
     notes/              notes, filters and sorting, note export
     tags/               tag names, renaming and merging
-    links/              [[wiki link]] parsing, link storage and backlinks
+    links/              [[wiki link]] parsing, link storage, backlinks and the graph
+    mentions/           unlinked mentions and the link that fixes one
     versions/           version history and restore
     trash/              trash, restore and the hourly purge
     search/             Postgres full-text search
@@ -466,6 +473,7 @@ sign-in page knows to hide the link.
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`           | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token`       | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]`       | Trash                                     |
+| `GET /links/graph?notebookId=&tag=`                                  | Notes and the links between them          |
 | `GET /search?q=&notebookId=&tag=&page=`                              | Full-text search, `"phrases"` in quotes   |
 | `GET /tags`, `PATCH/DELETE /tags/:id`                                | Tags                                      |
 | `GET /export`, `GET /notes/:id/export`, `POST /import`               | Zip export, single note, import           |
