@@ -22,7 +22,7 @@ couple of weekends, **L** several weeks of spare time.
 | 1   | Clickable task lists in the preview    | Next    | frontend | S    | -          |
 | 2   | Changes view in version history        | Next    | frontend | S    | -          |
 | 3   | Quick switcher                         | Shipped | frontend | S    | -          |
-| 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
+| 4   | Search filters, phrases and paging     | Shipped | both     | M    | -          |
 | 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
 | 6   | Accessibility pass                     | Next    | frontend | M    | -          |
 | 7   | Scheduled backups                      | Next    | infra    | S    | -          |
@@ -72,27 +72,6 @@ version and the current text.
 - Undecided: add the `diff` package or write a small line-based diff in
   `web/src/lib`. A note can be a million characters (`MAX_CONTENT_LENGTH`),
   so either way it needs a cut-off for very long notes.
-
-### 4. Search filters, phrases and paging
-
-Search always covers every note, and the page shows the first 30 hits even
-when it says more match.
-
-- Paging: the API already pages (`SearchQuery` extends `PaginationQuery`).
-  `SearchPage` needs "Load more" with `useInfiniteQuery`, the way `NotesPage`
-  does it.
-- Filters: optional `notebookId` and `tag` on `SearchQuery`, applied in the
-  raw SQL in `SearchService.search` (`NotebooksService.idsWithChildren` for a
-  top-level notebook, an `EXISTS` on `note_tags` for the tag). In the UI, two
-  selects above the results, kept in the URL next to `q`.
-- Phrases: `toPrefixQuery` keeps only letters and digits and ANDs the words.
-  `"weekly sync"` in quotes should become a `<->` phrase match.
-- Related: the note list has the same gap. `GET /notes` accepts `notebookId`
-  and `tag` together, but `NotesPage` treats `?notebook=`, `?tag=` and
-  `?view=` as one-at-a-time, and `tag` takes a single name.
-- Undecided: whether to also accept `tag:foo` and `notebook:Work` typed into
-  the box. Good for keyboard use, but names with spaces then need quoting
-  rules.
 
 ### 5. Rename a note without breaking links
 
@@ -390,3 +369,21 @@ opening a stale row, the note that is already open is left out, and the key
 does nothing while another dialog is open. Still open: notebooks, tags and
 actions in the list. Notes that share a title look the same there, and the
 dialog has no button, so it needs a keyboard.
+
+### 4. Search filters, phrases and paging
+
+The search page loads results 30 at a time with "Load more", and two selects
+above them narrow the search to a notebook (with the notebooks inside it, or
+"Not in a notebook") and a tag. Both are kept in the URL next to `q` and go to
+`GET /search` as `notebookId` and `tag`, which reach the raw SQL as bound
+parameters. Words in double quotes become a `<->` phrase in `toPrefixQuery`:
+no prefix matching inside the quotes, though Postgres still stems, so `"meet"`
+finds "meeting". A quote without a partner is ignored, so a phrase that is
+still being typed searches as plain words. The note list got the same two
+selects, and `NotesPage` applies `?view=`, `?notebook=` and `?tag=` together.
+"Not in a notebook" moved to `?notebook=none`, and `?view=unfiled` still
+works. Two fixes on the way: results keep their order from page to page, and
+a search from the sidebar while the search page is open is no longer
+overwritten by the text that was in the box. Still open: `tag:foo` and
+`notebook:Work` typed into the box, filtering on more than one tag, and the
+sidebar links, which replace the filters instead of adding to them.

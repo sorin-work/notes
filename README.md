@@ -17,13 +17,19 @@ Markdown import/export.
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
   own view.
+- **Filters**: two selects above the note list narrow it to a notebook, a tag
+  or both, on top of the Pinned and Favourites views. The choice is kept in
+  the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
+  bookmarked.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
   paragraph the link is in.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
-  highlighted.
+  highlighted. Words in `"double quotes"` are a phrase: they have to follow
+  each other and are not prefixes. The same two selects narrow a search to a
+  notebook and a tag, and results load 30 at a time.
 - **Quick switcher**: `Ctrl+K` (`Cmd+K` on a Mac) opens a small dialog with
   the notes edited last. Type part of a title, press Enter, and you are in
   that note with the cursor in its text, or on the preview when only the
@@ -212,6 +218,6 @@ Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Re
 | `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
 | `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
 | `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
-| `GET /search?q=`                                               | Full-text search                          |
+| `GET /search?q=&notebookId=&tag=&page=`                        | Full-text search, `"phrases"` in quotes   |
 | `GET /tags`, `PATCH/DELETE /tags/:id`                          | Tags                                      |
 | `GET /export`, `GET /notes/:id/export`, `POST /import`         | Zip export, single note, import           |
