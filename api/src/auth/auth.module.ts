@@ -27,11 +27,20 @@ import { PasswordResetService } from './password-reset.service';
     // are counted in the same store, per token (ApiTokensService.throttle).
     ThrottlerModule.forRootAsync({
       inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) => [{ ttl: 60_000, limit: config.authThrottleLimit }],
+      // Two allowances a minute, both counted wherever the ThrottlerGuard is
+      // used. "default" is the strict one, for whatever takes a password.
+      // "public" is the roomy one for reading shared notes, where the strict
+      // one is switched off.
+      useFactory: (config: AppConfig) => [
+        { name: 'default', ttl: 60_000, limit: config.authThrottleLimit },
+        { name: 'public', ttl: 60_000, limit: config.publicThrottleLimit },
+      ],
     }),
     MailModule,
   ],
   controllers: [AuthController, PasswordResetController, ApiTokensController],
   providers: [AuthService, PasswordResetService, ApiTokensService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
+  // For routes that are public but still want to know who is asking, such as a shared note read by its owner.
+  exports: [AuthService],
 })
 export class AuthModule {}
