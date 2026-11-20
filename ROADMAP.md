@@ -10,51 +10,36 @@ What the app does today is in the [README](README.md).
 - **Next**: small or well understood. I would start with these.
 - **Later**: worth doing, but bigger or waiting on a decision.
 - **Maybe**: not sure yet that they are worth the extra complexity.
+- **Shipped**: done. Kept at the end, with what was built and how it differs
+  from the plan.
 
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
 
 ## Overview
 
-| #   | Item                                   | Group | Area     | Size | Depends on |
-| --- | -------------------------------------- | ----- | -------- | ---- | ---------- |
-| 1   | Clickable task lists in the preview    | Next  | frontend | S    | -          |
-| 2   | Changes view in version history        | Next  | frontend | S    | -          |
-| 3   | Quick switcher                         | Next  | frontend | S    | -          |
-| 4   | Search filters, phrases and paging     | Next  | both     | M    | -          |
-| 5   | Rename a note without breaking links   | Next  | both     | M    | -          |
-| 6   | Accessibility pass                     | Next  | frontend | M    | -          |
-| 7   | Scheduled backups                      | Next  | infra    | S    | -          |
-| 8   | Edit conflict detection                | Later | both     | M    | -          |
-| 9   | Attachments and pasted images          | Later | both     | L    | -          |
-| 10  | Share link options                     | Later | both     | M    | -          |
-| 11  | Account settings and sessions          | Later | both     | M    | -          |
-| 12  | More import sources and export formats | Later | both     | M    | -          |
-| 13  | Personal API tokens                    | Later | both     | M    | -          |
-| 14  | Offline mode and installable app       | Later | both     | L    | 8          |
-| 15  | Deeper notebook nesting                | Maybe | both     | M    | -          |
-| 16  | Templates and daily notes              | Maybe | both     | M    | -          |
-| 17  | Notebooks shared with other accounts   | Maybe | both     | L    | 8          |
-| 18  | Graph view and unlinked mentions       | Maybe | both     | M    | -          |
+| #   | Item                                   | Group   | Area     | Size | Depends on |
+| --- | -------------------------------------- | ------- | -------- | ---- | ---------- |
+| 1   | Clickable task lists in the preview    | Shipped | frontend | S    | -          |
+| 2   | Changes view in version history        | Next    | frontend | S    | -          |
+| 3   | Quick switcher                         | Next    | frontend | S    | -          |
+| 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
+| 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
+| 6   | Accessibility pass                     | Next    | frontend | M    | -          |
+| 7   | Scheduled backups                      | Next    | infra    | S    | -          |
+| 8   | Edit conflict detection                | Later   | both     | M    | -          |
+| 9   | Attachments and pasted images          | Later   | both     | L    | -          |
+| 10  | Share link options                     | Later   | both     | M    | -          |
+| 11  | Account settings and sessions          | Later   | both     | M    | -          |
+| 12  | More import sources and export formats | Later   | both     | M    | -          |
+| 13  | Personal API tokens                    | Later   | both     | M    | -          |
+| 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
+| 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
+| 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
+| 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
+| 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
 
 ## Next
-
-### 1. Clickable task lists in the preview
-
-Ticking a `- [ ]` box in the preview should tick it in the note. Today the
-boxes are rendered disabled, so working through a checklist means going back
-to the source and typing an `x`.
-
-- `MarkdownPreview` gets an optional `onToggleTask(line)` and custom `li` /
-  `input` renderers. `NoteEditor` flips `[ ]` and `[x]` on that line and goes
-  through `change({ content })`, so autosave and versions behave as they do
-  for typing.
-- react-markdown passes the source position of the list item (the checkbox
-  itself has none). `linkifyWikiLinks` rewrites text inside a line but never
-  adds or removes lines, so line numbers still match the source. Columns do
-  not.
-- Stays read-only wherever no handler is passed: `SharedNotePage`,
-  `VersionHistoryDialog` and notes in the trash.
 
 ### 2. Changes view in version history
 
@@ -388,3 +373,17 @@ Two ways to get more out of the links that are already stored.
   ("Ideas") will be noisy.
 - A cheaper first step: an "Orphans" filter for notes with no links in or
   out.
+
+## Shipped
+
+### 1. Clickable task lists in the preview
+
+Clicking a task box in the editor's preview flips `[ ]` and `[x]` on that
+line of the note. The change goes through the normal autosave, so versions
+behave as they do for typing. Built as planned: `MarkdownPreview` takes
+`onToggleTask(line)`, and boxes stay disabled on shared pages, in version
+history and for notes in the trash. Added on top: each box is named after its
+item for screen readers, it keeps keyboard focus after a click, and the caret
+in the source stays where it was. Still open: clicking does nothing in two
+rare layouts, a box on a different line from its list marker and a task on
+the first line of a footnote definition.
