@@ -5,7 +5,7 @@ import { listNotebooks } from '../api/notebooks';
 import { listNotes } from '../api/notes';
 import { deleteTag, listTags, renameTag } from '../api/tags';
 import { createApiToken, listApiTokens, revokeApiToken } from '../api/tokens';
-import { exportAll, importFiles } from '../api/transfer';
+import { exportAll, exportBackup, importFiles, restoreBackup } from '../api/transfer';
 import type { ApiToken, CreatedApiToken, Preferences, Tag, User } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
@@ -383,9 +383,10 @@ function ImportExportSection() {
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
+  const [skipExisting, setSkipExisting] = useState(true);
 
   const upload = useMutation({
-    mutationFn: () => importFiles(files),
+    mutationFn: () => importFiles(files, { skipExisting }),
     onSuccess: () => {
       setFiles([]);
       if (input.current) input.current.value = '';
@@ -393,6 +394,18 @@ function ImportExportSection() {
     },
   });
   const download = useMutation({ mutationFn: exportAll });
+  const backup = useMutation({ mutationFn: exportBackup });
+  const backupInput = useRef<HTMLInputElement>(null);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const restore = useMutation({
+    mutationFn: () => restoreBackup(backupFile as File),
+    onSuccess: () => {
+      setBackupFile(null);
+      if (backupInput.current) backupInput.current.value = '';
+      for (const key of ['notes', 'notebooks', 'tags', 'trash'])
+        void queryClient.invalidateQueries({ queryKey: [key] });
+    },
+  });
 
   return (
     <section className="card">
@@ -407,10 +420,49 @@ function ImportExportSection() {
       </button>
       {download.error && <ErrorMessage error={download.error} />}
 
+      <h3>Full backup</h3>
+      <p className="muted">
+        One JSON file with everything the zip leaves out as well: the trash, each note’s history, and a list of what was
+        shared. It holds no share link addresses or passwords. It can be restored into an account that is still empty,
+        such as a new one on another server. Shared links are not made again; share again what should be shared.
+      </p>
+      <button type="button" className="button" onClick={() => backup.mutate()} disabled={backup.isPending}>
+        {backup.isPending ? 'Preparing…' : 'Download a full backup'}
+      </button>
+      {backup.error && <ErrorMessage error={backup.error} />}
+      <div className="input-row">
+        <input
+          ref={backupInput}
+          type="file"
+          aria-label="Backup to restore"
+          accept=".json,application/json"
+          onChange={(event) => setBackupFile(event.target.files?.[0] ?? null)}
+        />
+        <button
+          type="button"
+          className="button"
+          onClick={() => restore.mutate()}
+          disabled={!backupFile || restore.isPending}
+        >
+          {restore.isPending ? 'Restoring…' : 'Restore'}
+        </button>
+      </div>
+      {restore.error && <ErrorMessage error={restore.error} />}
+      {restore.data && (
+        <p className="success" role="status">
+          Restored {restore.data.notes} {restore.data.notes === 1 ? 'note' : 'notes'} in {restore.data.notebooks}{' '}
+          {restore.data.notebooks === 1 ? 'notebook' : 'notebooks'}, with {restore.data.versions} older{' '}
+          {restore.data.versions === 1 ? 'version' : 'versions'}.
+          {restore.data.shareLinksNotRestored > 0 &&
+            ` ${restore.data.shareLinksNotRestored} shared ${restore.data.shareLinksNotRestored === 1 ? 'link was' : 'links were'} not made again.`}
+        </p>
+      )}
+
       <h3>Import</h3>
       <p className="muted">
-        Markdown (.md), text files or a zip of them, for example an export from this app or an Obsidian vault. Folders
-        become notebooks.
+        Markdown (.md), text files or a zip of them, for example an export from this app, an Obsidian vault or a Notion
+        export (Markdown, unzipped once if Notion packed it twice). Evernote .enex files too: each file becomes a
+        notebook named after it. Folders become notebooks. Attachments and images are not imported yet.
       </p>
       <div className="input-row">
         <input
@@ -418,7 +470,7 @@ function ImportExportSection() {
           type="file"
           aria-label="Files to import"
           multiple
-          accept=".md,.markdown,.txt,.zip"
+          accept=".md,.markdown,.txt,.zip,.enex"
           onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
         />
         <button
@@ -430,6 +482,10 @@ function ImportExportSection() {
           {upload.isPending ? 'Importing…' : 'Import'}
         </button>
       </div>
+      <label className="checkbox">
+        <input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} />
+        Leave out notes that are here already (same title, notebook and text)
+      </label>
       {upload.error && <ErrorMessage error={upload.error} />}
       {upload.data && (
         <div className="import-result" role="status">
@@ -437,6 +493,19 @@ function ImportExportSection() {
             Imported {upload.data.imported} {upload.data.imported === 1 ? 'note' : 'notes'}
             {upload.data.notebooksCreated > 0 && ` and created ${upload.data.notebooksCreated} notebooks`}.
           </p>
+          {upload.data.duplicates > 0 && (
+            <p>
+              Left out {upload.data.duplicates} {upload.data.duplicates === 1 ? 'note that was' : 'notes that were'}{' '}
+              here already.
+            </p>
+          )}
+          {upload.data.attachmentsSkipped > 0 && (
+            <p>
+              {upload.data.attachmentsSkipped}{' '}
+              {upload.data.attachmentsSkipped === 1 ? 'attachment was' : 'attachments were'} not imported. Only the text
+              of the notes comes along for now.
+            </p>
+          )}
           {upload.data.skipped.length > 0 && (
             <details>
               <summary>{upload.data.skipped.length} files skipped</summary>

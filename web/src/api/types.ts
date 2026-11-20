@@ -215,6 +215,22 @@ export interface SharedNote {
   updatedAt: string;
   /** Where each of those links leads, by normalised title: a path under /s/. */
   links: Record<string, string>;
+  /** Signed addresses of the note's own attachments, by id. They run out in minutes. */
+  attachments: Record<string, string>;
+}
+
+/** A file of a note: a pasted image or an attached PDF. */
+export interface Attachment {
+  id: string;
+  noteId: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
+  /** Works without a login for a few minutes. */
+  url: string;
+  /** What to put in the note to show or link it. */
+  markdown: string;
 }
 
 /** The index of a shared notebook. */
@@ -227,8 +243,22 @@ export interface SharedNotebook {
 /** What a link shares: a note, or a notebook with everything in it. */
 export type ShareSubject = { noteId: string } | { notebookId: string };
 
+/** What a restored backup put into the account. */
+export interface RestoreResult {
+  notes: number;
+  notebooks: number;
+  tags: number;
+  versions: number;
+  /** Share links listed in the backup. They are not made again. */
+  shareLinksNotRestored: number;
+}
+
 export interface ImportResult {
   imported: number;
   notebooksCreated: number;
+  /** Notes left out because the account has them already. */
+  duplicates: number;
+  /** Attachments and images in Evernote notes, which are not imported. */
+  attachmentsSkipped: number;
   skipped: { file: string; reason: string }[];
 }

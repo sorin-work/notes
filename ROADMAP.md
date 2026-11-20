@@ -27,10 +27,10 @@ couple of weekends, **L** several weeks of spare time.
 | 6   | Accessibility pass                     | Shipped | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
 | 8   | Edit conflict detection                | Shipped | both     | M    | -          |
-| 9   | Attachments and pasted images          | Later   | both     | L    | -          |
+| 9   | Attachments and pasted images          | Shipped | both     | L    | -          |
 | 10  | Share link options                     | Shipped | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
-| 12  | More import sources and export formats | Later   | both     | M    | -          |
+| 12  | More import sources and export formats | Shipped | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
 | 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
@@ -43,52 +43,6 @@ couple of weekends, **L** several weeks of spare time.
 Empty for now: everything that was in this group has shipped.
 
 ## Later
-
-### 9. Attachments and pasted images
-
-Images only work as links to somewhere else on the web. I want to paste or
-drop an image into the editor and have it uploaded and inserted as `![](...)`,
-and to attach the odd PDF.
-
-- New `Attachment` model (note, owner, file name, type, size, storage key)
-  and an `attachments` module. Uploads can follow `TransferController`, which
-  already uses multer through `FilesInterceptor`. Files go on a new volume in
-  `docker-compose.yml`. S3-compatible storage can wait.
-- Tricky: auth. The token lives in `localStorage` and is sent as a header by
-  `request()`, which an `<img src>` cannot do. Either short-lived signed
-  URLs, or fetch the file and hand `MarkdownPreview` an object URL. Shared
-  notes (`/s/<token>`) need their images to load for anonymous readers too.
-- Clean-up: `TrashService.purgeExpired` and `empty` delete rows with
-  `deleteMany`, which would leave the files behind. Needs a sweep for files
-  without a row.
-- Export and import should carry the files. `ExportService.exportAll` writes
-  only `.md`, and `ImportService` skips everything that is not Markdown or
-  text, which drops the images of an Obsidian vault.
-- Needs size limits per file and per account, and a list of allowed types.
-  SVG is a script risk if it is served inline.
-
-### 12. More import sources and export formats
-
-Import reads Markdown, text and zips of them, and export writes the same.
-That covers Obsidian and this app, and not much else.
-
-- Evernote `.enex`: one XML file with the note bodies as HTML. Needs an XML
-  reader and an HTML-to-Markdown step. Tags and dates are in the file,
-  notebooks are not.
-- Notion export: a zip of Markdown in which file and folder names end in a
-  32-character id and pages link to each other by relative path. Strip the
-  ids and turn those links into `[[wiki links]]`.
-- Both fit as extra readers in front of `ImportService.import`, which already
-  works from a list of `{ path, text, modified }` candidates.
-  `front-matter.ts` is a hand-written subset of YAML and will meet files it
-  cannot read. Decide whether to keep extending it or take a YAML dependency.
-- Importing the same zip twice creates every note twice. An option to skip
-  notes whose title, notebook and text already exist would make a re-import
-  safe.
-- Export: a print stylesheet for the preview (`styles.css` has no
-  `@media print` rules) gives PDF through the browser. A full JSON backup
-  that includes the trash and version history would cover what the zip
-  leaves out.
 
 ### 14. Offline mode and installable app
 
@@ -110,6 +64,12 @@ connection for everything. Depends on item 8.
   `CreateNoteDto` has no `id` and the validation pipe rejects unknown fields.
 - Search, backlinks and history stay online-only. Signing out has to clear
   the stored notes as well as the in-memory cache.
+
+Built so far, in three parts that ship together: the app can be installed
+(manifest, icons, a service worker that caches the files of the build and
+never anything under `/api/`, an offer to reload into a new version), and
+notes already opened can be read offline from a copy of the query cache kept
+in IndexedDB per user. Writing offline follows.
 
 ## Maybe
 
@@ -320,6 +280,24 @@ diff (History does, after "keep mine, put theirs in the history"), a tab that
 only has a note open is not told about a change before it saves, and a kept
 draft does not outlive its tab.
 
+### 9. Attachments and pasted images
+
+Paste or drop an image or a PDF into a note and it is uploaded and linked as
+`attachment:<id>`; a panel under the editor lists a note's files.
+`Attachment` rows point at files kept under their ids on the new
+`attachments` volume. The type comes from the bytes: PNG, JPEG, GIF, WebP,
+PDF and plain text, never SVG or HTML, with limits per file and per account.
+Files are served at addresses signed with an HMAC over the file, its owner
+and an expiry five minutes ahead, so an `<img>` needs no login; images
+inline, the rest as downloads, always with nosniff and a sandboxing policy.
+A shared note hands out signed addresses for its own files only. Deleting
+notes for good removes their files, and the purge job sweeps files without a
+row on start-up and every hour. The zip export, the JSON backup and the
+import carry the files; the import keeps the images and PDFs an Obsidian or
+Markdown note links to. The scheduled backup archives the files beside each
+dump and a restore puts them back with it, never while the API runs. Still
+open: Evernote's attachments, thumbnails and S3-compatible storage.
+
 ### 10. Share link options
 
 A share link can run out and can ask for a password: `expiresAt` and
@@ -376,6 +354,33 @@ the reset is off and the link is hidden. Along the way the throttles learned
 to count per visitor behind nginx (`TRUST_PROXY`). Still open: a new email
 address is not verified, the mail is plain text in English only, and nothing
 but the API log tells me when a mail could not be sent.
+
+### 12. More import sources and export formats
+
+The import now reads Evernote `.enex` files and Notion exports as well, as
+readers in front of `ImportService.import`. An `.enex` goes through a
+streaming XML parser that reads no DTD and knows no entity beyond XML's own,
+so nothing in the file can expand or reach out; its notes become Markdown
+through turndown, with tags and dates, in a notebook named after the file.
+Attachments are counted and left out. A Notion zip loses the 32-character
+ids from its names, and links between its pages become `[[wiki links]]`.
+Every zip is read within limits: entries, depth, 4 MB per file and 100 MB per
+import, counted while unpacking; no entry may lead out of the zip, and a zip
+inside a zip is not opened. Front matter is read by the `yaml` package with
+the core schema, and a block that is not clean YAML stays in the note. A
+re-import leaves out notes whose title, notebook and text are there already,
+unless told not to. The second step added the export formats. "Print" in the
+browser gives the note alone, black on white, with link addresses written
+out, so "Save as PDF" makes a clean page. A full JSON backup of one account,
+versioned and streamed, holds the trash, version history, revisions,
+notebooks, tags, templates, daily notes and a record of the share links without their tokens or
+password hashes. It restores into an empty account in one transaction, read
+as it is uploaded, so a backup of any size restores, and the browser saves a
+download straight to disk through a one-time link.
+Share links are not made again, since the file holds nothing that would open
+them. Still open: Evernote attachments,
+Notion databases (they arrive as CSV and are skipped), and a Notion export
+that Notion packed twice has to be unzipped once by hand.
 
 ### 13. Personal API tokens
 

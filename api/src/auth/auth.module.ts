@@ -1,3 +1,4 @@
+import { AttachmentsModule } from '../attachments/attachments.module';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
@@ -14,6 +15,7 @@ import { PasswordResetService } from './password-reset.service';
 
 @Module({
   imports: [
+    AttachmentsModule,
     JwtModule.registerAsync({
       inject: [APP_CONFIG],
       useFactory: (config: AppConfig) => ({
