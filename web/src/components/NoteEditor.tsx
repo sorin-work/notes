@@ -77,6 +77,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const navigate = useNavigate();
   const location = useLocation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
   const [title, setTitle] = useState(note.title);
@@ -298,6 +299,13 @@ function LoadedEditor({ note }: { note: Note }) {
   useEffect(() => {
     if (focusText) (textareaRef.current ?? previewRef.current)?.focus();
   }, [focusText]);
+  // A note made from a template starts untitled, so its title is the first thing to write.
+  const focusTitle = (location.state as { focusTitle?: boolean } | null)?.focusTitle === true;
+  useEffect(() => {
+    if (!focusTitle) return;
+    titleRef.current?.focus();
+    titleRef.current?.select();
+  }, [focusTitle]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -313,12 +321,17 @@ function LoadedEditor({ note }: { note: Note }) {
     onMutate: (changes) => {
       queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, ...changes } : old));
     },
-    onSuccess: (saved) => {
+    onSuccess: (saved, changes) => {
       // The cached text goes with the cached revision: neither is taken from this answer.
       queryClient.setQueryData<Note>(['note', note.id], (old) =>
         old ? { ...saved, title: old.title, content: old.content, revision: old.revision } : saved,
       );
       refreshLists();
+      // A template is no backlink and no link suggestion, and a note again is both.
+      if (changes.isTemplate !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
+        void queryClient.invalidateQueries({ queryKey: ['titles'] });
+      }
     },
     onError: () => void queryClient.invalidateQueries({ queryKey: ['note', note.id] }),
   });
@@ -338,12 +351,15 @@ function LoadedEditor({ note }: { note: Note }) {
   });
 
   // A copy, or a note made from this template, is opened as soon as it is there.
-  const openNew = (created: Note) => {
+  const openNew = (created: Note, fromTemplate = false) => {
     refreshLists();
-    navigate({
-      pathname: `/notes/${created.id}`,
-      search: created.isTemplate ? location.search : leavingTemplates(location.search),
-    });
+    navigate(
+      {
+        pathname: `/notes/${created.id}`,
+        search: created.isTemplate ? location.search : leavingTemplates(location.search),
+      },
+      { state: fromTemplate ? { focusTitle: true } : null },
+    );
   };
 
   const duplicate = useMutation({
@@ -363,7 +379,7 @@ function LoadedEditor({ note }: { note: Note }) {
       const { notebookId } = newNoteFor(readFilters(new URLSearchParams(location.search)));
       return createNote(fromTemplate(note.id, notebookId));
     },
-    onSuccess: openNew,
+    onSuccess: (created) => openNew(created, true),
   });
 
   // Links point at titles, so a rename leaves the links to the old title
@@ -429,12 +445,28 @@ function LoadedEditor({ note }: { note: Note }) {
     enabled: linkQuery !== null,
   });
   const titleOptions = (suggestions.data ?? []).filter((item) => item.id !== note.id);
+  // The suggestions leave templates out, but a link to a template's title
+  // still leads to it, so "New note" is offered only for a title that leads
+  // nowhere. Until that is known it is not offered.
+  const linkTarget = useQuery({
+    queryKey: ['resolve', linkQuery === null ? null : normalizeTitle(linkQuery)],
+    queryFn: async () => {
+      try {
+        return (await resolveTitle(linkQuery ?? '')).id;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: linkQuery !== null && linkQuery.trim() !== '',
+  });
+  const titleTaken = !(linkTarget.isSuccess && linkTarget.data === null && linkQuery === (link?.query ?? null));
   const {
     activeIndex: activeSuggestion,
     setActiveIndex: setActiveSuggestion,
     onArrowKey,
-  } = useActiveOption(link ? suggestionCount(titleOptions, link.query) : 0);
-  const suggesting = link !== null && suggestionCount(titleOptions, link.query) > 0;
+  } = useActiveOption(link ? suggestionCount(titleOptions, link.query, titleTaken) : 0);
+  const suggesting = link !== null && suggestionCount(titleOptions, link.query, titleTaken) > 0;
 
   const openWikiLink = useCallback(
     async (target: string) => {
@@ -502,7 +534,7 @@ function LoadedEditor({ note }: { note: Note }) {
     } else if (onArrowKey(event)) {
       return;
     } else if (event.key === 'Enter' || event.key === 'Tab') {
-      const target = suggestionAt(titleOptions, link.query, activeSuggestion);
+      const target = suggestionAt(titleOptions, link.query, activeSuggestion, titleTaken);
       if (target) {
         event.preventDefault();
         insertLink(target);
@@ -632,6 +664,7 @@ function LoadedEditor({ note }: { note: Note }) {
       </div>
 
       <input
+        ref={titleRef}
         className="title-input"
         aria-label="Title"
         placeholder="Untitled"
@@ -755,6 +788,7 @@ function LoadedEditor({ note }: { note: Note }) {
               <LinkSuggestions
                 titles={titleOptions}
                 query={link.query}
+                taken={titleTaken}
                 activeIndex={activeSuggestion}
                 onPick={insertLink}
               />
