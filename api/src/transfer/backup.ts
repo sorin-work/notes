@@ -5,7 +5,13 @@
  * an older reader would get wrong.
  */
 export const BACKUP_FORMAT = 'notes-backup';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
+/**
+ * The versions a restore reads. Version 2 added `attachments` and
+ * `missingAttachments`; a version 1 file has neither, and restores the same
+ * way otherwise.
+ */
+export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2];
 
 export interface BackupNotebook {
   id: string;

@@ -8,6 +8,7 @@ import {
   BackupAttachment,
   BACKUP_FORMAT,
   BACKUP_VERSION,
+  READABLE_BACKUP_VERSIONS,
   BackupNote,
   BackupNotebook,
   BackupPreferences,
@@ -68,7 +69,9 @@ function id(value: unknown, where: string): string {
 
 export function readFormat(format: unknown, version: unknown): void {
   if (format !== BACKUP_FORMAT) invalid('the file', `is not a ${BACKUP_FORMAT} file`);
-  if (version !== BACKUP_VERSION) invalid('version', `${String(version)} is not ${BACKUP_VERSION}`);
+  if (typeof version !== 'number' || !READABLE_BACKUP_VERSIONS.includes(version)) {
+    invalid('version', `${String(version)} is not one this app reads (${READABLE_BACKUP_VERSIONS.join(', ')})`);
+  }
 }
 
 export function readExportedAt(value: unknown): string {

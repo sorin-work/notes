@@ -2359,7 +2359,7 @@ describe('the JSON backup', () => {
       .expect(200);
 
     const { raw, backup } = await download(owner.auth);
-    expect(backup).toMatchObject({ format: 'notes-backup', version: 1 });
+    expect(backup).toMatchObject({ format: 'notes-backup', version: 2 });
     expect(backup.notes).toHaveLength(4);
     expect(backup.notes.find((note) => note.title === 'Day')).toMatchObject({ isTemplate: true });
     expect(backup.notes.find((note) => note.title === 'Plan')).toMatchObject({ dailyDate: '2026-03-02' });

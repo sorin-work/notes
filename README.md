@@ -325,12 +325,12 @@ out as it is read, a batch of notes at a time. Settings, "Download a full
 backup", gets a link from `POST /export/backup/link` that works once, within
 a minute, without a login, and lets the browser follow it, so the browser
 saves the file to disk as it comes in instead of holding it in memory. The
-format is versioned. This is version 1:
+format is versioned. This is version 2:
 
 ```json
 {
   "format": "notes-backup",
-  "version": 1,
+  "version": 2,
   "exportedAt": "2026-11-20T21:00:00.000Z",
   "preferences": {
     "dailyNotes": { "notebookId": "…", "templateId": "…", "dateFormat": "iso" }
@@ -396,6 +396,9 @@ of a day. `preferences` holds the daily note choices, with ids from the file.
 comes before the notes, and a restore gives the notes' `attachment:` links the
 new ids. Its type is not in the file: a restore decides it from the bytes, as
 an upload does, and counts the files against the account limit.
+`missingAttachments` lists the ids of files that were missing from storage
+when the backup was made; they are left out rather than failing the whole
+backup. Version 1 had neither list, and a restore still reads it.
 
 `POST /import/backup` (Settings, "Restore") takes the file itself as the
 request body, sent as `application/octet-stream`, and puts it into an
@@ -908,14 +911,20 @@ before they run out. The answer always has `X-Content-Type-Options: nosniff`
 and a sandboxing `Content-Security-Policy`, images come `inline`, and PDF
 and text only as downloads. A shared note's answer has `attachments`, the
 signed addresses of that note's own files only, and only once its password
-was given. Deleting a note for good, emptying the trash, the purge and
-deleting the account remove the files with the rows. The purge job also
-sweeps out files that have no row, on start-up and every hour. The zip
-export puts the files under `attachments/<id>/` and links the notes to them
-by relative path. The import takes the images and PDFs a note links to or
-embeds (Obsidian's `![[photo.png]]` too) and makes them the note's
-attachments; one no note links to is skipped. Evernote attachments are still
-left out. The server never fetches anything from an address in a note.
+was given. A shared page renews them with `GET
+/public/notes/:token/attachments` (or `/:token/:noteId/attachments` in a
+shared notebook), which goes through the same checks and is not counted as a
+view. Deleting a note for good, emptying the trash, the purge and deleting
+the account remove the files with the rows. The purge job also sweeps out
+files that have no row, on start-up and every hour. The zip export puts the
+files under `attachments/<id>/` and links the notes to them by relative
+path, with every character a Markdown address could trip on encoded. It is
+written out as it is made, one file at a time, and a file missing from
+storage is left out and named in `attachments/MISSING.txt`. The import takes
+the images and PDFs a note links to or embeds (Obsidian's `![[photo.png]]`
+too) and makes them the note's attachments; one no note links to is skipped.
+Evernote attachments are still left out. The server never fetches anything
+from an address in a note.
 
 `POST /import` takes up to 50 files as `files`, 20 MB each, and the form
 field `skipExisting` (`true` unless `false` is sent), which leaves out notes

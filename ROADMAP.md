@@ -312,9 +312,9 @@ A shared note hands out signed addresses for its own files only. Deleting
 notes for good removes their files, and the purge job sweeps files without a
 row on start-up and every hour. The zip export, the JSON backup and the
 import carry the files; the import keeps the images and PDFs an Obsidian or
-Markdown note links to. Still open: Evernote's attachments, thumbnails,
-S3-compatible storage, and the `pg_dump` backup service does not cover the
-files.
+Markdown note links to. The scheduled backup archives the files beside each
+dump and a restore puts them back with it, never while the API runs. Still
+open: Evernote's attachments, thumbnails and S3-compatible storage.
 
 ### 10. Share link options
 
