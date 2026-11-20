@@ -648,12 +648,27 @@ ended, or the note changed once more on the way out).
 
 What waits in the outbox belongs to the user who wrote it. It goes when that
 user signs out and agrees to throw it away, when the account is deleted and
-when another user signs in on this browser. It stays when the session ends
-by itself (a 401, "Sign out everywhere", or a sign-out in another tab): unsent
-changes stay in that browser until the same person signs in there again and
-they are sent, or someone else signs in there and they are deleted. Settings
-says so beside "Sign out everywhere". Only text and new notes wait: a pin, a tag, a notebook or
-a move to the trash still need a connection.
+when another user signs in on this browser, who is asked first. It stays when
+the session ends by itself (a 401, "Sign out everywhere", or a sign-out in
+another tab): unsent changes stay in that browser until the same person signs
+in there again and they are sent, or someone else signs in there and they are
+deleted. Settings says so beside "Sign out everywhere". Unsent text has no
+expiry, and nothing can wipe it remotely: on a lost or stolen device it stays
+in that browser's storage, readable by whoever can open the browser profile,
+until one of those things happens there. Only text and new notes wait: a pin,
+a tag, a notebook or a move to the trash still need a connection.
+
+Every send checks that the login token still names the user the change
+belongs to, so a sign-in as someone else in another tab never sends it under
+their name. Changes are written and read under a lock shared by the tabs (Web
+Locks), held only briefly, and a send is put back only if the entry did not
+change while the request was on its way; otherwise the newer text stays and
+goes next, on the revision the answer named. A server error is tried again
+later, waiting longer each time, up to ten minutes. A change to a note that is
+gone, no longer shared, or in the trash is listed with "Save as a new note",
+"Copy text" and "Discard this change", and is tried again every few minutes,
+so restoring the note from the trash sends it. New text of that note never
+goes into such a stuck change.
 
 ## API overview
 
