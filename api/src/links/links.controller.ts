@@ -17,7 +17,7 @@ export class LinksController {
   /** The notes and the links between them, for the graph page. At most 300 notes, the ones edited last. */
   @Get('graph')
   async graph(@CurrentUser() user: AuthUser, @Query() query: GraphQuery): Promise<Graph> {
-    // A top-level notebook covers the notebooks inside it, as in the note list.
+    // A notebook covers every notebook inside it, as in the note list.
     const notebookIds =
       query.notebookId === undefined || query.notebookId === 'none'
         ? query.notebookId

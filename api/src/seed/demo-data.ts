@@ -416,7 +416,7 @@ A few things to try:
   edit, split and preview with the buttons above the editor (or Ctrl+E).
 - **Link notes** by typing \`[[\` and choosing a title, for example
   [[Project Atlas]]. Notes that link here show up under *Backlinks*.
-- **Organise** with notebooks (one level of nesting), tags, pins and
+- **Organise** with notebooks (nested up to four levels), tags, pins and
   favourites.
 - **Search** everything from the search box. Words match as prefixes,
   so "meet" finds "meeting".

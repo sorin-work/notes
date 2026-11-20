@@ -45,7 +45,7 @@ export class NotesService {
     if (query.notebookId === 'none') {
       where.notebookId = null;
     } else if (query.notebookId) {
-      // A top-level notebook shows the notes of the notebooks inside it too.
+      // A notebook shows the notes of every notebook inside it too, however deep.
       where.notebookId = { in: await this.notebooks.idsWithChildren(userId, query.notebookId) };
     }
     if (query.tag) {
