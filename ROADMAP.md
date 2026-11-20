@@ -26,7 +26,7 @@ couple of weekends, **L** several weeks of spare time.
 | 5   | Rename a note without breaking links   | Shipped | both     | M    | -          |
 | 6   | Accessibility pass                     | Next    | frontend | M    | -          |
 | 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
-| 8   | Edit conflict detection                | Later   | both     | M    | -          |
+| 8   | Edit conflict detection                | Shipped | both     | M    | -          |
 | 9   | Attachments and pasted images          | Later   | both     | L    | -          |
 | 10  | Share link options                     | Later   | both     | M    | -          |
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
@@ -61,26 +61,6 @@ keyboard or with a screen reader. Gaps I already know about:
   by hand, since jsdom cannot do it.
 
 ## Later
-
-### 8. Edit conflict detection
-
-With a note open in two tabs, or on a laptop and a phone, the last save wins
-and the other edit is gone without a word, unless a version happened to be
-saved in between. Items 14 and 17 both need this first.
-
-- `PATCH /notes/:id` takes the revision the edit was based on and answers
-  `409` with the current note when it is stale. A `revision` counter on
-  `Note` is cleaner than comparing `updatedAt`, which is deliberately not
-  bumped by every change.
-- `useAutosave` only has an `error` state and retries the same value on the
-  next change, which for a `409` would never succeed. It needs a `conflict`
-  state, and `NoteEditor` a dialog: keep mine, take theirs, or keep mine and
-  put theirs into the history through `VersionsService`.
-- Tricky: pin, favourite, notebook and tag changes (`updateMeta` in
-  `NoteEditor`) are sent without content and must not conflict with typing in
-  the same tab. Only check when `title` or `content` is in the request.
-- Restoring a version changes the content as well and has to bump the
-  revision.
 
 ### 9. Attachments and pasted images
 
@@ -380,6 +360,27 @@ restore into a scratch database and a row count of every table. Still open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
+
+### 8. Edit conflict detection
+
+A note has a `revision` that counts the changes to its title and content.
+`PATCH /notes/:id` takes the revision an edit was based on and answers `409`
+with the current note when it is stale, but only when title or content is
+sent, so pinning, tags and moving never conflict. The check and the write are
+one conditional update, so of two saves that race from the same revision only
+one gets through. Different from the plan: the counting is done by a database
+trigger, as for `search_vector`, and not by the services. That way every
+write of the text bumps the revision in its own statement: saves, restores,
+link rewrites and code that is not written yet. `useAutosave` has a `conflict`
+state and does not retry, and the editor asks what to keep: mine, theirs, or
+mine with theirs put into the history. Closing the question decides nothing,
+and leaving the note with it open saves my text and keeps theirs as a
+version. A restore now saves what is typed first, and is refused when that
+fails or when a save gets in between. A save without a revision works as
+before: the last write wins. Still open: the two texts are not merged, the
+question shows no diff (History does, after "keep mine, put theirs in the
+history"), and a tab that only has a note open is not told about a change
+before it saves.
 
 ### 11. Account settings and sessions
 
