@@ -427,18 +427,23 @@ itself connects nothing. It combines with the notebook and tag selects. Under
 the backlinks, `UnlinkedMentions` lists the notes that write the title of the
 open note without linking to it (`GET /notes/:id/mentions`). The full-text
 index names the candidates with a phrase query, and `findMention` beside
-`extractWikiLinks` then reads each one. A Markdown parser (`@lezer/markdown`,
-in `prose.ts`) says which stretches are plain text, and a mention has to lie
-inside one of them as whole words, with the same title key as
-`NoteLink.targetKey`. Titles under three characters get no mentions, and
-neither do titles that cannot be written as a link, titles that another note
-has too, and "Untitled". The list is paged, only the 200 newest candidates are
-read, and each note comes with the line and the position of the mention it
-shows and the revision of the note. "Link" (`POST
+`extractWikiLinks` then reads each one. The parser the preview renders with
+(micromark with GFM, through `mdast-util-from-markdown`, in `prose.ts`) says
+which stretches are plain text, with nothing inside a link or image label
+counted, and a mention has to lie inside one of them as whole words, with the
+same title key as `NoteLink.targetKey`. Titles under three characters get no
+mentions, and neither do titles that cannot be written as a link, titles that
+another note has too, and "Untitled". The list is paged, only the 200 newest
+candidates are read, and each note comes with the line and the position of the
+mention it shows and the revision of the note. "Link" (`POST
 /notes/:id/mentions/:sourceId/link`) takes those three and wraps that mention
 through `writeNoteText`, tied to that revision, so a note that has changed
-since is left alone. It saves the old text as a version, syncs the links and
-leaves `updatedAt` alone. Still open: a title of only very common words finds
+since is left alone. Before it writes, it parses the new text again and
+refuses unless the only change is one more `[[link]]` at that place. The list
+offers only what "Link" would take, with the same function, and parses at most
+1,000,000 characters or one second per request, skipping notes over 100,000
+characters. It saves the old text as a version, syncs the links and leaves
+`updatedAt` alone. Still open: a title of only very common words finds
 nothing, because the index drops those words. Common titles ("Ideas") are as
 noisy as predicted, and there is no way to dismiss a mention. Only the first
-mention in a note is offered at a time.
+mention in a note that can be linked is offered at a time.

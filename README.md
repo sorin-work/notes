@@ -403,18 +403,33 @@ title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
 
 An unlinked mention is a title written out in the plain text of another note,
-as whole words, ignoring case and extra spaces. A Markdown parser decides what
-plain text is: not code of any kind, not the text or the target of a link or
-an image, not a URL, not HTML, and not an existing `[[link]]`. Notes that
-already link to the title are left out. A title gets no mentions when it is
-shorter than three characters, when it cannot be written as a link (with `[`,
-`]`, `|`, `#` or a backtick in it), when another note outside the trash has
-the same title, or when the note is still called "Untitled": a link has to
-lead to this note and no other. The search index picks the candidates, so a
-title made only of very common words ("The Who") finds nothing, and only the
-200 notes edited last that match are read.
+as whole words, ignoring case and extra spaces. The API reads the note with
+the Markdown parser the preview renders it with (micromark with GFM), so plain
+text is what shows as plain text: not code of any kind, not a link or an image
+with anything in its label, not a reference, a URL or HTML, and not an
+existing `[[link]]`. Notes that already link to the title are left out. A
+title gets no mentions when it is shorter than three characters, when it
+cannot be written as a link (with `[`, `]`, `|`, `#` or a backtick in it),
+when another note outside the trash has the same title, or when the note is
+still called "Untitled": a link has to lead to this note and no other. The
+search index picks the candidates, so a title made only of very common words
+("The Who") finds nothing, and only the 200 notes edited last that match are
+read.
 
-The list shows the line of the mention that the Link button will wrap. The
+The parser is slow on long notes, so there are limits. A note longer than
+100,000 characters, with more than 2,000 closing brackets, or with quotes or
+lists nested more than 16 deep is not parsed and offers no mentions. A note
+that does not write the title at all is passed over without being parsed. One
+request parses at most 1,000,000 characters and spends at most a second on it.
+Past either limit the list stops and says it may be missing some notes. The
+list is loaded when a note is opened and after its title changes, not after
+every save.
+
+The list shows the line of the mention that the Link button will wrap, and
+only mentions that Link will take: the first one in each note for which it
+works. Link puts the brackets in, parses the new text again and writes it only
+when it holds exactly one `[[link]]` more, at that place, and every piece of
+code, HTML, every link, image, reference and definition exactly as before. The
 button changes the other note: its old text is saved as a version first, so
 the change can be undone from its history, and its "last edited" time stays as
 it was. The request names the revision of the note that the mention was found
