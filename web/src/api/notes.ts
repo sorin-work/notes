@@ -52,11 +52,13 @@ export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks
 
 export const outgoingLinks = (id: string) => api<OutgoingLink[]>(`/notes/${id}/links`);
 
-export const noteTitles = (q: string, limit = 8) =>
-  api<{ id: string; title: string }[]>(withQuery('/notes/titles', { q, limit }));
+/** With `notebookId` of a notebook shared with you, the titles in it instead of your own. */
+export const noteTitles = (q: string, limit = 8, notebookId?: string | null) =>
+  api<{ id: string; title: string }[]>(withQuery('/notes/titles', { q, limit, notebookId: notebookId ?? undefined }));
 
-export const resolveTitle = (title: string) =>
-  api<{ id: string; title: string }>(withQuery('/notes/resolve', { title }));
+/** With `notebookId` of a notebook shared with you, looks there instead of among your own notes. */
+export const resolveTitle = (title: string, notebookId?: string | null) =>
+  api<{ id: string; title: string }>(withQuery('/notes/resolve', { title, notebookId: notebookId ?? undefined }));
 
 /** How many notes still link to `from`, a title the note had before it was renamed, and now lead nowhere. */
 export const orphanedLinkCount = (id: string, from: string) =>

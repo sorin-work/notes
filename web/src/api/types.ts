@@ -55,6 +55,12 @@ export interface Notebook {
   noteCount: number;
   /** Templates are not counted as notes, but deleting the notebook trashes them too. */
   templateCount: number;
+  /** Your own notebook, or one shared with you to read or to edit. */
+  access?: 'owner' | 'read' | 'edit';
+  /** For a notebook shared with you: whose it is. */
+  owner?: { name: string } | null;
+  /** For your own notebook: how many other accounts it is shared with. */
+  memberCount?: number;
   /** Whether the notebook has a share link of its own. */
   shared: boolean;
   /** The shared notebook that makes this one public: itself, or the one it is inside. */
@@ -89,6 +95,8 @@ export interface Note {
   revision: number;
   /** A template is kept out of the lists and the search, and new notes are made from it. */
   isTemplate: boolean;
+  /** What you may do with it: your own note, or one in a notebook shared with you to read or to edit. */
+  access?: 'owner' | 'read' | 'edit';
   /** The day (YYYY-MM-DD) this note is the daily note of, if it is one. */
   dailyDate: string | null;
   notebookId: string | null;

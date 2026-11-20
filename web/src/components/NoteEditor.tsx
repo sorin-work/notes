@@ -138,7 +138,14 @@ function LoadedEditor({ note }: { note: Note }) {
   // A move into a shared notebook waits for a yes: it makes the note public.
   const [publicMove, setPublicMove] = useState<{ notebookId: string; through: SharedThrough } | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
-  const readOnly = note.deletedAt !== null;
+  // A note in a notebook shared with this account: read only, or text and
+  // tags only. Everything about how the owner keeps it stays the owner's.
+  const member = note.access === 'read' || note.access === 'edit';
+  const inTrash = note.deletedAt !== null;
+  const readOnly = inTrash || note.access === 'read';
+  const ownerOnly = readOnly || member;
+  // Titles of links are looked up where the note lives: for a member, in the shared notebook.
+  const linkScope = member ? note.notebookId : null;
 
   const refreshLists = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -549,7 +556,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const [titleFocused, setTitleFocused] = useState(false);
   /** How many notes the last update had to leave with their old links. */
   const [skipped, setSkipped] = useState(0);
-  const renamed = !readOnly && normalizeTitle(note.title) !== normalizeTitle(linkedTitle);
+  const renamed = !ownerOnly && normalizeTitle(note.title) !== normalizeTitle(linkedTitle);
   // Nothing is offered for a title that is still being typed. It has to be
   // out of the field, saved as it stands there, and a title at all: an empty
   // field is saved as "Untitled", which is nothing to point links at.
@@ -598,8 +605,8 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const linkQuery = useDebouncedValue(link?.query ?? null, 150);
   const suggestions = useQuery({
-    queryKey: ['titles', linkQuery],
-    queryFn: () => noteTitles(linkQuery ?? ''),
+    queryKey: ['titles', linkQuery, linkScope],
+    queryFn: () => noteTitles(linkQuery ?? '', undefined, linkScope),
     enabled: linkQuery !== null,
   });
   const titleOptions = (suggestions.data ?? []).filter((item) => item.id !== note.id);
@@ -607,10 +614,10 @@ function LoadedEditor({ note }: { note: Note }) {
   // still leads to it, so "New note" is offered only for a title that leads
   // nowhere. Until that is known it is not offered.
   const linkTarget = useQuery({
-    queryKey: ['resolve', linkQuery === null ? null : normalizeTitle(linkQuery)],
+    queryKey: ['resolve', linkQuery === null ? null : normalizeTitle(linkQuery), linkScope],
     queryFn: async () => {
       try {
-        return (await resolveTitle(linkQuery ?? '')).id;
+        return (await resolveTitle(linkQuery ?? '', linkScope)).id;
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) return null;
         throw error;
@@ -630,7 +637,7 @@ function LoadedEditor({ note }: { note: Note }) {
     async (target: string) => {
       await autosave.flush();
       try {
-        const found = await resolveTitle(target);
+        const found = await resolveTitle(target, linkScope);
         navigate({ pathname: `/notes/${found.id}`, search: location.search });
       } catch (error) {
         if (!(error instanceof ApiError && error.status === 404)) throw error;
@@ -734,12 +741,19 @@ function LoadedEditor({ note }: { note: Note }) {
 
   return (
     <article className={`editor editor-${mode}`} aria-label="Note editor">
-      {readOnly && <div className="banner">This note is in the trash. Restore it from the trash to edit it again.</div>}
+      {inTrash && <div className="banner">This note is in the trash. Restore it from the trash to edit it again.</div>}
+      {member && (
+        <div className="banner" role="note">
+          {note.access === 'read'
+            ? 'This note is in a notebook shared with you to read.'
+            : 'This note is in a notebook shared with you. You can change its text and tags; the owner keeps the rest.'}
+        </div>
+      )}
       <div className="editor-toolbar">
         <NotebookSelect
           notebooks={notebooks.data ?? []}
           value={note.notebookId}
-          disabled={readOnly}
+          disabled={ownerOnly}
           onChange={(notebookId) => {
             const through = newlyPublicThrough(notebooks.data ?? [], notebookId, note.sharedThrough);
             if (through && notebookId) setPublicMove({ notebookId, through });
@@ -766,7 +780,7 @@ function LoadedEditor({ note }: { note: Note }) {
           aria-pressed={note.pinned}
           aria-label={note.pinned ? 'Unpin' : 'Pin'}
           title={note.pinned ? 'Unpin' : 'Pin to the top'}
-          disabled={readOnly}
+          disabled={ownerOnly}
           onClick={() => updateMeta.mutate({ pinned: !note.pinned })}
         >
           <PinIcon filled={note.pinned} />
@@ -777,7 +791,7 @@ function LoadedEditor({ note }: { note: Note }) {
           aria-pressed={note.favorite}
           aria-label={note.favorite ? 'Remove from favourites' : 'Add to favourites'}
           title={note.favorite ? 'Remove from favourites' : 'Add to favourites'}
-          disabled={readOnly}
+          disabled={ownerOnly}
           onClick={() => updateMeta.mutate({ favorite: !note.favorite })}
         >
           {note.favorite ? '★' : '☆'}
@@ -788,7 +802,7 @@ function LoadedEditor({ note }: { note: Note }) {
         <button
           type="button"
           className={note.shared ? 'button button-shared' : 'button'}
-          disabled={readOnly}
+          disabled={ownerOnly}
           onClick={() => setDialog('share')}
         >
           {note.shared ? 'Shared' : 'Share'}
@@ -805,12 +819,12 @@ function LoadedEditor({ note }: { note: Note }) {
           type="button"
           className="button"
           title="Make a copy of this note"
-          disabled={readOnly || duplicate.isPending}
+          disabled={ownerOnly || duplicate.isPending}
           onClick={() => duplicate.mutate()}
         >
           Duplicate
         </button>
-        {note.dailyDate && !readOnly && (
+        {note.dailyDate && !ownerOnly && (
           <button
             type="button"
             className="button"
@@ -826,12 +840,12 @@ function LoadedEditor({ note }: { note: Note }) {
           className={note.isTemplate ? 'button button-shared' : 'button'}
           aria-pressed={note.isTemplate}
           title={note.isTemplate ? 'Make this an ordinary note again' : 'Use this note as a template for new notes'}
-          disabled={readOnly}
+          disabled={ownerOnly}
           onClick={() => updateMeta.mutate({ isTemplate: !note.isTemplate })}
         >
           Template
         </button>
-        {!readOnly && (
+        {!ownerOnly && (
           <button type="button" className="button button-danger-quiet" onClick={() => setDialog('delete')}>
             Delete
           </button>
@@ -881,7 +895,7 @@ function LoadedEditor({ note }: { note: Note }) {
       {(duplicate.error || useTemplate.error || releaseDaily.error) && (
         <ErrorMessage error={duplicate.error ?? useTemplate.error ?? releaseDaily.error} />
       )}
-      {note.sharedThrough && !readOnly && (
+      {note.sharedThrough && !ownerOnly && (
         <p className="shared-through muted">
           Anyone with the link to the shared notebook “{note.sharedThrough.name}” can read this note.
         </p>
