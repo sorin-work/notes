@@ -7,11 +7,14 @@ export interface DiffLine {
 export type DiffRow = DiffLine | { type: 'skipped'; count: number };
 
 /**
- * Comparing takes a table with one cell for every pair of lines, so two long
- * texts that differ from top to bottom are too much. This is about 3,000
- * lines against 3,000.
+ * How many lines may be added plus removed before diffLines gives up. The
+ * search remembers every round it took, which is about this number squared
+ * in memory (16 MB here).
  */
-const MAX_CELLS = 10_000_000;
+export const MAX_EDITS = 2_000;
+
+/** How many rows of a diff are shown. Building many more than this makes the page hang. */
+export const MAX_ROWS = 2_000;
 
 function splitLines(text: string): string[] {
   const lines = text.split(/\r\n?|\n/);
@@ -20,47 +23,87 @@ function splitLines(text: string): string[] {
   return lines;
 }
 
-/** Compares two lists of lines through their longest common subsequence. */
-function compare(a: string[], b: string[]): DiffLine[] {
-  const width = b.length + 1;
-  // common[i * width + j] is how many lines a[i..] and b[j..] share, in order.
-  // The cell limit keeps both lists far below what a Uint16 can count.
-  const common = new Uint16Array((a.length + 1) * width);
-  const at = (i: number, j: number) => common[i * width + j] ?? 0;
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      common[i * width + j] = a[i] === b[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
-    }
-  }
+const asLine =
+  (type: DiffLine['type']) =>
+  (text: string): DiffLine => ({ type, text });
 
-  const lines: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length || j < b.length) {
-    const removed = a[i];
-    const added = b[j];
-    if (removed !== undefined && removed === added) {
-      lines.push({ type: 'same', text: removed });
-      i++;
-      j++;
-    } else if (removed !== undefined && (added === undefined || at(i + 1, j) >= at(i, j + 1))) {
-      lines.push({ type: 'removed', text: removed });
-      i++;
-    } else if (added !== undefined) {
-      lines.push({ type: 'added', text: added });
-      j++;
+const at = (values: Int32Array, index: number) => values[index] ?? 0;
+
+/**
+ * Myers' algorithm keeps, for each diagonal k (the points x lines into the
+ * old text and y lines into the new one with x - y = k), the largest x a
+ * path has reached. `zero` is where diagonal 0 sits in `reach`. In round d a
+ * path gets onto diagonal k either by adding a line, coming from k + 1, or by
+ * removing one, coming from k - 1. This says which, and takes the one that
+ * is further along.
+ */
+function addsLine(reach: Int32Array, zero: number, k: number, d: number): boolean {
+  return k === -d || (k !== d && at(reach, zero + k - 1) < at(reach, zero + k + 1));
+}
+
+/**
+ * The shortest way to turn `a` into `b` by removing and adding lines. The
+ * search tries zero edits, then one, then two and so on, so the work grows
+ * with how much changed and not with the length of the texts. Returns null
+ * when more than `maxEdits` are needed.
+ */
+function shortestEdits(a: string[], b: string[], maxEdits: number): DiffLine[] | null {
+  // A block that was only added or only removed needs no search, whatever its size.
+  if (a.length === 0 || b.length === 0) return [...a.map(asLine('removed')), ...b.map(asLine('added'))];
+
+  const limit = Math.min(a.length + b.length, maxEdits);
+  const zero = limit + 1;
+  const reach = new Int32Array(2 * limit + 3);
+  // rounds[d] is `reach` as round d found it, cut down to the diagonals -d-1..d+1 that the round reads.
+  const rounds: Int32Array[] = [];
+  for (let d = 0; d <= limit; d++) {
+    rounds.push(reach.slice(zero - d - 1, zero + d + 2));
+    for (let k = -d; k <= d; k += 2) {
+      let x = addsLine(reach, zero, k, d) ? at(reach, zero + k + 1) : at(reach, zero + k - 1) + 1;
+      let y = x - k;
+      while (x < a.length && y < b.length && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      reach[zero + k] = x;
+      if (x >= a.length && y >= b.length) return walkBack(a, b, rounds);
     }
   }
-  return lines;
+  return null;
+}
+
+/** Reads the edits off the rounds of a finished search, from the end of both texts back to the start. */
+function walkBack(a: string[], b: string[], rounds: Int32Array[]): DiffLine[] {
+  const lines: DiffLine[] = [];
+  let x = a.length;
+  let y = b.length;
+  for (let d = rounds.length - 1; d >= 0; d--) {
+    const reach = rounds[d] ?? new Int32Array(0);
+    const zero = d + 1;
+    const k = x - y;
+    const added = addsLine(reach, zero, k, d);
+    const fromK = added ? k + 1 : k - 1;
+    const fromX = at(reach, zero + fromK);
+    const fromY = fromX - fromK;
+    // First the equal lines the round ran along, then the one line it added or removed.
+    while (x > fromX && y > fromY) {
+      x--;
+      y--;
+      lines.push({ type: 'same', text: a[x] ?? '' });
+    }
+    if (d > 0 && added) lines.push({ type: 'added', text: b[--y] ?? '' });
+    if (d > 0 && !added) lines.push({ type: 'removed', text: a[--x] ?? '' });
+  }
+  return lines.reverse();
 }
 
 /**
  * Compares two texts line by line. Lines that are only in `before` come back
- * as removed and lines that are only in `after` as added, removed ones first
- * where a line changed. Line endings are not compared. Returns null when the
- * part that differs is too long to compare.
+ * as removed and lines that are only in `after` as added. Line endings are
+ * not compared. Returns null when more than `maxEdits` lines were added and
+ * removed between the first and the last line that differ.
  */
-export function diffLines(before: string, after: string): DiffLine[] | null {
+export function diffLines(before: string, after: string, maxEdits = MAX_EDITS): DiffLine[] | null {
   const a = splitLines(before);
   const b = splitLines(after);
 
@@ -74,14 +117,9 @@ export function diffLines(before: string, after: string): DiffLine[] | null {
     endA--;
     endB--;
   }
-  if ((endA - start) * (endB - start) > MAX_CELLS) return null;
-
-  const same = (text: string): DiffLine => ({ type: 'same', text });
-  return [
-    ...a.slice(0, start).map(same),
-    ...compare(a.slice(start, endA), b.slice(start, endB)),
-    ...a.slice(endA).map(same),
-  ];
+  const changed = shortestEdits(a.slice(start, endA), b.slice(start, endB), maxEdits);
+  if (changed === null) return null;
+  return [...a.slice(0, start).map(asLine('same')), ...changed, ...a.slice(endA).map(asLine('same'))];
 }
 
 /**
@@ -113,4 +151,17 @@ export function foldUnchanged(lines: DiffLine[], context = 3): DiffRow[] {
   }
   endRun(true);
   return rows;
+}
+
+/**
+ * Cuts a long diff off after `max` rows. `more` is how many added and removed
+ * lines were cut. A tail without any is kept, it is only a few rows.
+ */
+export function capRows(rows: DiffRow[], max = MAX_ROWS): { rows: DiffRow[]; more: number } {
+  let more = 0;
+  for (let index = max; index < rows.length; index++) {
+    const type = rows[index]?.type;
+    if (type === 'added' || type === 'removed') more++;
+  }
+  return more === 0 ? { rows, more } : { rows: rows.slice(0, max), more };
 }
