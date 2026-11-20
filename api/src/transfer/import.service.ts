@@ -37,6 +37,11 @@ interface Candidate {
   modified?: Date;
   /** Title, tags and dates read already. Set for notes that do not come from a Markdown file. */
   data?: FrontMatter;
+  /**
+   * The notebooks the note goes into, when they do not come from `path`.
+   * An Evernote note's title is a title, and a "/" in it is no folder.
+   */
+  folders?: string[];
 }
 
 /** Splits "Work/Projects/Plan.md" into the notebook path and the file's base name. */
@@ -123,7 +128,12 @@ export class ImportService {
           // An Evernote export is one notebook, and the file is named after it.
           const notebook = name.replace(/\.enex$/i, '');
           for (const note of contents.notes) {
-            candidates.push({ path: `${notebook}/${note.title}`, text: note.markdown, data: note.data });
+            candidates.push({
+              path: `${name}: ${note.title}`,
+              text: note.markdown,
+              data: note.data,
+              folders: notebook.trim() ? [notebook] : [],
+            });
           }
         } catch (error) {
           if (!(error instanceof EnexRefused)) throw error;
@@ -149,7 +159,9 @@ export class ImportService {
         result.skipped.push({ file: candidate.path, reason: 'The note is too long' });
         continue;
       }
-      const { folders, name } = splitPath(candidate.path);
+      const split = splitPath(candidate.path);
+      const folders = candidate.folders ?? split.folders;
+      const name = split.name;
       const title = (typeof data.title === 'string' && data.title.trim() ? data.title.trim() : name.trim()).slice(
         0,
         MAX_TITLE_LENGTH,

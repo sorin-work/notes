@@ -1,33 +1,23 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import type { Readable } from 'node:stream';
 import { LinksService } from '../links/links.service';
-import { MAX_CONTENT_LENGTH, MAX_TITLE_LENGTH } from '../notes/dto/note.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { readPreferences } from '../auth/preferences';
-import { DATE_FORMATS } from '../common/day';
-import { normalizeTagNames } from '../tags/tag-name';
-import { MAX_VERSIONS_PER_NOTE } from '../versions/versions.service';
-import {
-  Backup,
-  BACKUP_FORMAT,
-  BACKUP_VERSION,
-  BackupNote,
-  BackupNotebook,
-  BackupShareLink,
-  BackupTag,
-  BackupVersion,
-} from './backup';
+import { BACKUP_FORMAT, BACKUP_VERSION, BackupNote, BackupNotebook, BackupShareLink, BackupTag } from './backup';
+import { readBackupStream } from './backup-stream';
 
 /** Notes read from the database at a time while the backup is written out. */
 const BATCH = 200;
-export const MAX_BACKUP_NOTES = 20_000;
-const MAX_BACKUP_NOTEBOOKS = 2_000;
-const MAX_BACKUP_TAGS = 10_000;
-const MAX_NOTEBOOK_NAME = 80;
-const MAX_REVISION = 2_147_483_647;
-/** Restoring writes a lot in one transaction, which may take longer than the default five seconds. */
-const RESTORE_TIMEOUT_MS = 5 * 60 * 1000;
+/** A batch of restored notes is written once it holds this much text, even with fewer than BATCH notes. */
+const RESTORE_BATCH_CHARS = 20_000_000;
+/**
+ * A restore is one transaction for the whole file, which is read while the
+ * upload comes in. Prisma ends a transaction after five seconds unless told
+ * otherwise; an hour leaves room for a large backup over a slow line.
+ */
+const RESTORE_TIMEOUT_MS = 60 * 60 * 1000;
 
 export interface RestoreResult {
   notes: number;
@@ -56,7 +46,9 @@ export class BackupService {
   /**
    * The account's backup as JSON, in pieces. The small lists come first and
    * the notes one by one after them, read from the database a batch at a
-   * time, so neither the API nor the browser holds the whole file at once.
+   * time, so the API never holds the whole file. The web app downloads it
+   * through a one-time link (POST /export/backup/link) that the browser
+   * follows itself, so the browser saves it to disk as it comes in too.
    */
   async *write(userId: string, now = new Date()): AsyncGenerator<string> {
     const [user, notebooks, tags, shareLinks] = await Promise.all([
@@ -140,22 +132,16 @@ export class BackupService {
   /**
    * Puts a backup into an account that has nothing in it yet: the notes with
    * their history, revisions, tags and trash, and the notebooks they were in.
-   * Everything gets new ids. All of it is written in one transaction, so a
-   * restore that fails leaves the account as empty as it was.
+   * Everything gets new ids. The file is read from `source` as it comes in,
+   * checked part by part, and written in batches, all in one transaction, so
+   * a restore that fails at any point leaves the account as empty as it was.
+   * However large the backup, only one batch of notes is in memory at a time.
    *
    * Share links are not made again. The file holds no tokens, so a new link
    * would have a new address, and no password hashes, so a link that had a
    * password would come back open. The owner shares again where they want to.
    */
-  async restore(userId: string, file: Buffer): Promise<RestoreResult> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(file.toString('utf8'));
-    } catch {
-      throw new BadRequestException('The file is not JSON');
-    }
-    const backup = readBackup(parsed);
-
+  async restore(userId: string, source: Readable): Promise<RestoreResult> {
     return this.prisma.$transaction(
       async (tx) => {
         // The user row is locked, so that two restores at once cannot both find the account empty.
@@ -171,44 +157,30 @@ export class BackupService {
           );
         }
 
-        const notebookIds = new Map(backup.notebooks.map((notebook) => [notebook.id, randomUUID()]));
-        // Parents first, so the foreign key on parent_id is satisfied.
-        for (const level of [false, true]) {
-          const batch = backup.notebooks.filter((notebook) => (notebook.parentId !== null) === level);
-          if (batch.length === 0) continue;
-          await tx.notebook.createMany({
-            data: batch.map((notebook) => ({
-              id: notebookIds.get(notebook.id) as string,
-              userId,
-              name: notebook.name,
-              parentId: notebook.parentId === null ? null : (notebookIds.get(notebook.parentId) as string),
-              createdAt: new Date(notebook.createdAt),
-              updatedAt: new Date(notebook.updatedAt),
-            })),
-          });
-        }
-
-        const tagNames = new Map<string, Date>();
-        for (const tag of backup.tags) tagNames.set(tag.name, new Date(tag.createdAt));
-        for (const note of backup.notes)
-          for (const name of note.tags) if (!tagNames.has(name)) tagNames.set(name, new Date());
-        if (tagNames.size > 0) {
-          await tx.tag.createMany({
-            data: [...tagNames].map(([name, createdAt]) => ({ userId, name, createdAt })),
-            skipDuplicates: true,
-          });
-        }
-        const tagIds = new Map(
-          (await tx.tag.findMany({ where: { userId }, select: { id: true, name: true } })).map((tag) => [
-            tag.name,
-            tag.id,
-          ]),
-        );
-
-        const noteIds = new Map(backup.notes.map((note) => [note.id, randomUUID()]));
+        const notebookIds = new Map<string, string>();
+        const noteIds = new Map<string, string>();
+        const tagIds = new Map<string, string>();
+        let notebookCount = 0;
         let versions = 0;
-        for (let start = 0; start < backup.notes.length; start += BATCH) {
-          const batch = backup.notes.slice(start, start + BATCH);
+        let pending: BackupNote[] = [];
+
+        const ensureTags = async (names: Iterable<string>, createdAt = new Date()) => {
+          const missing = [...new Set(names)].filter((name) => !tagIds.has(name));
+          if (missing.length === 0) return;
+          await tx.tag.createMany({ data: missing.map((name) => ({ userId, name, createdAt })), skipDuplicates: true });
+          const rows = await tx.tag.findMany({
+            where: { userId, name: { in: missing } },
+            select: { id: true, name: true },
+          });
+          for (const row of rows) tagIds.set(row.name, row.id);
+        };
+
+        const flush = async () => {
+          if (pending.length === 0) return;
+          const batch = pending;
+          pending = [];
+          await ensureTags(batch.flatMap((note) => note.tags));
+          for (const note of batch) noteIds.set(note.id, randomUUID());
           await tx.note.createMany({
             data: batch.map((note) => ({
               id: noteIds.get(note.id) as string,
@@ -244,10 +216,42 @@ export class BackupService {
           for (const note of batch) {
             if (note.content) await this.links.sync(tx, noteIds.get(note.id) as string, note.content);
           }
-        }
+        };
+
+        const summary = await readBackupStream(source, {
+          notebooks: async (list) => {
+            for (const notebook of list) notebookIds.set(notebook.id, randomUUID());
+            // Parents first, so the foreign key on parent_id is satisfied.
+            for (const nested of [false, true]) {
+              const level = list.filter((notebook) => (notebook.parentId !== null) === nested);
+              if (level.length === 0) continue;
+              await tx.notebook.createMany({
+                data: level.map((notebook) => ({
+                  id: notebookIds.get(notebook.id) as string,
+                  userId,
+                  name: notebook.name,
+                  parentId: notebook.parentId === null ? null : (notebookIds.get(notebook.parentId) as string),
+                  createdAt: new Date(notebook.createdAt),
+                  updatedAt: new Date(notebook.updatedAt),
+                })),
+              });
+            }
+            notebookCount = list.length;
+          },
+          tags: async (list) => {
+            for (const tag of list) await ensureTags([tag.name], new Date(tag.createdAt));
+          },
+          note: async (note) => {
+            pending.push(note);
+            // A batch by count, or sooner when its text is large, so memory stays bounded.
+            const size = pending.reduce((sum, item) => sum + item.content.length, 0);
+            if (pending.length >= BATCH || size > RESTORE_BATCH_CHARS) await flush();
+          },
+        });
+        await flush();
 
         // The daily note choices, pointing at the new notebook and template.
-        const daily = backup.preferences.dailyNotes;
+        const daily = summary.preferences.dailyNotes;
         await tx.user.update({
           where: { id: userId },
           data: {
@@ -262,194 +266,14 @@ export class BackupService {
         });
 
         return {
-          notes: backup.notes.length,
-          notebooks: backup.notebooks.length,
-          tags: tagNames.size,
+          notes: summary.notes,
+          notebooks: notebookCount,
+          tags: tagIds.size,
           versions,
-          shareLinksNotRestored: backup.shareLinks.length,
+          shareLinksNotRestored: summary.shareLinks,
         };
       },
       { timeout: RESTORE_TIMEOUT_MS, maxWait: 10_000 },
     );
   }
-}
-
-/** Says what is wrong with the file in a 400, naming the place. */
-function invalid(where: string, what: string): never {
-  throw new BadRequestException(`Not a backup this app can restore: ${where} ${what}`);
-}
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-function list(value: unknown, where: string, max: number): unknown[] {
-  if (!Array.isArray(value)) invalid(where, 'is not a list');
-  if (value.length > max) invalid(where, `has more than ${max} entries`);
-  return value;
-}
-
-function text(value: unknown, where: string, max: number, { empty = true } = {}): string {
-  if (typeof value !== 'string') invalid(where, 'is not text');
-  if (value.length > max) invalid(where, `is longer than ${max} characters`);
-  if (!empty && !value.trim()) invalid(where, 'is empty');
-  return value;
-}
-
-function date(value: unknown, where: string): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value)) {
-    invalid(where, 'is not a date and time in UTC');
-  }
-  if (Number.isNaN(new Date(value).getTime())) invalid(where, 'is not a real date');
-  return value;
-}
-
-function day(value: unknown, where: string): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid(where, 'is not a day as YYYY-MM-DD');
-  const read = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(read.getTime()) || read.toISOString().slice(0, 10) !== value) invalid(where, 'is not a real day');
-  return value;
-}
-
-function id(value: unknown, where: string): string {
-  return text(value, where, 100, { empty: false });
-}
-
-/**
- * Checks the whole file before anything is written, with the same limits a
- * note, a notebook and a tag have when they are made in the app, and that
- * every reference points at something the file holds.
- */
-export function readBackup(value: unknown): Backup {
-  if (!isObject(value) || value.format !== BACKUP_FORMAT) invalid('the file', `is not a ${BACKUP_FORMAT} file`);
-  if (value.version !== BACKUP_VERSION) invalid('version', `${String(value.version)} is not ${BACKUP_VERSION}`);
-
-  const notebooks = list(value.notebooks, 'notebooks', MAX_BACKUP_NOTEBOOKS).map((entry, index): BackupNotebook => {
-    const where = `notebooks[${index}]`;
-    if (!isObject(entry)) invalid(where, 'is not an object');
-    return {
-      id: id(entry.id, `${where}.id`),
-      name: text(entry.name, `${where}.name`, MAX_NOTEBOOK_NAME, { empty: false }).trim(),
-      parentId: entry.parentId === null ? null : id(entry.parentId, `${where}.parentId`),
-      createdAt: date(entry.createdAt, `${where}.createdAt`),
-      updatedAt: date(entry.updatedAt, `${where}.updatedAt`),
-    };
-  });
-  const byId = new Map(notebooks.map((notebook) => [notebook.id, notebook]));
-  if (byId.size !== notebooks.length) invalid('notebooks', 'has two with the same id');
-  const names = new Set<string>();
-  for (const [index, notebook] of notebooks.entries()) {
-    if (notebook.parentId !== null) {
-      const parent = byId.get(notebook.parentId);
-      if (!parent) invalid(`notebooks[${index}].parentId`, 'names no notebook in the file');
-      // The nesting rule of the app: one level.
-      if (parent.parentId !== null) invalid(`notebooks[${index}]`, 'is nested deeper than notebooks can be');
-    }
-    const key = `${notebook.parentId ?? ''}/${notebook.name.toLowerCase()}`;
-    if (names.has(key)) invalid(`notebooks[${index}].name`, 'is taken by another notebook in the same place');
-    names.add(key);
-  }
-
-  const tags = list(value.tags, 'tags', MAX_BACKUP_TAGS).map((entry, index): BackupTag => {
-    const where = `tags[${index}]`;
-    if (!isObject(entry)) invalid(where, 'is not an object');
-    const [name] = normalizeTagNames([text(entry.name, `${where}.name`, 200)]);
-    if (!name) invalid(`${where}.name`, 'is not a tag name');
-    return { name, createdAt: date(entry.createdAt, `${where}.createdAt`) };
-  });
-
-  const notes = list(value.notes, 'notes', MAX_BACKUP_NOTES).map((entry, index): BackupNote => {
-    const where = `notes[${index}]`;
-    if (!isObject(entry)) invalid(where, 'is not an object');
-    const notebookId = entry.notebookId === null ? null : id(entry.notebookId, `${where}.notebookId`);
-    if (notebookId !== null && !byId.has(notebookId)) invalid(`${where}.notebookId`, 'names no notebook in the file');
-    const tagList = list(entry.tags, `${where}.tags`, 20).map((tag, tagIndex) =>
-      text(tag, `${where}.tags[${tagIndex}]`, 200),
-    );
-    if (typeof entry.pinned !== 'boolean') invalid(`${where}.pinned`, 'is not true or false');
-    if (typeof entry.favorite !== 'boolean') invalid(`${where}.favorite`, 'is not true or false');
-    if (typeof entry.isTemplate !== 'boolean') invalid(`${where}.isTemplate`, 'is not true or false');
-    if (typeof entry.dailyReleased !== 'boolean') invalid(`${where}.dailyReleased`, 'is not true or false');
-    const dailyDate = entry.dailyDate === null ? null : day(entry.dailyDate, `${where}.dailyDate`);
-    if (
-      !Number.isInteger(entry.revision) ||
-      (entry.revision as number) < 0 ||
-      (entry.revision as number) > MAX_REVISION
-    ) {
-      invalid(`${where}.revision`, 'is not a whole number of zero or more');
-    }
-    const versions = list(entry.versions, `${where}.versions`, MAX_VERSIONS_PER_NOTE).map(
-      (version, versionIndex): BackupVersion => {
-        const at = `${where}.versions[${versionIndex}]`;
-        if (!isObject(version)) invalid(at, 'is not an object');
-        return {
-          title: text(version.title, `${at}.title`, MAX_TITLE_LENGTH),
-          content: text(version.content, `${at}.content`, MAX_CONTENT_LENGTH),
-          createdAt: date(version.createdAt, `${at}.createdAt`),
-        };
-      },
-    );
-    return {
-      id: id(entry.id, `${where}.id`),
-      title: text(entry.title, `${where}.title`, MAX_TITLE_LENGTH),
-      content: text(entry.content, `${where}.content`, MAX_CONTENT_LENGTH),
-      notebookId,
-      tags: normalizeTagNames(tagList),
-      pinned: entry.pinned,
-      favorite: entry.favorite,
-      isTemplate: entry.isTemplate,
-      dailyDate,
-      dailyReleased: entry.dailyReleased,
-      revision: entry.revision as number,
-      createdAt: date(entry.createdAt, `${where}.createdAt`),
-      updatedAt: date(entry.updatedAt, `${where}.updatedAt`),
-      deletedAt: entry.deletedAt === null ? null : date(entry.deletedAt, `${where}.deletedAt`),
-      versions,
-    };
-  });
-  if (new Set(notes.map((note) => note.id)).size !== notes.length) invalid('notes', 'has two with the same id');
-  const days = notes.flatMap((note) => (note.dailyDate ? [note.dailyDate] : []));
-  if (new Set(days).size !== days.length) invalid('notes', 'has two daily notes for the same day');
-
-  const preferences = isObject(value.preferences) ? value.preferences : {};
-  const daily = isObject(preferences.dailyNotes) ? preferences.dailyNotes : {};
-  const reference = (ref: unknown, where: string, known: (key: string) => boolean): string | null => {
-    if (ref === null || ref === undefined) return null;
-    const key = id(ref, where);
-    if (!known(key)) invalid(where, 'names nothing in the file');
-    return key;
-  };
-  const dateFormat = DATE_FORMATS.find((format) => format === daily.dateFormat) ?? 'iso';
-  const templateIds = new Set(notes.filter((note) => note.isTemplate).map((note) => note.id));
-
-  const shareLinks = list(value.shareLinks, 'shareLinks', MAX_BACKUP_NOTES + MAX_BACKUP_NOTEBOOKS).map(
-    (entry, index): BackupShareLink => {
-      const where = `shareLinks[${index}]`;
-      if (!isObject(entry)) invalid(where, 'is not an object');
-      return {
-        noteId: entry.noteId === null ? null : id(entry.noteId, `${where}.noteId`),
-        notebookId: entry.notebookId === null ? null : id(entry.notebookId, `${where}.notebookId`),
-        hasPassword: entry.hasPassword === true,
-        expiresAt: entry.expiresAt === null ? null : date(entry.expiresAt, `${where}.expiresAt`),
-        viewCount: Number.isInteger(entry.viewCount) ? (entry.viewCount as number) : 0,
-        createdAt: date(entry.createdAt, `${where}.createdAt`),
-      };
-    },
-  );
-
-  return {
-    format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
-    exportedAt: date(value.exportedAt, 'exportedAt'),
-    preferences: {
-      dailyNotes: {
-        notebookId: reference(daily.notebookId, 'preferences.dailyNotes.notebookId', (key) => byId.has(key)),
-        templateId: reference(daily.templateId, 'preferences.dailyNotes.templateId', (key) => templateIds.has(key)),
-        dateFormat,
-      },
-    },
-    notebooks,
-    tags,
-    shareLinks,
-    notes,
-  };
 }

@@ -3,25 +3,29 @@ import {
   Body,
   Controller,
   Get,
+  NotFoundException,
   Post,
+  Query,
+  Req,
   StreamableFile,
-  UploadedFile,
+  UnsupportedMediaTypeException,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { Readable } from 'node:stream';
-import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes } from '@nestjs/swagger';
 import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
+import { Public } from '../common/public.decorator';
 import { BackupService, RestoreResult } from './backup.service';
 import { ImportOptionsDto } from './dto/import-options.dto';
+import { DownloadTickets } from './download-tickets';
 import { ExportService } from './export.service';
 import { ImportResult, ImportService } from './import.service';
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-/** A backup holds the history as well, so it may be larger than one import file. */
-export const MAX_BACKUP_BYTES = 200 * 1024 * 1024;
 
 @AllowApiToken()
 @Controller()
@@ -30,6 +34,7 @@ export class TransferController {
     private readonly exporter: ExportService,
     private readonly importer: ImportService,
     private readonly backups: BackupService,
+    private readonly tickets: DownloadTickets,
   ) {}
 
   /** Downloads every note as a zip of Markdown files, with notebooks as folders. */
@@ -50,30 +55,49 @@ export class TransferController {
    */
   @Get('export/backup')
   exportBackup(@CurrentUser() user: AuthUser): StreamableFile {
+    return this.backupFile(user.id);
+  }
+
+  /**
+   * A link to the same backup that works once, within a minute, without a
+   * login, so a browser can follow it and save the file as it streams in.
+   */
+  @Post('export/backup/link')
+  backupLink(@CurrentUser() user: AuthUser): { url: string } {
+    return { url: `/api/export/backup/download?ticket=${encodeURIComponent(this.tickets.issue(user.id))}` };
+  }
+
+  /** The backup behind a link from POST /export/backup/link. */
+  @Public()
+  @Get('export/backup/download')
+  downloadBackup(@Query('ticket') ticket: string | undefined): StreamableFile {
+    const userId = this.tickets.redeem(ticket);
+    if (!userId) throw new NotFoundException('This download link has run out or was used already');
+    return this.backupFile(userId);
+  }
+
+  /**
+   * Restores a JSON backup into an account that is still empty. The file is
+   * the body of the request itself, as `application/octet-stream`, and is
+   * read while it comes in, so a backup of any size can be restored.
+   */
+  @ApiConsumes('application/octet-stream')
+  @ApiBody({ schema: { type: 'string', format: 'binary', description: 'A backup from GET /export/backup.' } })
+  @Post('import/backup')
+  restoreBackup(@CurrentUser() user: AuthUser, @Req() request: Request): Promise<RestoreResult> {
+    if (!request.is('application/octet-stream')) {
+      throw new UnsupportedMediaTypeException('Send the backup file itself as application/octet-stream');
+    }
+    if (request.readableEnded) throw new BadRequestException('Choose a backup file to restore');
+    return this.backups.restore(user.id, request);
+  }
+
+  private backupFile(userId: string): StreamableFile {
     const date = new Date().toISOString().slice(0, 10);
-    return new StreamableFile(Readable.from(this.backups.write(user.id)), {
+    return new StreamableFile(Readable.from(this.backups.write(userId)), {
       type: 'application/json',
       disposition: `attachment; filename="notes-backup-${date}.json"`,
     });
-  }
-
-  /** Restores a JSON backup, sent as `file`, into an account that is still empty. */
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['file'],
-      properties: { file: { type: 'string', format: 'binary', description: 'A backup from GET /export/backup.' } },
-    },
-  })
-  @Post('import/backup')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BACKUP_BYTES } }))
-  restoreBackup(
-    @CurrentUser() user: AuthUser,
-    @UploadedFile() file: Express.Multer.File | undefined,
-  ): Promise<RestoreResult> {
-    if (!file) throw new BadRequestException('Choose a backup file to restore');
-    return this.backups.restore(user.id, file.buffer);
   }
 
   /** Imports Markdown, text or Evernote files, or zips of Markdown such as a Notion export, sent as `files`. */

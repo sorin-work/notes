@@ -701,6 +701,7 @@ describe('api tokens', () => {
       'PublicSharesController.unlock',
       'PublicSharesController.view',
       'PublicSharesController.viewNote',
+      'TransferController.downloadBackup',
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
       'AuthController',
@@ -2140,7 +2141,8 @@ describe('the JSON backup', () => {
     const restored = await request(server)
       .post('/api/import/backup')
       .set(fresh.auth)
-      .attach('file', Buffer.from(raw), 'backup.json')
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(raw))
       .expect(201);
     expect(restored.body).toEqual({ notes: 4, notebooks: 2, tags: 1, versions: 2, shareLinksNotRestored: 1 });
 
@@ -2166,6 +2168,74 @@ describe('the JSON backup', () => {
     expect(comparable((await download(owner.auth)).backup)).toEqual(comparable(backup));
   });
 
+  it('downloads through a link that works once, without a login', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    await request(server).post('/api/notes').set(owner.auth).send({ title: 'Linked' }).expect(201);
+    const { url } = (await request(server).post('/api/export/backup/link').set(owner.auth).expect(201)).body as {
+      url: string;
+    };
+    expect(url).toMatch(/^\/api\/export\/backup\/download\?ticket=/);
+
+    const first = await request(server)
+      .get(url)
+      .buffer(true)
+      .parse((res, done) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
+        res.on('end', () => done(null, body));
+      });
+    expect(first.status).toBe(200);
+    expect(first.headers['content-disposition']).toMatch(/^attachment; filename="notes-backup-/);
+    expect((JSON.parse(first.body as string) as Backup).notes.map((note) => note.title)).toEqual(['Linked']);
+
+    await request(server).get(url).expect(404);
+    await request(server)
+      .get(url.replace(/.$/, (last) => (last === 'A' ? 'B' : 'A')))
+      .expect(404);
+    await request(server).get('/api/export/backup/download').expect(404);
+  });
+
+  it('restores a backup larger than any fixed cap, read as it comes in', async () => {
+    const server = app.getHttpServer();
+    const fresh = await signUp();
+    const at = '2026-01-01T00:00:00.000Z';
+    const count = 20_001;
+    const notes = Array.from({ length: count }, (_, index) =>
+      JSON.stringify({
+        id: `n${index}`,
+        title: `Note ${index}`,
+        content: '',
+        notebookId: index % 2 ? 'nb' : null,
+        tags: index % 100 === 0 ? ['every-hundredth'] : [],
+        pinned: false,
+        favorite: false,
+        isTemplate: false,
+        dailyDate: null,
+        dailyReleased: false,
+        revision: 0,
+        createdAt: at,
+        updatedAt: at,
+        deletedAt: null,
+        versions: [],
+      }),
+    );
+    const file =
+      `{"format":"notes-backup","version":1,"exportedAt":"${at}","preferences":{},` +
+      `"notebooks":[{"id":"nb","name":"Half","parentId":null,"createdAt":"${at}","updatedAt":"${at}"}],` +
+      `"tags":[],"shareLinks":[],"notes":[\n${notes.join(',\n')}\n]}`;
+
+    const restored = await request(server)
+      .post('/api/import/backup')
+      .set(fresh.auth)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(file))
+      .expect(201);
+    expect(restored.body).toEqual({ notes: count, notebooks: 1, tags: 1, versions: 0, shareLinksNotRestored: 0 });
+    const tagged = await request(server).get('/api/notes?tag=every-hundredth&pageSize=1').set(fresh.auth).expect(200);
+    expect(tagged.body.total).toBe(201);
+  }, 120_000);
+
   it('restores only into an empty account, and only a file it can read', async () => {
     const server = app.getHttpServer();
     const someone = await signUp();
@@ -2175,22 +2245,31 @@ describe('the JSON backup', () => {
     const busy = await request(server)
       .post('/api/import/backup')
       .set(someone.auth)
-      .attach('file', Buffer.from(raw), 'backup.json')
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(raw))
       .expect(409);
     expect(busy.body.message).toMatch(/empty account/);
 
     const empty = await signUp();
+    // Not sent as the file itself.
+    await request(server)
+      .post('/api/import/backup')
+      .set(empty.auth)
+      .attach('file', Buffer.from(raw), 'backup.json')
+      .expect(415);
     const broken = JSON.parse(raw) as Backup;
     broken.notes[0].notebookId = 'nowhere';
     for (const [file, message] of [
       ['not json', /not JSON/],
       [JSON.stringify({ format: 'something-else' }), /is not a notes-backup file/],
       [JSON.stringify(broken), /notes\[0\]\.notebookId names no notebook/],
+      [raw.slice(0, raw.length - 10), /ends too early/],
     ] as const) {
       const response = await request(server)
         .post('/api/import/backup')
         .set(empty.auth)
-        .attach('file', Buffer.from(file), 'backup.json')
+        .set('Content-Type', 'application/octet-stream')
+        .send(Buffer.from(file))
         .expect(400);
       expect(response.body.message).toMatch(message);
     }

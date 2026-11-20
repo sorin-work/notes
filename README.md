@@ -294,9 +294,12 @@ Good to know:
 
 ### The JSON backup
 
-`GET /export/backup` (Settings, "Download a full backup") writes one
-account's data as a JSON file. It is written out as it is read, a batch of
-notes at a time. The format is versioned. This is version 1:
+`GET /export/backup` writes one account's data as a JSON file. It is written
+out as it is read, a batch of notes at a time. Settings, "Download a full
+backup", gets a link from `POST /export/backup/link` that works once, within
+a minute, without a login, and lets the browser follow it, so the browser
+saves the file to disk as it comes in instead of holding it in memory. The
+format is versioned. This is version 1:
 
 ```json
 {
@@ -355,15 +358,19 @@ and no password hashes, so the file opens nothing for whoever holds it.
 Templates are notes with `isTemplate`, and `dailyDate` marks the daily note
 of a day. `preferences` holds the daily note choices, with ids from the file.
 
-`POST /import/backup` with the file as `file` (Settings, "Restore") puts a
-backup into an account that has no notes, notebooks or tags yet: the same
-notes with their history, revisions, tags, notebooks, trash, templates,
-daily notes and daily note choices, under new ids, with links synced. The whole file is checked against the app's limits
-first, and it is written in one transaction, so a refused or failed restore
-leaves the account empty. An account that has something in it gets `409`. A
-backup may be up to 200 MB. Share links are not made again: a new link would
-have a new address, and a link that had a password would come back without
-one. Share again what should be shared.
+`POST /import/backup` (Settings, "Restore") takes the file itself as the
+request body, sent as `application/octet-stream`, and puts it into an
+account that has no notes, notebooks or tags yet: the same notes with their
+history, revisions, tags, notebooks, trash, templates, daily notes and daily
+note choices, under new ids, with links synced. The file is read while it
+comes in and checked part by part against the app's own limits, so any
+backup the app writes restores, whatever its size, and only a batch of notes
+is in memory at a time. The parts come in the order the app writes them; the
+notebooks have to come before the notes. Everything is written in one
+transaction, so a refused or failed restore leaves the account empty. An
+account that has something in it gets `409`. Share links are not made again:
+a new link would have a new address, and a link that had a password would
+come back without one. Share again what should be shared.
 
 ## Running locally
 
