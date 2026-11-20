@@ -1,4 +1,13 @@
-import { extractWikiLinks, findMention, isLinkable, linkMention, normalizeTitle, renameLinks } from './wikilinks';
+import { verbatimParts } from './prose';
+import {
+  extractWikiLinks,
+  findMention,
+  findMentions,
+  isLinkable,
+  linkMention,
+  normalizeTitle,
+  renameLinks,
+} from './wikilinks';
 
 describe('extractWikiLinks', () => {
   it('finds links and aliases', () => {
@@ -211,5 +220,239 @@ describe('linkMention', () => {
   it('returns null when there is nothing to link', () => {
     expect(linkMention('Already [[Atlas]].', 'Atlas')).toBeNull();
     expect(linkMention('Nothing here.', 'Atlas')).toBeNull();
+  });
+});
+
+describe('mentions in what is not plain text', () => {
+  it('does not put a title together from words on both sides of code, a link or a tag', () => {
+    expect(findMention('run git `-i` rebase now', 'Git Rebase')).toBeNull();
+    expect(findMention('run git [x](y.md) rebase now', 'Git Rebase')).toBeNull();
+    expect(findMention('run git <b>rebase</b> now', 'Git Rebase')).toBeNull();
+    expect(findMention('run git\nrebase now', 'Git Rebase')).toBeNull();
+    expect(linkMention('run git `-i` rebase now, then git rebase.', 'Git Rebase')).toBe(
+      'run git `-i` rebase now, then [[git rebase]].',
+    );
+  });
+
+  it('leaves URLs, link text and reference definitions alone', () => {
+    for (const text of [
+      '[m](https://x.test/a_(b)/atlas)',
+      '[the atlas](https://x.test)',
+      '[a]: ./docs/atlas.md',
+      'See www.atlas.org or https://atlas.dev/atlas.',
+      '<https://atlas.org/atlas>',
+      '![atlas](atlas.png)',
+      'An <span title="atlas">aside</span>.',
+      '<div>atlas</div>',
+    ]) {
+      expect(findMention(text, 'Atlas')).toBeNull();
+      expect(linkMention(text, 'Atlas')).toBeNull();
+    }
+  });
+
+  it('leaves code alone wherever it is', () => {
+    for (const text of [
+      '> ```\n> atlas\n> ```',
+      '- item\n\n  ```\n  atlas\n  ```',
+      'Then:\n\n    atlas in indented code',
+      '~~~\natlas\n~~~',
+      '``atlas ` still code``',
+    ]) {
+      expect(findMention(text, 'Atlas')).toBeNull();
+    }
+  });
+
+  it('finds a title in a heading, a quote, a list and a table', () => {
+    for (const text of ['# Atlas kickoff', '> the atlas', '- [ ] check atlas', '| a | atlas |\n| - | - |\n| 1 | 2 |']) {
+      const linked = linkMention(text, 'Atlas');
+      expect(linked?.replace(/\[\[|\]\]/g, '')).toBe(text);
+      expect(linked).toMatch(/\[\[atlas\]\]/i);
+    }
+  });
+
+  it('treats the marks of a script as part of the word', () => {
+    expect(findMention('रामायण पढ़ी', 'राम')).toBeNull();
+    expect(linkMention('कल राम आए', 'राम')).toBe('कल [[राम]] आए');
+    // A letter with its accent as a separate mark is still one letter.
+    expect(findMention('café society', 'cafe')).toBeNull();
+  });
+});
+
+describe('linking one mention out of several', () => {
+  const text = 'Use `atlas` here.\n\nThe Atlas is big. Read the atlas.';
+
+  it('lists them in order and skips the one in code', () => {
+    expect(findMentions(text, 'Atlas').map(({ start, end }) => text.slice(start, end))).toEqual(['Atlas', 'atlas']);
+    expect(findMention(text, 'Atlas')).toEqual({ start: 23, end: 28 });
+  });
+
+  it('wraps the one it is told to, when it still reads as it did', () => {
+    const second = text.lastIndexOf('atlas');
+    expect(linkMention(text, 'Atlas', { offset: second, text: 'atlas' })).toBe(
+      'Use `atlas` here.\n\nThe Atlas is big. Read the [[atlas]].',
+    );
+    expect(linkMention(text, 'Atlas', { offset: 23, text: 'Atlas' })).toBe(
+      'Use `atlas` here.\n\nThe [[Atlas]] is big. Read the atlas.',
+    );
+  });
+
+  it('wraps nothing when the place no longer holds that mention', () => {
+    expect(linkMention(text, 'Atlas', { offset: 23, text: 'atlas' })).toBeNull();
+    expect(linkMention(text, 'Atlas', { offset: 24, text: 'tlas' })).toBeNull();
+    // The one inside code is at offset 5.
+    expect(linkMention(text, 'Atlas', { offset: 5, text: 'atlas' })).toBeNull();
+  });
+});
+
+describe('linking a mention in generated notes', () => {
+  /** The same sequence of numbers for the same seed, so a failure can be run again. */
+  function random(seed: number) {
+    let state = seed >>> 0;
+    const next = () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let mixed = state;
+      mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+      mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+      return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+    };
+    return {
+      pick: <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)],
+      chance: (p: number) => next() < p,
+    };
+  }
+
+  /** A note under construction. It remembers where it put the title as plain text, and what must never change. */
+  class Draft {
+    text = '';
+    readonly plainTitles: { start: number; end: number }[] = [];
+    readonly verbatim: { start: number; text: string }[] = [];
+
+    add(piece: string): this {
+      this.text += piece;
+      return this;
+    }
+    /** The title as part of a sentence: a mention. */
+    plain(written: string): this {
+      this.plainTitles.push({ start: this.text.length, end: this.text.length + written.length });
+      return this.add(written);
+    }
+    /** Code, a URL or HTML. It may hold the title, and it has to come out as it went in. */
+    kept(piece: string): this {
+      this.verbatim.push({ start: this.text.length, text: piece });
+      return this.add(piece);
+    }
+  }
+
+  const WORDS = ['notes', 'from', 'the', 'meeting', 'about', 'budget', 'and', 'plans', 'for', 'spring'];
+
+  function generate(seed: number, title: string): Draft {
+    const { pick, chance } = random(seed);
+    const draft = new Draft();
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const written = () => pick([title, title.toLowerCase(), title.toUpperCase(), title.replace(/ /g, '  ')]);
+    const words = () => Array.from({ length: 1 + Math.floor(seed % 3) }, () => pick(WORDS)).join(' ');
+    /** Some words, now and then with the title among them. */
+    const sentence = (density: number) => {
+      draft.add(words());
+      if (chance(density))
+        draft
+          .add(' ')
+          .plain(written())
+          .add(pick(['', '.', ',', ' again']));
+    };
+
+    const inline: (() => void)[] = [
+      () => sentence(0.5),
+      () => draft.add('*').add(words()).add(' ').plain(written()).add('*'),
+      () => draft.kept(`\`${words()} ${written()}\``),
+      () => draft.add(`[${words()} ${written()}](`).kept(`https://x.test/a_(b)/${slug}`).add(')'),
+      () => draft.add('<').kept(`https://${slug}.example/${slug}`).add('>'),
+      () => draft.kept(pick([`https://x.test/${slug}`, `www.${slug}.org`])),
+      () => draft.kept(`<span title="${title}">`).add(words()).kept('</span>'),
+      () => draft.add(pick([`[[${title}]]`, `[[${title}|${words()}]]`, '[[Another note]]'])),
+      () => draft.add(`![${title}](`).kept(`${slug}.png`).add(')'),
+    ];
+    const line = () => {
+      const parts = 1 + Math.floor(seed % 4);
+      for (let i = 0; i < parts; i++) {
+        if (i > 0) draft.add(' ');
+        pick(inline)();
+      }
+    };
+
+    let afterList = false;
+    const blocks: (() => void)[] = [
+      () => line(),
+      () => (draft.add('## '), sentence(0.6)),
+      () => (draft.add('> '), sentence(0.6), draft.add('\n> '), sentence(0.3)),
+      () => (draft.add(pick(['- ', '1. ', '- [ ] '])), sentence(0.6)),
+      () => draft.kept(`\`\`\`\n${title} in a fence\n\`\`\``),
+      () => draft.add('> ').kept(`\`\`\`\n> ${title} in a quoted fence\n> \`\`\``),
+      () => draft.add('[ref]: ').kept(`./docs/${slug}.md`),
+      () => draft.kept(`<div>${title}</div>`),
+      () => {
+        draft.add('| ');
+        sentence(0.6);
+        draft.add(' | b |\n| --- | --- |\n| x | ').kept(`\`${title}\``).add(' |');
+      },
+      // Four spaces after a list would be more of the list, not code.
+      () => (afterList ? line() : draft.add('    ').kept(`${title} as indented code`)),
+    ];
+    const count = 2 + Math.floor(seed % 7);
+    for (let i = 0; i < count; i++) {
+      if (i > 0) draft.add('\n\n');
+      const block = pick(blocks);
+      block();
+      afterList = block === blocks[3];
+    }
+    return draft;
+  }
+
+  it.each(['Project Atlas', 'Atlas', 'Weekly sync', 'node.js'])(
+    'only ever adds [[ ]] around the first plain mention of "%s"',
+    (title) => {
+      let linkedSome = 0;
+      for (let seed = 1; seed <= 250; seed++) {
+        const draft = generate(seed, title);
+        const note = draft.text;
+        const linked = linkMention(note, title);
+        const first = draft.plainTitles[0];
+        const context = `seed ${seed}:\n${note}`;
+
+        if (!first) {
+          expect({ context, linked }).toEqual({ context, linked: null });
+          continue;
+        }
+        linkedSome++;
+        // Nothing but the two pairs of brackets, around a span the generator wrote as plain text.
+        const expected = `${note.slice(0, first.start)}[[${note.slice(first.start, first.end)}]]${note.slice(first.end)}`;
+        expect({ context, linked }).toEqual({ context, linked: expected });
+        expect(normalizeTitle(note.slice(first.start, first.end))).toBe(normalizeTitle(title));
+        // Every piece of code, every URL and all HTML is where it was, moved along by the brackets at most.
+        for (const kept of draft.verbatim) {
+          const moved = kept.start + (kept.start >= first.end ? 4 : kept.start >= first.start ? 2 : 0);
+          expect((linked ?? '').slice(moved, moved + kept.text.length)).toBe(kept.text);
+        }
+        expect(verbatimParts(linked ?? '')).toEqual(verbatimParts(note));
+      }
+      // The generator has to produce both kinds of note for the test to mean anything.
+      expect(linkedSome).toBeGreaterThan(50);
+      expect(linkedSome).toBeLessThan(250);
+    },
+  );
+});
+
+describe('mentions in very large or hostile notes', () => {
+  it('stays quick however many brackets a note has', () => {
+    const started = Date.now();
+    for (const mark of ['[', '[[', ']]', '[[a', '](', '<', '> ']) {
+      const hostile = mark.repeat(80_000);
+      expect(findMention(hostile, 'Atlas')).toBeNull();
+      expect(linkMention(`${hostile}\n\nThe atlas.`, 'Atlas')).toBe(`${hostile}\n\nThe [[atlas]].`);
+    }
+    // A line of backticks opens a code block that is never closed, so what follows is code.
+    expect(linkMention(`${'`'.repeat(80_000)}\n\nThe atlas.`, 'Atlas')).toBeNull();
+    // Well under a second in practice. The limit catches work that grows with the square of the length.
+    expect(Date.now() - started).toBeLessThan(15_000);
   });
 });

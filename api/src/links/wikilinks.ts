@@ -1,3 +1,5 @@
+import { proseSpans, Span, verbatimParts } from './prose';
+
 export interface WikiLink {
   /** The note title the link points at. */
   title: string;
@@ -147,33 +149,21 @@ export interface Mention {
 /** Shorter titles are too common as words ("Go", "AI") to look for. */
 const MIN_MENTION_LENGTH = 3;
 
-const blank = (match: string) => ' '.repeat(match.length);
-
 /**
- * Blanks out the places where words are not plain text, and where brackets
- * put around them would break something: [[links]], Markdown links and
- * images, HTML tags and bare URLs.
- */
-function withoutLinks(line: string): string {
-  return line
-    .replace(/\[\[[^\]\n]*\]\]/g, blank)
-    .replace(/!?\[[^\]\n]*\](\([^)\n]*\)|\[[^\]\n]*\])/g, blank)
-    .replace(/<[^>\n]+>/g, blank)
-    .replace(/\bhttps?:\/\/\S+/gi, blank);
-}
-
-/**
- * A pattern for `title` written out in a line of text, or null when the
- * title is too short or cannot be written as a [[link]] (with [ ] | # or a
- * backtick in it), since linking a mention would then not work. It matches
- * the way links are matched to notes, ignoring case and extra spaces, and
- * only whole words: "Atlas" is not mentioned in "Atlases".
+ * A pattern for `title` written out in text, or null when the title is too
+ * short or cannot be written as a [[link]] (with [ ] | # or a backtick in
+ * it), since linking a mention would then not work. It matches the way links
+ * are matched to notes, ignoring case and extra spaces, and only whole
+ * words: "Atlas" is not mentioned in "Atlases". A word is made of letters,
+ * the marks that belong to them, digits and the underscore. Without the
+ * marks "राम" would be found at the start of "रामायण", which is another word.
  */
 function mentionPattern(title: string): RegExp | null {
   const key = normalizeTitle(title);
   if (key.length < MIN_MENTION_LENGTH || !isLinkable(title)) return null;
   const words = key.split(' ').map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  return new RegExp(`(?<![\\p{L}\\p{N}_])${words.join('[ \\t]+')}(?![\\p{L}\\p{N}_])`, 'iu');
+  const inWord = '[\\p{L}\\p{M}\\p{N}_]';
+  return new RegExp(`(?<!${inWord})${words.join('[ \\t]+')}(?!${inWord})`, 'giu');
 }
 
 /** Whether mentions of this title are looked for at all. See mentionPattern for which are not. */
@@ -182,34 +172,89 @@ export function isMentionable(title: string): boolean {
 }
 
 /**
- * Finds the first place where a note mentions `title` without linking to it.
- * Fenced code blocks and inline code are skipped as in extractWikiLinks, and
- * so is everything withoutLinks blanks out.
+ * Every [[ with its ]] on the same line, as positions. Each character is
+ * looked at a fixed number of times, however many brackets a note has.
  */
-export function findMention(markdown: string, title: string): Mention | null {
-  const pattern = mentionPattern(title);
-  if (!pattern) return null;
-
-  for (const { line, lineStart } of proseLines(markdown)) {
-    // Blanking keeps the length of the line, so a position in it is a position in the note.
-    const match = pattern.exec(withoutLinks(withoutInlineCode(line)));
-    if (match) return { start: lineStart + match.index, end: lineStart + match.index + match[0].length };
+function wikiLinkSpans(text: string): Span[] {
+  const spans: Span[] = [];
+  let close = -1;
+  for (let open = text.indexOf('[['); open !== -1;) {
+    if (close < open + 2) close = text.indexOf(']]', open + 2);
+    if (close === -1) break;
+    const lineEnd = text.indexOf('\n', open);
+    if (lineEnd !== -1 && lineEnd < close) {
+      // Not closed on its line, so it is no link. The next one cannot start before the line ends.
+      open = text.indexOf('[[', lineEnd);
+      continue;
+    }
+    spans.push({ from: open, to: close + 2 });
+    open = text.indexOf('[[', close + 2);
   }
-  return null;
+  return spans;
 }
 
 /**
- * Wraps the first unlinked mention of `title` in [[ ]], keeping the words as
- * they were written. Returns null when there is no mention, and when the
- * result would not read back as the links the note had plus this one.
+ * The places where a note mentions `title` without linking to it, in order.
+ * A mention lies inside one stretch of plain text as proseSpans finds them,
+ * so never in code, in the text or target of a link, in a URL or in HTML,
+ * and never inside an existing [[link]].
  */
-export function linkMention(markdown: string, title: string): string | null {
-  const mention = findMention(markdown, title);
+export function findMentions(markdown: string, title: string): Mention[] {
+  const pattern = mentionPattern(title);
+  if (!pattern) return [];
+  const prose = proseSpans(markdown);
+  if (prose.length === 0) return [];
+  const links = wikiLinkSpans(markdown);
+  const key = normalizeTitle(title);
+
+  const mentions: Mention[] = [];
+  let p = 0;
+  let l = 0;
+  for (const match of markdown.matchAll(pattern)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    // The matches and both lists are in order, so each list is walked once.
+    while (p < prose.length && prose[p].to < end) p++;
+    if (p === prose.length) break;
+    if (prose[p].from > start) continue;
+    while (l < links.length && links[l].to <= start) l++;
+    if (l < links.length && links[l].from < end) continue;
+    // The pattern folds case the way regular expressions do. The key of a link is what counts.
+    if (normalizeTitle(match[0]) !== key) continue;
+    mentions.push({ start, end });
+  }
+  return mentions;
+}
+
+/** The first place where a note mentions `title` without linking to it, if there is one. */
+export function findMention(markdown: string, title: string): Mention | null {
+  return findMentions(markdown, title)[0] ?? null;
+}
+
+/**
+ * Wraps one unlinked mention of `title` in [[ ]], keeping the words as they
+ * were written: the first one, or the one that starts at `at.offset` and
+ * reads `at.text`. Returns null when there is no such mention.
+ *
+ * The result is read back before it is returned. It has to hold the links
+ * the note had plus this one, and every code span, code block, URL and piece
+ * of HTML exactly as before. Otherwise nothing is changed.
+ */
+export function linkMention(markdown: string, title: string, at?: { offset: number; text: string }): string | null {
+  const mentions = findMentions(markdown, title);
+  const mention = at ? mentions.find((found) => found.start === at.offset) : mentions[0];
   if (!mention) return null;
-  const linked = `${markdown.slice(0, mention.start)}[[${markdown.slice(mention.start, mention.end)}]]${markdown.slice(mention.end)}`;
+  const written = markdown.slice(mention.start, mention.end);
+  if (at && written !== at.text) return null;
+  const linked = `${markdown.slice(0, mention.start)}[[${written}]]${markdown.slice(mention.end)}`;
 
   const keys = (text: string) => extractWikiLinks(text).map((link) => normalizeTitle(link.title));
   const expected = new Set([...keys(markdown), normalizeTitle(title)]);
   const found = keys(linked);
-  return found.length === expected.size && found.every((key) => expected.has(key)) ? linked : null;
+  if (found.length !== expected.size || !found.every((key) => expected.has(key))) return null;
+
+  const before = verbatimParts(markdown);
+  const after = verbatimParts(linked);
+  if (before.length !== after.length || before.some((part, index) => part !== after[index])) return null;
+  return linked;
 }
