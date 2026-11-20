@@ -1674,10 +1674,89 @@ describe('import and export', () => {
       .set(other.auth)
       .attach('files', exported.body as Buffer, 'export.zip')
       .expect(201);
-    expect(imported.body).toEqual({ imported: 1, notebooksCreated: 1, skipped: [] });
+    expect(imported.body).toEqual({
+      imported: 1,
+      notebooksCreated: 1,
+      duplicates: 0,
+      attachmentsSkipped: 0,
+      skipped: [],
+    });
 
     const list = await request(server).get('/api/notes?tag=baking').set(other.auth).expect(200);
     expect(list.body.items[0]).toMatchObject({ title: 'Bread', tags: ['baking'] });
+
+    // The same zip again: nothing new, unless asked for.
+    const again = await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .attach('files', exported.body as Buffer, 'export.zip')
+      .expect(201);
+    expect(again.body).toMatchObject({ imported: 0, duplicates: 1, notebooksCreated: 0 });
+    const twice = await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .field('skipExisting', 'false')
+      .attach('files', exported.body as Buffer, 'export.zip')
+      .expect(201);
+    expect(twice.body).toMatchObject({ imported: 1, duplicates: 0 });
+    await request(server)
+      .post('/api/import')
+      .set(other.auth)
+      .field('skipExisting', 'maybe')
+      .attach('files', exported.body as Buffer, 'export.zip')
+      .expect(400);
+  });
+
+  it('imports an Evernote export with its links synced, and the text stays text', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const enex = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export4.dtd">
+<en-export><note><title>Garden</title><content><![CDATA[<en-note><div>Water the [[Tomatoes]] &lt;script&gt;</div><script>x()</script><en-media hash="a" type="image/png"/></en-note>]]></content><created>20250301T090000Z</created><tag>home</tag><resource/></note></en-export>`;
+
+    const imported = await request(server)
+      .post('/api/import')
+      .set(auth)
+      .attach('files', Buffer.from(enex), 'Home.enex')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 1, notebooksCreated: 1, attachmentsSkipped: 1, skipped: [] });
+
+    const list = await request(server).get('/api/notes?tag=home').set(auth).expect(200);
+    const note = await request(server)
+      .get(`/api/notes/${list.body.items[0].id as string}`)
+      .set(auth)
+      .expect(200);
+    expect(note.body).toMatchObject({
+      title: 'Garden',
+      content: 'Water the \\[\\[Tomatoes\\]\\] <script>',
+      notebook: { name: 'Home' },
+      createdAt: '2025-03-01T09:00:00.000Z',
+    });
+  });
+
+  it('imports a Notion export with links between its pages', async () => {
+    const { auth } = await signUp();
+    const server = app.getHttpServer();
+    const id = 'a'.repeat(32);
+    const other = 'b'.repeat(32);
+    const zip = new JSZip();
+    zip.file(`Ideas ${id}.md`, `# Ideas\n\nSee [Next](Ideas%20${id}/Next%20${other}.md).`);
+    zip.file(`Ideas ${id}/Next ${other}.md`, '# Next\n\nSoon.');
+    const imported = await request(server)
+      .post('/api/import')
+      .set(auth)
+      .attach('files', await zip.generateAsync({ type: 'nodebuffer' }), 'notion.zip')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 2, notebooksCreated: 1 });
+
+    const ideas = (await request(server).get('/api/notes?sort=title').set(auth).expect(200)).body.items.find(
+      (item: { title: string }) => item.title === 'Ideas',
+    );
+    const links = await request(server)
+      .get(`/api/notes/${ideas.id as string}/links`)
+      .set(auth)
+      .expect(200);
+    expect(links.body).toEqual([{ title: 'Next', noteId: expect.any(String) }]);
   });
 });
 
