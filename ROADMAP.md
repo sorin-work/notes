@@ -365,8 +365,10 @@ A share link can run out and can ask for a password: `expiresAt` and
 never existed, and the dialog tells the owner. A link with a password answers
 `403` so that the shared page can ask, and takes the password in the body of
 a `POST`, never in the address. The public endpoint is throttled, with a
-roomy limit for reading and a strict one for password attempts, counted per
-client and per link. A request with the owner's login is no longer counted
+roomy limit for reading and a strict one for password attempts per client,
+and each link takes only so many wrong passwords a minute from everyone
+together, which a persistent guesser can use to keep readers out but never
+the signed-in owner. A request with the owner's login is no longer counted
 as a view, and nothing these routes answer may be cached. Still to come in a
 second step: sharing a whole notebook with one link, and `[[links]]` between
 shared notes.
