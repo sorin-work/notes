@@ -7,16 +7,19 @@ import { NotebooksService, NotebookView } from './notebooks.service';
 export class NotebooksController {
   constructor(private readonly notebooks: NotebooksService) {}
 
+  /** Lists the notebooks with their note counts. */
   @Get()
   list(@CurrentUser() user: AuthUser): Promise<NotebookView[]> {
     return this.notebooks.list(user.id);
   }
 
+  /** Creates a notebook, at the top level or inside a top-level one. */
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateNotebookDto): Promise<NotebookView> {
     return this.notebooks.create(user.id, dto);
   }
 
+  /** Renames or moves a notebook. */
   @Patch(':id')
   update(
     @CurrentUser() user: AuthUser,
@@ -26,6 +29,7 @@ export class NotebooksController {
     return this.notebooks.update(user.id, id, dto);
   }
 
+  /** Deletes a notebook. Its notes go to the trash. */
   @Delete(':id')
   remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<{ trashedNotes: number }> {
     return this.notebooks.remove(user.id, id);

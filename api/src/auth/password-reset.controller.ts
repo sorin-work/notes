@@ -25,6 +25,7 @@ export class PasswordResetController {
     this.resets.request(dto.email);
   }
 
+  /** Sets a new password with the token from the mail and signs the account out everywhere. */
   @Public()
   @UseGuards(ThrottlerGuard)
   @Post('confirm')

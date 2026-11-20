@@ -21,6 +21,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  /** Creates an account and signs in. */
   @Public()
   @UseGuards(ThrottlerGuard)
   @Post('register')
@@ -28,6 +29,7 @@ export class AuthController {
     return this.auth.register(dto);
   }
 
+  /** Signs in. The `token` in the answer goes into the Authorization header. */
   @Public()
   @UseGuards(ThrottlerGuard)
   @Post('login')
@@ -36,6 +38,7 @@ export class AuthController {
     return this.auth.login(dto);
   }
 
+  /** The account the credential belongs to. */
   @AllowApiToken()
   @Get('me')
   me(@CurrentUser() user: AuthUser): Promise<PublicUser> {
@@ -47,12 +50,14 @@ export class AuthController {
   // Twice over: per client address on each route, and per account across
   // the three of them, so one account gets AUTH_THROTTLE_LIMIT guesses a
   // minute however they are spread.
+  /** Changes the name or the email. A new email needs `currentPassword`. */
   @UseGuards(ThrottlerGuard, AccountThrottlerGuard)
   @Patch('me')
   updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto): Promise<PublicUser> {
     return this.auth.updateProfile(user.id, dto);
   }
 
+  /** Deletes the account with everything in it. */
   @UseGuards(ThrottlerGuard, AccountThrottlerGuard)
   @Delete('me')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -67,6 +72,7 @@ export class AuthController {
     return this.auth.changePassword(user.id, dto);
   }
 
+  /** Ends every login of the account. API tokens keep working. */
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   logoutEverywhere(@CurrentUser() user: AuthUser): Promise<void> {

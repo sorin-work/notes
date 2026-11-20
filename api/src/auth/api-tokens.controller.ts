@@ -10,6 +10,7 @@ import { CreateApiTokenDto } from './dto/create-api-token.dto';
 export class ApiTokensController {
   constructor(private readonly tokens: ApiTokensService) {}
 
+  /** The API tokens of the account, without the tokens themselves. */
   @Get()
   list(@CurrentUser() user: AuthUser): Promise<ApiTokenView[]> {
     return this.tokens.list(user.id);
@@ -21,6 +22,7 @@ export class ApiTokensController {
     return this.tokens.create(user.id, dto);
   }
 
+  /** Revokes a token. Whatever uses it gets a `401` from then on. */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   revoke(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {

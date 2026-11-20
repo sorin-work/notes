@@ -21,6 +21,7 @@ export class SearchQuery extends NoteFilterQuery {
 export class SearchController {
   constructor(private readonly searchService: SearchService) {}
 
+  /** Full-text search over titles and text, best match first. */
   @Get()
   search(@CurrentUser() user: AuthUser, @Query() query: SearchQuery): Promise<Page<SearchHit>> {
     return this.searchService.search(user.id, query.q, query);

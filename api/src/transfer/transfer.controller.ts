@@ -13,6 +13,7 @@ export class TransferController {
     private readonly importer: ImportService,
   ) {}
 
+  /** Downloads every note as a zip of Markdown files, with notebooks as folders. */
   @Get('export')
   async exportAll(@CurrentUser() user: AuthUser): Promise<StreamableFile> {
     const zip = await this.exporter.exportAll(user.id);
@@ -23,6 +24,7 @@ export class TransferController {
     });
   }
 
+  /** Imports Markdown or text files, or zips of them, sent as `files`. */
   @Post('import')
   @UseInterceptors(FilesInterceptor('files', 50, { limits: { fileSize: MAX_UPLOAD_BYTES } }))
   import(
