@@ -359,22 +359,27 @@ filters instead of adding to them.
 ### 5. Rename a note without breaking links
 
 After a rename, the editor shows how many notes still link to the old title
-and offers "Update N links". As planned, that is a separate
+and offers "Update N links from [[old]] to [[new]]". The offer waits until
+the cursor has left the title field and the title is saved, and is not made
+for a note left without a title. As planned, the rewrite is a separate
 `POST /notes/:id/rename-links`, the title `PATCH` rewrites nothing, and
 `renameLinks(markdown, from, to)` sits beside `extractWikiLinks` and reads
 notes through the same scanner. The request names the old title, which the
 editor remembers from when the note was opened, so a title that saved in
 several steps still works. A `GET` on the same path gives the count for the
-offer. The rewrite runs in one transaction, saves a version of each note
-first and leaves `updatedAt` alone. Nothing is offered or rewritten while a
-note still has the old title. Beyond the design: nothing is rewritten when
-the new title cannot be written as a link (`[`, `]`, `|`, `#` or a backtick
-in it), a note that was edited since it was read is skipped and not
-overwritten, and so is a note that would grow past the size limit. Still
-open: the offer lives in the editor where the rename happened and is gone
-after leaving the note, notes in the trash and a note's links to itself are
-not rewritten, and a link with inline code between its brackets stays as it
-is.
+offer. The rewrite runs in one transaction that holds the renamed note, saves
+a version of each note first and leaves `updatedAt` alone. Nothing is offered
+or rewritten while a note still has the old title. Beyond the design: nothing
+is rewritten when another note has the new title too, or when the new title
+cannot be written as a link (`[`, `]`, `|`, `#` or a backtick in it). A note
+that was edited since it was read is skipped and not overwritten, and so is a
+note that would grow past the size limit. The answer lists the notes that
+were rewritten, which the editor drops from its cache so that none is opened
+with its old text, and counts the ones that were skipped, for which the offer
+stays. Still open: the offer lives in the editor where the rename happened and
+is gone after leaving the note, notes in the trash and a note's links to
+itself are not rewritten, and a link with inline code between its brackets
+stays as it is.
 
 ### 7. Scheduled backups
 
