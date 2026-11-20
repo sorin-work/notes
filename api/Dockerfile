@@ -16,6 +16,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY package.json docker-entrypoint.sh ./
+# The folder for attachment files. A named volume mounted here starts out
+# with this owner, so the API, which does not run as root, can write to it.
+RUN mkdir -p /data/attachments && chown node:node /data/attachments
 USER node
 EXPOSE 4401
 ENTRYPOINT ["./docker-entrypoint.sh"]
