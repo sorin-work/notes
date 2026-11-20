@@ -4,15 +4,19 @@ import { setToken } from '../api/client';
 import type { Note } from '../api/types';
 import { note, user, userToken } from '../test/fixtures';
 import { mockFetch } from '../test/render';
+import { currentNotices } from './notices';
 import {
   createOffline,
+  discardEntry,
   dropOtherOutboxes,
+  offlineWritingAvailable,
   openEntryFor,
   outboxEntryFor,
   queueText,
   replay,
   resolveEntry,
   saveAsNewNote,
+  sendTimeout,
   startOutbox,
   stopOutbox,
   unsentAfterTrying,
@@ -57,7 +61,7 @@ describe('the outbox', () => {
     offline();
     await startOutbox(user.id, client);
     await queueText(user.id, 'n1', { title: 'Plan', content: 'one' }, 3);
-    await queueText(user.id, 'n1', { title: 'Plan', content: 'one two' }, 4);
+    await queueText(user.id, 'n1', { title: 'Plan', content: 'one two' }, 4, [], { title: 'Plan', content: 'one' });
     expect(outboxEntryFor('n1')).toMatchObject({ content: 'one two', baseRevision: 3, state: 'waiting' });
 
     // The tab is reloaded: nothing in memory, the entry still on disk.
@@ -142,7 +146,7 @@ describe('the outbox', () => {
     const client = new QueryClient();
     await startOutbox(user.id, client);
     const made = await createOffline(user.id, { notebookId: null });
-    await queueText(user.id, made.id, { title: 'On the train', content: 'x' }, 0);
+    await queueText(user.id, made.id, { title: 'On the train', content: 'x' }, 0, [], { title: '', content: '' });
     expect(outboxEntryFor(made.id)).toMatchObject({ kind: 'create', title: 'On the train' });
 
     let created: Note | null = null;
@@ -185,7 +189,7 @@ describe('the outbox', () => {
     void queueText(user.id, 'n1', { title: 'Plan', content: 'T1' }, 3);
     await vi.waitFor(() => expect(answer).not.toBeNull());
     // Another tab, or this editor, writes T2 while T1 is on its way, still on the old revision.
-    await queueText(user.id, 'n1', { title: 'Plan', content: 'T2' }, 3);
+    await queueText(user.id, 'n1', { title: 'Plan', content: 'T2' }, 3, [], { title: 'Plan', content: 'T1' });
     answer!();
     await vi.waitFor(() => expect(current.content).toBe('T2'));
     await replay();
@@ -281,6 +285,62 @@ describe('the outbox', () => {
     await replay(true);
     expect(calls.filter((call) => call.method !== 'GET')).toEqual([]);
     expect(outboxEntryFor('n1')).not.toBeNull();
+  });
+
+  it('gives up a request that hangs, so a hung server holds no tab and no sign-out', async () => {
+    sendTimeout.ms = 50;
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise((_resolve, reject) =>
+              init.signal?.addEventListener('abort', () => reject(new Error('aborted'))),
+            ),
+        ),
+      );
+      await startOutbox(user.id, new QueryClient());
+      await queueText(user.id, 'n1', { title: 'Plan', content: 'Mine' }, 3);
+      // Marked as maybe sent before the request went, not after it failed.
+      await vi.waitFor(() => expect(outboxEntryFor('n1')?.maybeSent).toEqual([{ title: 'Plan', content: 'Mine' }]));
+      await replay();
+      expect(outboxEntryFor('n1')).toMatchObject({ state: 'waiting' });
+      expect(await unsentAfterTrying(user.id, 200)).toBe(1);
+    } finally {
+      sendTimeout.ms = 15_000;
+    }
+  });
+
+  it('says so when a change discarded while it was on its way reached the server all the same', async () => {
+    let answer: (() => void) | null = null;
+    mockFetch({
+      'PATCH /api/notes/n1': ({ body }) =>
+        new Promise((resolve) => {
+          answer = () => resolve({ body: note({ ...(body as Partial<Note>), id: 'n1', revision: 4 }) });
+        }),
+    });
+    await startOutbox(user.id, new QueryClient());
+    void queueText(user.id, 'n1', { title: 'Plan', content: 'Mine' }, 3);
+    await vi.waitFor(() => expect(answer).not.toBeNull());
+    await discardEntry(outboxEntryFor('n1')!.seq!);
+    answer!();
+    await vi.waitFor(() =>
+      expect(currentNotices().map((notice) => notice.text)).toEqual([
+        expect.stringContaining('that you discarded had already reached the server'),
+      ]),
+    );
+    expect(outboxEntryFor('n1')).toBeNull();
+  });
+
+  it('is off without Web Locks, as in a page that is not served over HTTPS', () => {
+    const locks = Object.getOwnPropertyDescriptor(navigator, 'locks');
+    Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
+    try {
+      expect(offlineWritingAvailable()).toBe(false);
+    } finally {
+      if (locks) Object.defineProperty(navigator, 'locks', locks);
+    }
+    expect(offlineWritingAvailable()).toBe(true);
   });
 
   it('belongs to one user: another user signing in here removes it', async () => {

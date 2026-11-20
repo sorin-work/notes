@@ -8,7 +8,7 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
-import { outboxEntryFor, queueText } from '../lib/outbox';
+import { openEntryFor, outboxEntryFor, outboxSnapshot, queueText } from '../lib/outbox';
 import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, user, userToken } from '../test/fixtures';
@@ -760,6 +760,35 @@ describe('NoteEditor', () => {
       await waitFor(() => expect(saved.content).toBe('Typed with no connection.'), { timeout: 3000 });
       expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 3 });
       await waitFor(() => expect(outboxEntryFor('n1')).toBeNull());
+    });
+
+    it('asks, and loses nothing, when another tab queued text of the note that this editor never saw', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')),
+          'POST /api/notes': () => Promise.reject(new TypeError('Failed to fetch')),
+        }),
+      );
+      renderSignedIn();
+      const textarea = await screen.findByLabelText('Note content');
+      // Another tab of this browser, offline too, queues its text of the same note.
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'From the other tab' }, 3, [], {
+        title: 'Project Atlas',
+        content: 'Links to [[Atlas data model]].',
+      });
+      fireEvent.change(textarea, { target: { value: 'Typed in this tab' } });
+
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      expect(outboxEntryFor('n1')?.content).toBe('From the other tab');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+      await waitFor(() => expect(openEntryFor('n1')?.content).toBe('Typed in this tab'));
+      // The other tab's text is kept too, as a note of its own.
+      await waitFor(() =>
+        expect(
+          outboxSnapshot().some((entry) => entry.kind === 'create' && entry.content === 'From the other tab'),
+        ).toBe(true),
+      );
     });
 
     it('asks the usual question when offline changes meet a newer note, and sends them only as told', async () => {

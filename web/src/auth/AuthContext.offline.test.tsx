@@ -107,6 +107,7 @@ describe('the notes kept for reading offline', () => {
     const unregister = registerUnsavedWork(work);
     renderApp();
     expect(await screen.findByText('note: Kept for Demo User')).toBeInTheDocument();
+    await screen.findByText('status: signed-in');
 
     // A renewed token for the same user changes nothing.
     localStorage.setItem('notes.token', tokenFor(user.id) + 'x');
@@ -121,7 +122,7 @@ describe('the notes kept for reading offline', () => {
     expect(work.putAside).toHaveBeenCalled();
     expect(work.discard).toHaveBeenCalled();
     expect(work.save).not.toHaveBeenCalled();
-    expect(screen.getByText('note: none')).toBeInTheDocument();
+    await screen.findByText('note: none');
     unregister();
   });
 
