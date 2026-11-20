@@ -73,6 +73,45 @@ describe('SettingsPage', () => {
     expect((calls.find((call) => call.method === 'POST')?.body as FormData).get('skipExisting')).toBe('false');
   });
 
+  it('restores a backup and says what came back, and what did not', async () => {
+    const calls = mockFetch({
+      ...loaded,
+      'POST /api/import/backup': {
+        status: 201,
+        body: { notes: 12, notebooks: 1, tags: 3, versions: 40, shareLinksNotRestored: 2 },
+      },
+    });
+    renderSettings();
+
+    const restore = screen.getByRole('button', { name: 'Restore' });
+    expect(restore).toBeDisabled();
+    await userEvent.upload(screen.getByLabelText('Backup to restore'), new File(['{}'], 'notes-backup.json'));
+    await userEvent.click(restore);
+
+    expect(
+      await screen.findByText(
+        'Restored 12 notes in 1 notebook, with 40 older versions. 2 shared links were not made again.',
+      ),
+    ).toBeInTheDocument();
+    const body = calls.find((call) => call.url.endsWith('/import/backup'))?.body as FormData;
+    expect((body.get('file') as File).name).toBe('notes-backup.json');
+  });
+
+  it('shows why a backup was not restored', async () => {
+    mockFetch({
+      ...loaded,
+      'POST /api/import/backup': {
+        status: 409,
+        body: { statusCode: 409, message: 'A backup is restored into an empty account.' },
+      },
+    });
+    renderSettings();
+
+    await userEvent.upload(screen.getByLabelText('Backup to restore'), new File(['{}'], 'b.json'));
+    await userEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    expect(await screen.findByText(/restored into an empty account/)).toBeInTheDocument();
+  });
+
   it('checks that the new passwords match before sending them', async () => {
     const calls = mockFetch({ ...loaded });
     renderSettings();

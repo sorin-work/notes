@@ -3,7 +3,7 @@ import { FormEvent, useRef, useState } from 'react';
 import { changePassword, deleteAccount, logoutEverywhere, updateProfile } from '../api/auth';
 import { deleteTag, listTags, renameTag } from '../api/tags';
 import { createApiToken, listApiTokens, revokeApiToken } from '../api/tokens';
-import { exportAll, importFiles } from '../api/transfer';
+import { exportAll, exportBackup, importFiles, restoreBackup } from '../api/transfer';
 import type { ApiToken, CreatedApiToken, Tag, User } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
@@ -306,6 +306,18 @@ function ImportExportSection() {
     },
   });
   const download = useMutation({ mutationFn: exportAll });
+  const backup = useMutation({ mutationFn: exportBackup });
+  const backupInput = useRef<HTMLInputElement>(null);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const restore = useMutation({
+    mutationFn: () => restoreBackup(backupFile as File),
+    onSuccess: () => {
+      setBackupFile(null);
+      if (backupInput.current) backupInput.current.value = '';
+      for (const key of ['notes', 'notebooks', 'tags', 'trash'])
+        void queryClient.invalidateQueries({ queryKey: [key] });
+    },
+  });
 
   return (
     <section className="card">
@@ -319,6 +331,44 @@ function ImportExportSection() {
         {download.isPending ? 'Preparing…' : 'Export all notes'}
       </button>
       {download.error && <ErrorMessage error={download.error} />}
+
+      <h3>Full backup</h3>
+      <p className="muted">
+        One JSON file with everything the zip leaves out as well: the trash, each note’s history, and a list of what was
+        shared. It holds no share link addresses or passwords. It can be restored into an account that is still empty,
+        such as a new one on another server. Shared links are not made again; share again what should be shared.
+      </p>
+      <button type="button" className="button" onClick={() => backup.mutate()} disabled={backup.isPending}>
+        {backup.isPending ? 'Preparing…' : 'Download a full backup'}
+      </button>
+      {backup.error && <ErrorMessage error={backup.error} />}
+      <div className="input-row">
+        <input
+          ref={backupInput}
+          type="file"
+          aria-label="Backup to restore"
+          accept=".json,application/json"
+          onChange={(event) => setBackupFile(event.target.files?.[0] ?? null)}
+        />
+        <button
+          type="button"
+          className="button"
+          onClick={() => restore.mutate()}
+          disabled={!backupFile || restore.isPending}
+        >
+          {restore.isPending ? 'Restoring…' : 'Restore'}
+        </button>
+      </div>
+      {restore.error && <ErrorMessage error={restore.error} />}
+      {restore.data && (
+        <p className="success" role="status">
+          Restored {restore.data.notes} {restore.data.notes === 1 ? 'note' : 'notes'} in {restore.data.notebooks}{' '}
+          {restore.data.notebooks === 1 ? 'notebook' : 'notebooks'}, with {restore.data.versions} older{' '}
+          {restore.data.versions === 1 ? 'version' : 'versions'}.
+          {restore.data.shareLinksNotRestored > 0 &&
+            ` ${restore.data.shareLinksNotRestored} shared ${restore.data.shareLinksNotRestored === 1 ? 'link was' : 'links were'} not made again.`}
+        </p>
+      )}
 
       <h3>Import</h3>
       <p className="muted">
