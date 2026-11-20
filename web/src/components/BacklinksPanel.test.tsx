@@ -16,6 +16,26 @@ describe('BacklinksPanel', () => {
     expect(screen.getByText('See Project Atlas')).toBeInTheDocument();
   });
 
+  it('shows the unlinked mentions under the backlinks', async () => {
+    mockFetch({
+      'GET /api/notes/n1/backlinks': { body: [] },
+      'GET /api/notes/n1/mentions': {
+        body: {
+          items: [{ id: 'n3', title: 'Minutes', updatedAt: '2026-01-02T10:00:00Z', context: 'About the atlas.' }],
+          total: 1,
+          page: 1,
+          pageSize: 10,
+          capped: false,
+        },
+      },
+    });
+    renderWithProviders(<BacklinksPanel noteId="n1" />);
+
+    expect(await screen.findByRole('button', { name: 'Link the mention in Minutes' })).toBeInTheDocument();
+    const headings = screen.getAllByRole('heading').map((heading) => heading.textContent);
+    expect(headings).toEqual(['Backlinks', 'Unlinked mentions1']);
+  });
+
   it('explains how to link when nothing links here', async () => {
     mockFetch({ 'GET /api/notes/n1/backlinks': { body: [] } });
     renderWithProviders(<BacklinksPanel noteId="n1" />);
