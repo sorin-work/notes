@@ -378,9 +378,12 @@ notebooks inside it, and each note on a page of its own. Which notes belong
 is asked with every request, so a note added later is there and one moved
 out or deleted is gone at once. The options are the same, and the right
 password comes back with a proof that opens the other notes for an hour, so
-it is typed once. `[[links]]` lead on wherever the target is in the same
-shared notebook or has a link of its own. Every other link is sent as plain
-words, so that no title from outside the shared notes gets out. Still open:
+it is typed once. A `[[link]]` leads on to a note of the same shared
+notebook, looked up among those notes first, or else to a note whose own link
+has no password and has not run out. Every other link is sent as its plain
+words, so that no title from outside the shared notes gets out. Notes and
+notebooks say when a shared notebook makes them public, and moving one into
+a shared notebook asks first. Still open:
 a link shows that it has a password, a notebook link has no search, and the
 shared pages are not styled for printing.
 

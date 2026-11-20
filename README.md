@@ -54,9 +54,12 @@ Markdown import/export.
   or for a notebook with everything in it, the notebooks inside it and the
   notes you add later included. A link has a view count that leaves out your
   own visits, and can be given a date on which it runs out and a password
-  that readers have to type. `[[Links]]` work for readers wherever the other
-  note is shared too. Stopping sharing kills the link; notes in the trash
-  are never served.
+  that readers have to type. In a shared notebook, `[[links]]` between its
+  notes work for readers. Anywhere else a link works only when the other note
+  has a link of its own with no password that has not run out; every other
+  link shows as its words. Notes and notebooks that a shared notebook makes
+  public say so, and moving something into a shared notebook asks first.
+  Stopping sharing kills the link; notes in the trash are never served.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
@@ -599,11 +602,19 @@ the password is typed once and only real attempts count against the limit.
 It is worth nothing for another link, or after the password changed.
 
 In a shared note a `[[link]]` stays a link only where the reader may follow
-it: to a note in the same shared notebook, or to a note that has a live link
-of its own. `links` in the answer says where each one leads. Every other
-link is replaced by the words a reader sees for it, so the answer names no
-note outside what is shared, not behind an alias either, and a link to a
-private note looks the same as a link to a note that does not exist.
+it. Its title is looked up first among the notes of the same shared
+notebook, when the note is read through one, and then among the notes whose
+own link has no password and has not run out. A note outside those never
+counts, so a private note with the same title changes nothing. `links` in
+the answer says where each kept link leads. Every other link is replaced by
+the words a reader sees for it, the alias or else the title as written. That
+covers a link to a private note, to a note behind a password, to one whose
+link has run out, to one that does not exist, and, from a single shared
+note, to a note that only a shared notebook covers: `[[Private plan]]`
+becomes `Private plan`, with `links: {}`.
+
+`GET /notes/:id` and `GET /notebooks` carry `sharedThrough`, the notebook
+whose live link makes the note or notebook public, or `null`.
 
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
