@@ -9,7 +9,14 @@ interface ModalProps {
   top?: boolean;
 }
 
-/** A dialog that closes on Escape or a click on the backdrop, and keeps focus inside. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * A dialog that closes on Escape or a click on the backdrop. Focus moves into
+ * it when it opens, Tab stays inside it, and closing it puts the focus back
+ * where it was.
+ */
 export function Modal({ title, onClose, children, wide, top }: ModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -21,9 +28,22 @@ export function Modal({ title, onClose, children, wide, top }: ModalProps) {
     (first ?? dialog)?.focus();
 
     const onKey = (event: KeyboardEvent) => {
+      // With one dialog on top of another, the keys belong to the one on top.
+      const open = document.querySelectorAll('[aria-modal="true"]');
+      if (!dialog || open[open.length - 1] !== dialog) return;
       if (event.key === 'Escape') {
         event.stopPropagation();
         onClose();
+      } else if (event.key === 'Tab') {
+        // Tab goes round inside the dialog instead of on to the page behind it.
+        const controls = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)];
+        const from = event.shiftKey ? controls[0] : controls[controls.length - 1];
+        const to = event.shiftKey ? controls[controls.length - 1] : controls[0];
+        const active = document.activeElement;
+        if (active === from || active === dialog || !dialog.contains(active)) {
+          event.preventDefault();
+          (to ?? dialog).focus();
+        }
       }
     };
     document.addEventListener('keydown', onKey);
@@ -43,12 +63,12 @@ export function Modal({ title, onClose, children, wide, top }: ModalProps) {
         ref={dialogRef}
         tabIndex={-1}
       >
-        <header className="modal-header">
+        <div className="modal-header">
           <h2 id={titleId}>{title}</h2>
           <button type="button" className="icon-button modal-close" aria-label="Close" onClick={onClose}>
             ×
           </button>
-        </header>
+        </div>
         <div className="modal-body">{children}</div>
       </div>
     </div>
