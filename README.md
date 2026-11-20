@@ -375,9 +375,21 @@ was only added or only removed is shown whatever its size. The view lists
 
 ## API overview
 
-All endpoints are under `/api` and, apart from sign-up, login, the health
-check and shared notes, need an `Authorization: Bearer <token>` header.
-Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
+The API describes itself. With the stack running, http://localhost:5181/api/docs
+(port 4401 when the API runs by itself) is a page that lists every endpoint
+with its parameters, a line on what it does and the credentials it takes,
+and lets you try it. The OpenAPI document
+behind it is at `/api/docs-json`. Both need no login. The request side of
+the document is built from the classes the API validates with, so it cannot
+fall behind the code. The answers are not described in it yet.
+
+What follows is what the document does not say, or what is worth knowing
+before opening it.
+
+All endpoints are under `/api` and, apart from sign-up, login, password
+reset, the health check and shared notes, need an
+`Authorization: Bearer <token>` header. Errors use Nest's shape:
+`{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
@@ -426,21 +438,13 @@ Tokens do not expire. Changing the password and signing out everywhere end
 logins, not tokens. A token ends when it is revoked or the account is
 deleted. An account can have 20 of them.
 
-| Method & path                                                  | What it does                              |
-| -------------------------------------------------------------- | ----------------------------------------- |
-| `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
-| `GET/PATCH/DELETE /auth/me`                                    | Read, change or delete the current user   |
-| `PATCH /auth/password`, `POST /auth/logout-all`                | Change password, sign out everywhere      |
-| `GET/POST /auth/password-reset`, `POST .../confirm`            | Reset a forgotten password by mail        |
-| `GET/POST /auth/tokens`, `DELETE /auth/tokens/:id`             | Personal API tokens                       |
-| `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
-| `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
-| `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
-| `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
-| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
-| `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
-| `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
-| `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
-| `GET /search?q=&notebookId=&tag=&page=`                        | Full-text search, `"phrases"` in quotes   |
-| `GET /tags`, `PATCH/DELETE /tags/:id`                          | Tags                                      |
-| `GET /export`, `GET /notes/:id/export`, `POST /import`         | Zip export, single note, import           |
+The endpoints a script is most likely to want. The rest is in `/api/docs`.
+
+| Method & path                                | What it does                              |
+| -------------------------------------------- | ----------------------------------------- |
+| `POST /auth/login`                           | Returns `{ token, user }`                 |
+| `GET /notes?notebookId=&tag=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
+| `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
+| `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
+| `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
+| `POST /import`                               | Markdown, text or zip files, as `files`   |
