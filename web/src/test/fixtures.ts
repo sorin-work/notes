@@ -15,6 +15,7 @@ export function note(overrides: Partial<Note> = {}): Note {
     content: 'Links to [[Atlas data model]].',
     revision: 3,
     isTemplate: false,
+    dailyDate: null,
     notebookId: null,
     notebook: null,
     tags: ['atlas'],

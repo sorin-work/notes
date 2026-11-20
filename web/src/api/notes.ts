@@ -43,6 +43,9 @@ export const openDailyNote = (today: { date: string; placeholders: { date: strin
   api<Note>('/notes/daily', json('POST', today));
 
 /** A copy of the note with its text, tags and notebook, and nothing else of it. */
+/** Takes a daily note off its day: the next "Today" starts a new note, and this one stays as it is. */
+export const releaseDailyNote = (id: string) => api<Note>(`/notes/${id}/daily`, { method: 'DELETE' });
+
 export const duplicateNote = (id: string) => api<Note>(`/notes/${id}/duplicate`, { method: 'POST' });
 
 export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks`);

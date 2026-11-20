@@ -79,6 +79,8 @@ export interface Note {
   revision: number;
   /** A template is kept out of the lists and the search, and new notes are made from it. */
   isTemplate: boolean;
+  /** The day (YYYY-MM-DD) this note is the daily note of, if it is one. */
+  dailyDate: string | null;
   notebookId: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   tags: string[];

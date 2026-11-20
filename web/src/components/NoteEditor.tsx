@@ -12,6 +12,7 @@ import {
   noteTitles,
   orphanedLinkCount,
   outgoingLinks,
+  releaseDailyNote,
   renameLinks,
   resolveTitle,
   staleNote,
@@ -372,6 +373,14 @@ function LoadedEditor({ note }: { note: Note }) {
     onSuccess: openNew,
   });
 
+  // A note can be the daily note only because its title was the day. This lets it go.
+  const releaseDaily = useMutation({
+    mutationFn: () => releaseDailyNote(note.id),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Note>(['note', note.id], (old) => (old ? { ...old, dailyDate: saved.dailyDate } : old));
+    },
+  });
+
   const useTemplate = useMutation({
     mutationFn: async () => {
       await autosave.flush();
@@ -646,6 +655,17 @@ function LoadedEditor({ note }: { note: Note }) {
         >
           Duplicate
         </button>
+        {note.dailyDate && !readOnly && (
+          <button
+            type="button"
+            className="button"
+            title={`This is the daily note of ${note.dailyDate}. Make it an ordinary note, and "Today" starts a new one.`}
+            disabled={releaseDaily.isPending}
+            onClick={() => releaseDaily.mutate()}
+          >
+            Not the daily note
+          </button>
+        )}
         <button
           type="button"
           className={note.isTemplate ? 'button button-shared' : 'button'}
@@ -703,7 +723,9 @@ function LoadedEditor({ note }: { note: Note }) {
           </button>
         </div>
       )}
-      {(duplicate.error || useTemplate.error) && <ErrorMessage error={duplicate.error ?? useTemplate.error} />}
+      {(duplicate.error || useTemplate.error || releaseDaily.error) && (
+        <ErrorMessage error={duplicate.error ?? useTemplate.error ?? releaseDaily.error} />
+      )}
       {stashed && !readOnly && (
         <div className="banner banner-info" role="status">
           <span>

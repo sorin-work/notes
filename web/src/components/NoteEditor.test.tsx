@@ -873,6 +873,21 @@ describe('NoteEditor', () => {
     });
   });
 
+  it('lets a daily note go from its day, and offers that only on a daily note', async () => {
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': { body: note({ title: '2026-11-21', dailyDate: '2026-11-21' }) },
+        'DELETE /api/notes/n1/daily': { body: note({ title: '2026-11-21', dailyDate: null }) },
+      }),
+    );
+    renderEditor();
+    await userEvent.click(await screen.findByRole('button', { name: 'Not the daily note' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Not the daily note' })).not.toBeInTheDocument());
+    expect(calls.filter((call) => call.method === 'DELETE').map((call) => call.url)).toEqual(['/api/notes/n1/daily']);
+    // Nothing of the text was sent.
+    expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
+  });
+
   it('shows notes in the trash as read-only', async () => {
     mockFetch(
       baseRoutes({
