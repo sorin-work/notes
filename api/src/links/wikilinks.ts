@@ -28,8 +28,8 @@ function withoutInlineCode(line: string): string {
   return line.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (match) => ' '.repeat(match.length));
 }
 
-/** Every [[wiki link]] in a note, in order, skipping fenced code blocks and inline code. */
-function* findLinks(markdown: string): Generator<LinkInText> {
+/** The lines of a note outside fenced code blocks, each with where it starts in the note. */
+function* proseLines(markdown: string): Generator<{ line: string; lineStart: number }> {
   let fence: string | null = null;
   let offset = 0;
   // Lines sit at the even indexes, the line endings between them at the odd ones.
@@ -51,8 +51,13 @@ function* findLinks(markdown: string): Generator<LinkInText> {
         continue;
       }
     }
-    if (fence !== null) continue;
+    if (fence === null) yield { line, lineStart };
+  }
+}
 
+/** Every [[wiki link]] in a note, in order, skipping fenced code blocks and inline code. */
+function* findLinks(markdown: string): Generator<LinkInText> {
+  for (const { line, lineStart } of proseLines(markdown)) {
     // Blanking keeps the length of the line, so positions in it are positions in the note.
     for (const match of withoutInlineCode(line).matchAll(LINK)) {
       const start = lineStart + match.index + 2;
@@ -166,9 +171,7 @@ function withoutLinks(line: string): string {
  */
 function mentionPattern(title: string): RegExp | null {
   const key = normalizeTitle(title);
-  if (key.length < MIN_MENTION_LENGTH || /[`\r\n]/.test(title)) return null;
-  const asLink = extractWikiLinks(`[[${title}]]`);
-  if (asLink.length !== 1 || asLink[0].alias !== null || normalizeTitle(asLink[0].title) !== key) return null;
+  if (key.length < MIN_MENTION_LENGTH || !isLinkable(title)) return null;
   const words = key.split(' ').map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp(`(?<![\\p{L}\\p{N}_])${words.join('[ \\t]+')}(?![\\p{L}\\p{N}_])`, 'iu');
 }
@@ -187,29 +190,7 @@ export function findMention(markdown: string, title: string): Mention | null {
   const pattern = mentionPattern(title);
   if (!pattern) return null;
 
-  let fence: string | null = null;
-  let offset = 0;
-  // Lines sit at the even indexes, the line endings between them at the odd ones.
-  const parts = markdown.split(/(\r?\n)/);
-  for (let index = 0; index < parts.length; index += 2) {
-    const line = parts[index];
-    const lineStart = offset;
-    offset += line.length + (parts[index + 1]?.length ?? 0);
-
-    const fenceMatch = FENCE.exec(line);
-    if (fenceMatch) {
-      const marker = fenceMatch[1];
-      if (fence === null) {
-        fence = marker;
-        continue;
-      }
-      if (marker[0] === fence[0] && marker.length >= fence.length) {
-        fence = null;
-        continue;
-      }
-    }
-    if (fence !== null) continue;
-
+  for (const { line, lineStart } of proseLines(markdown)) {
     // Blanking keeps the length of the line, so a position in it is a position in the note.
     const match = pattern.exec(withoutLinks(withoutInlineCode(line)));
     if (match) return { start: lineStart + match.index, end: lineStart + match.index + match[0].length };
