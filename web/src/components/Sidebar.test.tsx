@@ -41,6 +41,8 @@ describe('Sidebar', () => {
     expect(meetings).toHaveAttribute('aria-current', 'page');
     expect(meetings.closest('ul')?.closest('li')).toContainElement(work);
     expect(screen.getByRole('link', { name: /#atlas/ })).toHaveAttribute('href', '/notes?tag=atlas');
+    expect(screen.getByRole('link', { name: 'Not in a notebook' })).toHaveAttribute('href', '/notes?notebook=none');
+    expect(screen.getByRole('link', { name: 'All notes' })).not.toHaveAttribute('aria-current');
   });
 
   it('warns before deleting a notebook that its notes go to the trash', async () => {

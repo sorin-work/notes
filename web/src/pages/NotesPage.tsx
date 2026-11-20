@@ -3,10 +3,13 @@ import { useEffect } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
 import { createNote, listNotes, NoteFilters, NoteSort } from '../api/notes';
+import { listTags } from '../api/tags';
+import { FilterSelects } from '../components/FilterSelects';
 import { NoteEditor } from '../components/NoteEditor';
 import { NoteList } from '../components/NoteList';
 import { EmptyState, ErrorMessage, Spinner } from '../components/States';
 import { useStoredState } from '../hooks/useStoredState';
+import { newNoteFor, NO_NOTEBOOK, readFilters, withFilters } from '../lib/filters';
 import { notebookLabel } from '../lib/notebooks';
 
 const SORTS = ['updated', 'created', 'title'] as const;
@@ -14,34 +17,37 @@ const PAGE_SIZE = 50;
 
 export function NotesPage() {
   const { noteId } = useParams();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sort, setSort] = useStoredState<NoteSort>('notes.sort', SORTS, 'updated');
 
-  const view = params.get('view') ?? 'all';
-  const notebookId = params.get('notebook');
-  const tag = params.get('tag');
+  const shown = readFilters(params);
+  const { notebook, tag, view } = shown;
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
+  const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
 
+  // A view, a notebook and a tag narrow the list together.
   const filters: NoteFilters = { sort, pageSize: PAGE_SIZE };
-  let heading = 'All notes';
-  if (notebookId) {
-    filters.notebookId = notebookId;
-    heading = notebookLabel(notebooks.data ?? [], notebookId) ?? 'Notebook';
-  } else if (tag) {
-    filters.tag = tag;
-    heading = `#${tag}`;
-  } else if (view === 'pinned') {
+  const names: string[] = [];
+  if (view === 'pinned') {
     filters.pinned = true;
-    heading = 'Pinned';
+    names.push('Pinned');
   } else if (view === 'favorites') {
     filters.favorite = true;
-    heading = 'Favourites';
-  } else if (view === 'unfiled') {
-    filters.notebookId = 'none';
-    heading = 'Not in a notebook';
+    names.push('Favourites');
   }
+  if (notebook) {
+    filters.notebookId = notebook;
+    names.push(
+      notebook === NO_NOTEBOOK ? 'Not in a notebook' : (notebookLabel(notebooks.data ?? [], notebook) ?? 'Notebook'),
+    );
+  }
+  if (tag) {
+    filters.tag = tag;
+    names.push(`#${tag}`);
+  }
+  const heading = names.join(' · ') || 'All notes';
 
   const notes = useInfiniteQuery({
     queryKey: ['notes', filters],
@@ -53,13 +59,7 @@ export function NotesPage() {
   const total = notes.data?.pages[0]?.total ?? 0;
 
   const newNote = useMutation({
-    mutationFn: () =>
-      createNote({
-        notebookId: notebookId ?? null,
-        tags: tag ? [tag] : undefined,
-        pinned: view === 'pinned' || undefined,
-        favorite: view === 'favorites' || undefined,
-      }),
+    mutationFn: () => createNote(newNoteFor(shown)),
     onSuccess: (note) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
@@ -92,6 +92,13 @@ export function NotesPage() {
             <option value="title">Title</option>
           </select>
         </header>
+        <FilterSelects
+          notebooks={notebooks.data ?? []}
+          tags={tags.data ?? []}
+          notebook={notebook}
+          tag={tag}
+          onChange={(next) => setParams((current) => withFilters(current, next))}
+        />
         <div className="list-scroll">
           {notes.isLoading && <Spinner />}
           {notes.error && <ErrorMessage error={notes.error} onRetry={() => void notes.refetch()} />}

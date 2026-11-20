@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -31,6 +31,52 @@ describe('NotesPage', () => {
     expect(await screen.findByRole('heading', { name: 'Work / Meetings' })).toBeInTheDocument();
     expect(screen.getByText('1 note')).toBeInTheDocument();
     expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('notebookId=m');
+  });
+
+  it('narrows the list by view, notebook and tag together', async () => {
+    const calls = mockFetch({
+      'GET /api/notes': { body: page() },
+      'GET /api/notebooks': { body: [notebook({ id: 'w', name: 'Work' })] },
+      'GET /api/tags': {
+        body: [
+          { id: 't1', name: 'atlas', noteCount: 2 },
+          { id: 't2', name: 'ideas', noteCount: 1 },
+        ],
+      },
+    });
+    renderPage('/notes?view=pinned&notebook=w&tag=atlas');
+
+    expect(await screen.findByRole('heading', { name: 'Pinned · Work · #atlas' })).toBeInTheDocument();
+    const asked = () =>
+      new URLSearchParams(calls.findLast((call) => call.url.startsWith('/api/notes?'))?.url.split('?')[1]);
+    expect(Object.fromEntries(asked())).toMatchObject({ notebookId: 'w', tag: 'atlas', pinned: 'true' });
+
+    // Changing one select keeps what the others and the view narrow.
+    await userEvent.selectOptions(await screen.findByLabelText('Filter by tag'), 'ideas');
+    expect(await screen.findByRole('heading', { name: 'Pinned · Work · #ideas' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(Object.fromEntries(asked())).toMatchObject({ notebookId: 'w', tag: 'ideas', pinned: 'true' }),
+    );
+  });
+
+  it('creates a note that fits every filter of the list', async () => {
+    const calls = mockFetch({
+      'GET /api/notes': { body: page([]) },
+      'GET /api/notebooks': { body: [] },
+      'GET /api/tags': { body: [{ id: 't1', name: 'atlas', noteCount: 2 }] },
+      'POST /api/notes': { status: 201, body: note({ id: 'new', title: 'Untitled' }) },
+      'GET /api/notes/new': { body: note({ id: 'new', title: 'Untitled' }) },
+    });
+    renderPage('/notes?notebook=none&tag=atlas&view=favorites');
+
+    expect(await screen.findByRole('heading', { name: 'Favourites · Not in a notebook · #atlas' })).toBeInTheDocument();
+    expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('notebookId=none');
+    await userEvent.click(await screen.findByRole('button', { name: 'Create a note' }));
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
+      notebookId: null,
+      tags: ['atlas'],
+      favorite: true,
+    });
   });
 
   it('loads more notes when there are more than one page', async () => {
