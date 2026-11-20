@@ -17,6 +17,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes } from '@nestjs/swagger';
 import type { Response } from 'express';
+import { AccessService } from '../access/access.service';
 import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
@@ -47,12 +48,16 @@ export function contentDisposition(kind: 'inline' | 'attachment', fileName: stri
 @AllowApiToken()
 @Controller('notes/:noteId/attachments')
 export class NoteAttachmentsController {
-  constructor(private readonly attachments: AttachmentsService) {}
+  constructor(
+    private readonly attachments: AttachmentsService,
+    private readonly access: AccessService,
+  ) {}
 
   /** The files of a note, each with an address that works without a login for a few minutes. */
   @Get()
-  list(@CurrentUser() user: AuthUser, @Param('noteId', ParseUUIDPipe) noteId: string): Promise<AttachmentView[]> {
-    return this.attachments.list(user.id, noteId);
+  async list(@CurrentUser() user: AuthUser, @Param('noteId', ParseUUIDPipe) noteId: string): Promise<AttachmentView[]> {
+    const { ownerId } = await this.access.note(user.id, noteId, 'read');
+    return this.attachments.list(ownerId, noteId);
   }
 
   /** Attaches a file, sent as `file`: a PNG, JPEG, GIF or WebP image, a PDF, or plain text. */
@@ -66,13 +71,15 @@ export class NoteAttachmentsController {
   })
   @Post()
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: UPLOAD_CEILING_BYTES, files: 1 } }))
-  upload(
+  async upload(
     @CurrentUser() user: AuthUser,
     @Param('noteId', ParseUUIDPipe) noteId: string,
     @UploadedFile() file: Express.Multer.File | undefined,
   ): Promise<AttachmentView> {
+    // An editor of a shared notebook attaches to the owner's note, on the owner's room.
+    const { ownerId } = await this.access.note(user.id, noteId, 'edit');
     if (!file) throw new BadRequestException('Choose a file to attach');
-    return this.attachments.upload(user.id, noteId, file);
+    return this.attachments.upload(ownerId, noteId, file);
   }
 }
 
