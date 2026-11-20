@@ -179,10 +179,17 @@ function LoadedEditor({ note }: { note: Note }) {
       return renameLinks(note.id, linkedTitle);
     },
     onSuccess: (result) => {
+      // An editor takes its text from the cached note when it opens, and a
+      // refetch does not reach text that is already in an editor. A rewritten
+      // note left in the cache would come back with its old links and save
+      // them again, so those notes are dropped, not just marked as stale.
+      for (const id of result.noteIds) {
+        queryClient.removeQueries({ queryKey: ['note', id] });
+      }
       // With notes left behind, the links are not all on the new title yet and the offer stays.
       setSkipped(result.skipped);
       if (result.skipped === 0) setLinkedTitle(result.title);
-      for (const key of ['note', 'notes', 'links', 'backlinks', 'versions', 'search', 'rename-links']) {
+      for (const key of ['notes', 'links', 'backlinks', 'versions', 'search', 'rename-links']) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     },

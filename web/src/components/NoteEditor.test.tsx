@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router';
+import { Route, Routes, useParams } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { Note } from '../api/types';
 import { note } from '../test/fixtures';
@@ -278,6 +278,74 @@ describe('NoteEditor', () => {
         await screen.findByRole('button', { name: 'Update 1 link from [[Project Atlas]] to [[Atlas v2]]' }),
       ).toBeInTheDocument();
     });
+
+    it('shows the rewritten text when going back to a note whose links were updated', async () => {
+      // The editor the way NotesPage mounts it: a new one for every note, on one cache.
+      function KeyedEditor() {
+        const { noteId = '' } = useParams();
+        return <NoteEditor key={noteId} noteId={noteId} />;
+      }
+      const notes = {
+        a: note({ id: 'a', title: 'Atlas', content: 'The project.' }),
+        b: note({ id: 'b', title: 'Source', content: 'See [[Atlas]] for more.' }),
+      };
+      const save = (id: 'a' | 'b') => (request: { body: unknown }) => {
+        notes[id] = { ...notes[id], ...(request.body as object) };
+        return { body: notes[id] };
+      };
+      const calls = mockFetch({
+        'GET /api/notebooks': { body: [] },
+        'GET /api/tags': { body: [] },
+        'GET /api/notes/a': () => ({ body: notes.a }),
+        'GET /api/notes/b': () => ({ body: notes.b }),
+        'PATCH /api/notes/a': save('a'),
+        'PATCH /api/notes/b': save('b'),
+        'GET /api/notes/a/links': { body: [] },
+        'GET /api/notes/b/links': { body: [{ title: 'Atlas', noteId: 'a' }] },
+        'GET /api/notes/a/backlinks': {
+          body: [{ id: 'b', title: 'Source', updatedAt: '2026-01-02T10:00:00Z', context: '' }],
+        },
+        'GET /api/notes/b/backlinks': { body: [] },
+        'GET /api/notes/resolve': { body: { id: 'a', title: 'Atlas' } },
+        'GET /api/notes/a/rename-links': { body: { count: 1 } },
+        'POST /api/notes/a/rename-links': () => {
+          notes.b = { ...notes.b, content: 'See [[Project Atlas]] for more.' };
+          return { body: { updated: 1, skipped: 0, title: notes.a.title, noteIds: ['b'] } };
+        },
+      });
+      localStorage.setItem('notes.editorMode', 'split');
+      renderWithProviders(
+        <Routes>
+          <Route path="/notes/:noteId" element={<KeyedEditor />} />
+        </Routes>,
+        { route: '/notes/b' },
+      );
+
+      // Open B, which puts it in the cache, and follow its link to A. The preview
+      // builds its links anew when it renders, so the link is looked up at the click.
+      await screen.findByRole('link', { name: 'Atlas' });
+      fireEvent.click(screen.getByRole('link', { name: 'Atlas' }));
+      const title = await screen.findByDisplayValue('Atlas');
+      await userEvent.clear(title);
+      await userEvent.type(title, 'Project Atlas');
+      await userEvent.tab();
+      await userEvent.click(await screen.findByRole('button', { name: /^Update 1 link from/ }));
+      await waitFor(() => expect(screen.queryByText(/still links/)).not.toBeInTheDocument());
+
+      // Back in B, the editor has the text with the new link, and that is what a keystroke saves.
+      await userEvent.click(await screen.findByRole('link', { name: 'Source' }));
+      const text = await screen.findByLabelText('Note content');
+      await waitFor(() => expect(text).toHaveValue('See [[Project Atlas]] for more.'));
+      await userEvent.type(text, '!');
+      await waitFor(
+        () =>
+          expect(calls.findLast((call) => call.method === 'PATCH' && call.url === '/api/notes/b')?.body).toMatchObject({
+            content: 'See [[Project Atlas]] for more.!',
+          }),
+        { timeout: 2000 },
+      );
+      // Two notes, two autosaves and a rewrite: more than the usual test takes.
+    }, 15_000);
   });
 
   it('shows notes in the trash as read-only', async () => {
