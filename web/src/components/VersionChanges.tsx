@@ -52,7 +52,7 @@ export function VersionChanges({ version, current }: Props) {
                   </span>
                   <span className="diff-text">
                     {row.type !== 'same' && (
-                      <span className="sr-only">{row.type === 'added' ? 'Added: ' : 'Removed: '}</span>
+                      <span className="sr-only diff-label">{row.type === 'added' ? 'Added: ' : 'Removed: '}</span>
                     )}
                     {row.text}
                   </span>

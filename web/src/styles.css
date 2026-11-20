@@ -1313,6 +1313,12 @@ ul.error-box {
   text-align: center;
   white-space: pre;
   color: var(--muted);
+}
+
+/* Copying lines out of a diff should give the text only. */
+.diff-sign,
+.diff-label {
+  -webkit-user-select: none;
   user-select: none;
 }
 

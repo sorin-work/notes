@@ -16,6 +16,9 @@ describe('VersionChanges', () => {
     const added = screen.getByText('A new ending').closest('.diff-line');
     expect(added).toHaveClass('diff-added');
     expect(added).toHaveTextContent('+Added: A new ending');
+    // The sign and the spoken label are kept out of a selection in the stylesheet, by these classes.
+    expect(screen.getByText('Added:')).toHaveClass('sr-only', 'diff-label');
+    expect(screen.getByText('+')).toHaveClass('diff-sign');
 
     expect(screen.getByText('9 unchanged lines')).toBeInTheDocument();
     expect(screen.queryByText('Paragraph 9')).not.toBeInTheDocument();
