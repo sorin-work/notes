@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { AttachmentsService, StoredFile } from '../attachments/attachments.service';
+import { RESTORE_TIMEOUT_MS } from '../attachments/timing';
 import { LinksService } from '../links/links.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { readPreferences } from '../auth/preferences';
@@ -23,12 +24,6 @@ import { readBackupStream } from './backup-stream';
 const BATCH = 200;
 /** A batch of restored notes is written once it holds this much text, even with fewer than BATCH notes. */
 const RESTORE_BATCH_CHARS = 20_000_000;
-/**
- * A restore is one transaction for the whole file, which is read while the
- * upload comes in. Prisma ends a transaction after five seconds unless told
- * otherwise; an hour leaves room for a large backup over a slow line.
- */
-const RESTORE_TIMEOUT_MS = 60 * 60 * 1000;
 
 export interface RestoreResult {
   notes: number;

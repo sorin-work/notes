@@ -13,10 +13,9 @@ import { APP_CONFIG, AppConfig } from '../config/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { signatureIsValid, signedPath } from './signed-url';
 import { sniffType } from './sniff';
+import { SWEEP_GRACE_MS } from './timing';
 import { AttachmentStorage } from './storage';
 
-/** A file without a row is only removed once it is this old: an upload writes the file just before its row. */
-const SWEEP_GRACE_MS = 60 * 60 * 1000;
 export const MAX_FILE_NAME_LENGTH = 200;
 
 export interface AttachmentView {
@@ -210,7 +209,7 @@ export class AttachmentsService {
     await this.storage.remove(ids);
   }
 
-  /** Removes the files that have no row, older than an hour. Answers how many. */
+  /** Removes the files that have no row, older than SWEEP_GRACE_MS. Answers how many. */
   sweep(now = Date.now()): Promise<number> {
     return this.storage.sweep(
       async (ids) => {

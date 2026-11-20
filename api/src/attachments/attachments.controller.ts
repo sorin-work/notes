@@ -28,6 +28,22 @@ import { AttachmentsService, AttachmentView } from './attachments.service';
  */
 export const UPLOAD_CEILING_BYTES = 50 * 1024 * 1024;
 
+/**
+ * A Content-Disposition with the file's name twice: plain ASCII for old
+ * clients, and in full as RFC 5987 filename*, whose value encodes everything
+ * but letters, digits and !#$&+-.^_`|~. encodeURIComponent leaves ' ( ) * !
+ * as they are, so those are encoded here too ("!" is allowed, but encoding
+ * it is harmless and keeps one rule).
+ */
+export function contentDisposition(kind: 'inline' | 'attachment', fileName: string): string {
+  const ascii = fileName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const encoded = encodeURIComponent(fileName).replace(
+    /['()*!]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
 @AllowApiToken()
 @Controller('notes/:noteId/attachments')
 export class NoteAttachmentsController {
@@ -93,11 +109,10 @@ export class AttachmentsController {
     response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     response.setHeader('Cache-Control', 'private, max-age=300');
-    const encoded = encodeURIComponent(served.fileName);
     return new StreamableFile(served.stream, {
       type: served.contentType,
       length: served.size,
-      disposition: `${served.inline ? 'inline' : 'attachment'}; filename="${encoded}"; filename*=UTF-8''${encoded}`,
+      disposition: contentDisposition(served.inline ? 'inline' : 'attachment', served.fileName),
     });
   }
 }
