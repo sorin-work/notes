@@ -927,7 +927,7 @@ mark {
 
 .graph-node text {
   display: none;
-  font-size: 11px;
+  font-size: 9px;
   fill: var(--text);
   /* A rim in the background colour keeps a title readable where it crosses a line. */
   paint-order: stroke;

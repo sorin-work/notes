@@ -148,7 +148,7 @@ export function GraphCanvas({ graph, onOpen }: Props) {
               >
                 <title>{node.title}</title>
                 <circle r={radius} />
-                <text x={radius + 4} y={4}>
+                <text x={radius + 3} y={3}>
                   {node.title}
                 </text>
               </g>

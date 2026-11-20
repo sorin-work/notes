@@ -28,9 +28,14 @@ export const NO_ZOOM: View = { x: 0, y: 0, k: 1 };
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 6;
 
-/** The space a dot keeps to itself, and roughly how long a link is drawn. */
-const DOT_SPACE = 9;
-const LINK_LENGTH = 46;
+/**
+ * The space a dot keeps to itself, roughly how long a link is drawn, and how
+ * hard notes push each other away. Generous, so that titles next to the dots
+ * have room.
+ */
+const DOT_SPACE = 14;
+const LINK_LENGTH = 80;
+const PUSH = -220;
 
 type Dot = SimulationNodeDatum & { id: string };
 
@@ -68,7 +73,7 @@ export function layoutGraph(nodes: { id: string }[], edges: Edge[], seed = 1): M
         .id((dot) => dot.id)
         .distance(LINK_LENGTH),
     )
-    .force('charge', forceManyBody().strength(-90))
+    .force('charge', forceManyBody().strength(PUSH))
     .force('x', forceX().strength(0.07))
     .force('y', forceY().strength(0.07))
     .force('collide', forceCollide(DOT_SPACE))
