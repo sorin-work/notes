@@ -1,6 +1,7 @@
 import { MouseEvent, useCallback, useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Outlet, useMatch } from 'react-router';
+import { Notices } from './Notices';
 import { QuickSwitcher } from './QuickSwitcher';
 import { Sidebar } from './Sidebar';
 
@@ -82,6 +83,7 @@ export function Layout() {
         <Outlet />
       </main>
       {switcherOpen && <QuickSwitcher onClose={closeSwitcher} />}
+      <Notices />
     </div>
   );
 }

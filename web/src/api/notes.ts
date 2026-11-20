@@ -1,4 +1,4 @@
-import { api, download, json, withQuery } from './client';
+import { api, ApiError, download, json, withQuery } from './client';
 import type { Backlink, Mention, MentionPage, Note, NoteChanges, NoteSummary, OutgoingLink, Page } from './types';
 
 export type NoteSort = 'updated' | 'created' | 'title';
@@ -22,6 +22,16 @@ export const getNote = (id: string) => api<Note>(`/notes/${id}`);
 export const createNote = (note: NoteChanges = {}) => api<Note>('/notes', json('POST', note));
 
 export const updateNote = (id: string, changes: NoteChanges) => api<Note>(`/notes/${id}`, json('PATCH', changes));
+
+/**
+ * When a save was refused because the note changed since the revision it
+ * named, the note as it is now on the server. Null for every other error.
+ */
+export function staleNote(error: unknown): Note | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const body = error.body as { code?: string; note?: Note } | null;
+  return body?.code === 'stale_revision' && body.note ? body.note : null;
+}
 
 export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DELETE' });
 

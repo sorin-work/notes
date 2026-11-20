@@ -17,6 +17,7 @@ function note(overrides: Record<string, unknown> = {}) {
     notebookId: null,
     title: 'Plan',
     content: 'Old content',
+    revision: 7,
     pinned: false,
     favorite: false,
     deletedAt: null,
@@ -164,28 +165,75 @@ describe('NotesService', () => {
   describe('update', () => {
     beforeEach(() => {
       prisma.note.findFirst.mockResolvedValue(note());
+      prisma.note.updateMany.mockResolvedValue({ count: 1 });
     });
 
     it('saves a version, syncs links and bumps updatedAt when the content changes', async () => {
       await service.update(USER, 'n1', { content: 'New [[Link]]' });
       expect(versions.snapshotIfDue).toHaveBeenCalledWith(prisma, note());
       expect(links.sync).toHaveBeenCalledWith(prisma, 'n1', 'New [[Link]]');
-      const data = prisma.note.update.mock.calls[0][0].data;
-      expect(data).toMatchObject({ title: 'Plan', content: 'New [[Link]]', updatedAt: expect.any(Date) });
+      // The text goes through the one write that checks the revision. Without one in the request, the last write wins.
+      expect(prisma.note.updateMany).toHaveBeenCalledWith({
+        where: { id: 'n1', userId: USER, deletedAt: null },
+        data: { title: 'Plan', content: 'New [[Link]]' },
+      });
+      expect(prisma.note.update.mock.calls[0][0].data).toEqual({ updatedAt: expect.any(Date) });
     });
 
-    it('does not count pinning as an edit', async () => {
-      await service.update(USER, 'n1', { pinned: true, favorite: true });
+    it('writes the text only while the note is at the revision the save was based on', async () => {
+      await service.update(USER, 'n1', { title: 'Plan B', revision: 7 });
+      expect(prisma.note.updateMany).toHaveBeenCalledWith({
+        where: { id: 'n1', userId: USER, revision: 7, deletedAt: null },
+        data: { title: 'Plan B', content: 'Old content' },
+      });
+      // The check comes before anything else is written.
+      expect(prisma.note.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        versions.snapshotIfDue.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('answers a save based on an old revision with the note as it is now', async () => {
+      prisma.note.findFirst.mockResolvedValue(withRelations({ content: 'Theirs', revision: 8 }));
+      await expect(service.update(USER, 'n1', { content: 'Mine', revision: 7, tags: ['x'] })).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'stale_revision', note: { content: 'Theirs', revision: 8 } },
+      });
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
+      expect(tags.setNoteTags).not.toHaveBeenCalled();
+      expect(versions.snapshotIfDue).not.toHaveBeenCalled();
+    });
+
+    it('answers the same way when another save gets in between the read and the write', async () => {
+      prisma.note.updateMany.mockResolvedValue({ count: 0 });
+      prisma.note.findFirst
+        .mockResolvedValueOnce(note())
+        .mockResolvedValueOnce(withRelations({ content: 'Theirs', revision: 8 }));
+      await expect(service.update(USER, 'n1', { content: 'Mine', revision: 7 })).rejects.toMatchObject({
+        response: { code: 'stale_revision', note: { revision: 8 } },
+      });
+      expect(versions.snapshotIfDue).not.toHaveBeenCalled();
+      expect(links.sync).not.toHaveBeenCalled();
+      expect(prisma.note.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps the replaced text as a version when asked, whatever the interval', async () => {
+      await service.update(USER, 'n1', { content: 'Mine', revision: 7, keepVersion: true });
+      expect(versions.snapshot).toHaveBeenCalledWith(prisma, note());
+      expect(versions.snapshotIfDue).not.toHaveBeenCalled();
+    });
+
+    it('does not count pinning as an edit, and never checks the revision for it', async () => {
+      await service.update(USER, 'n1', { pinned: true, favorite: true, revision: 1 });
       const data = prisma.note.update.mock.calls[0][0].data;
-      expect(data).toMatchObject({ pinned: true, favorite: true });
-      expect(data.updatedAt).toBeUndefined();
+      expect(data).toEqual({ pinned: true, favorite: true });
+      expect(prisma.note.updateMany).not.toHaveBeenCalled();
       expect(versions.snapshotIfDue).not.toHaveBeenCalled();
       expect(links.sync).not.toHaveBeenCalled();
     });
 
     it('falls back to "Untitled" when the title is cleared', async () => {
       await service.update(USER, 'n1', { title: '' });
-      expect(prisma.note.update.mock.calls[0][0].data.title).toBe('Untitled');
+      expect(prisma.note.updateMany.mock.calls[0][0].data.title).toBe('Untitled');
     });
 
     it('moves the note out of its notebook with null', async () => {
@@ -259,13 +307,13 @@ describe('NotesService', () => {
         }),
       );
       const rewritten = 'Talked about [[Project Atlas]] and [[Project Atlas|it]].';
-      // No updatedAt in the data, and the old text in the condition.
+      // No updatedAt in the data, and the revision that was read in the condition.
       expect(prisma.note.updateMany).toHaveBeenCalledWith({
-        where: { id: 'n2', userId: USER, deletedAt: null, content: sync.content },
+        where: { id: 'n2', userId: USER, revision: 7, deletedAt: null },
         data: { content: rewritten },
       });
       expect(prisma.note.updateMany).toHaveBeenCalledWith({
-        where: { id: 'n3', userId: USER, deletedAt: null, content: ideas.content },
+        where: { id: 'n3', userId: USER, revision: 7, deletedAt: null },
         data: { content: 'For [[Project Atlas#Later]]\n\n`[[Atlas]]`' },
       });
       expect(versions.snapshot).toHaveBeenCalledWith(expect.anything(), sync, expect.any(Date));

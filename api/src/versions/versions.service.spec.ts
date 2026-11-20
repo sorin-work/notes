@@ -12,6 +12,7 @@ const note = {
   notebookId: null,
   title: 'Plan',
   content: 'Current text',
+  revision: 4,
   pinned: false,
   favorite: false,
   deletedAt: null as Date | null,
@@ -117,9 +118,12 @@ describe('VersionsService', () => {
     beforeEach(() => {
       prisma.note.findFirst.mockResolvedValue(note);
       prisma.noteVersion.findFirst.mockResolvedValue(version);
-      prisma.note.update.mockImplementation(({ data }) =>
-        Promise.resolve({ ...note, ...data, tags: [], notebook: null, share: null }),
-      );
+      const row = { ...note, tags: [], notebook: null, share: null };
+      prisma.note.updateMany.mockImplementation(({ data }) => {
+        Object.assign(row, data, { revision: note.revision + 1 });
+        return Promise.resolve({ count: 1 });
+      });
+      prisma.note.update.mockImplementation(({ data }) => Promise.resolve(Object.assign(row, data)));
     });
 
     it('saves the current text first, then puts the old version back', async () => {
@@ -127,8 +131,24 @@ describe('VersionsService', () => {
       expect(prisma.noteVersion.create).toHaveBeenCalledWith({
         data: { noteId: 'n1', title: 'Plan', content: 'Current text', createdAt: expect.any(Date) },
       });
+      // Written against the revision that was read, so the version above is what gets replaced.
+      expect(prisma.note.updateMany).toHaveBeenCalledWith({
+        where: { id: 'n1', userId: USER, revision: 4, deletedAt: null },
+        data: { title: 'Old plan', content: 'Old [[Link]]' },
+      });
       expect(links.sync).toHaveBeenCalledWith(prisma, 'n1', 'Old [[Link]]');
-      expect(restored).toMatchObject({ title: 'Old plan', content: 'Old [[Link]]' });
+      expect(restored).toMatchObject({ title: 'Old plan', content: 'Old [[Link]]', revision: 5 });
+    });
+
+    it('fails when a save got in after the note was read, and saves no version', async () => {
+      prisma.note.updateMany.mockResolvedValue({ count: 0 });
+      const current = { ...note, content: 'Saved meanwhile', revision: 5, tags: [], notebook: null, share: null };
+      prisma.note.findFirst.mockResolvedValueOnce(note).mockResolvedValueOnce(current);
+      await expect(service.restore(USER, 'n1', 'v1')).rejects.toMatchObject({
+        response: { code: 'stale_revision', note: { content: 'Saved meanwhile', revision: 5 } },
+      });
+      expect(prisma.noteVersion.create).not.toHaveBeenCalled();
+      expect(links.sync).not.toHaveBeenCalled();
     });
 
     it('does not save a duplicate when the note already matches the version', async () => {
