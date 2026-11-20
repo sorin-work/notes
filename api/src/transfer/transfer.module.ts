@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AttachmentsModule } from '../attachments/attachments.module';
 import { LinksModule } from '../links/links.module';
 import { TagsModule } from '../tags/tags.module';
 import { BackupService } from './backup.service';
@@ -8,7 +9,7 @@ import { ImportService } from './import.service';
 import { TransferController } from './transfer.controller';
 
 @Module({
-  imports: [TagsModule, LinksModule],
+  imports: [TagsModule, LinksModule, AttachmentsModule],
   controllers: [TransferController],
   providers: [ExportService, ImportService, BackupService, DownloadTickets],
   exports: [ExportService],

@@ -5,7 +5,13 @@
  * an older reader would get wrong.
  */
 export const BACKUP_FORMAT = 'notes-backup';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
+/**
+ * The versions a restore reads. Version 2 added `attachments` and
+ * `missingAttachments`; a version 1 file has neither, and restores the same
+ * way otherwise.
+ */
+export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2];
 
 export interface BackupNotebook {
   id: string;
@@ -62,6 +68,18 @@ export interface BackupShareLink {
   createdAt: string;
 }
 
+/**
+ * The file of an attachment, with its bytes in base64. Its type is not in
+ * the file: a restore decides it from the bytes, as an upload does.
+ */
+export interface BackupAttachment {
+  id: string;
+  noteId: string;
+  fileName: string;
+  createdAt: string;
+  data: string;
+}
+
 /** The choices kept with the account. Ids are those of the file. */
 export interface BackupPreferences {
   dailyNotes: { notebookId: string | null; templateId: string | null; dateFormat: string };
@@ -75,5 +93,7 @@ export interface Backup {
   notebooks: BackupNotebook[];
   tags: BackupTag[];
   shareLinks: BackupShareLink[];
+  /** Before the notes, so a restore can give their links the new ids as the notes come in. */
+  attachments: BackupAttachment[];
   notes: BackupNote[];
 }

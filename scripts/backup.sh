@@ -10,6 +10,12 @@
 # Dumps go to $BACKUP_DIR as notes-<UTC time>.dump in pg_dump's custom
 # format. After every dump only the newest $BACKUP_KEEP are kept.
 #
+# With ATTACHMENTS_DIR set, the files of attachments go beside each dump as
+# notes-<UTC time>.files.tar, made just before the dump, and a restore puts
+# them back with it. Only regular files named like an attachment id are
+# taken, never a link; a restore refuses an archive that holds anything else,
+# and refuses to touch the files while the API is running.
+#
 # The time in the name is the only time that counts, for the age of a dump
 # and for the order they are pruned in. Modification times are not looked
 # at: on a network share they come from another machine's clock. Dumps
@@ -18,6 +24,8 @@
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
+files_dir=${ATTACHMENTS_DIR:-}
+ATTACHMENT_NAME='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 keep=${BACKUP_KEEP:-7}
 interval=${BACKUP_INTERVAL_SECONDS:-86400}
 
@@ -28,8 +36,9 @@ umask 077
 # restore that finds the database busy can say who is in the way.
 export PGAPPNAME="${PGAPPNAME:-notes-backup}"
 
-# The dump being written, if any, so that it can be removed when stopped.
+# The dump and the files archive being written, if any, so that they can be removed when stopped.
 partial=''
+files_partial=''
 
 log() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"
@@ -57,6 +66,9 @@ check_settings() {
   need_database
   if [ ! -d "$dir" ] || [ ! -w "$dir" ]; then
     fail "cannot write to $dir"
+  fi
+  if [ -n "$files_dir" ] && [ ! -d "$files_dir" ]; then
+    fail "ATTACHMENTS_DIR is set, but $files_dir is not a folder"
   fi
 }
 
@@ -118,11 +130,16 @@ warn_about_future_dumps() {
 #     a few stale files use up the quota while every new dump pushes out
 #     yesterday's. They do not count towards $keep either.
 #   - The dump that was just written ($1), whatever the clock makes of it.
+# The files archive that goes with a dump.
+files_of() {
+  echo "${1%.dump}.files.tar"
+}
+
 prune() {
   # Not "now": that is the loop's, which goes by when a dump was started.
   pruned_at=$(date +%s)
   present_dumps "$pruned_at" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
-    rm -f "$dir/$old"
+    rm -f "$dir/$old" "$dir/$(files_of "$old")"
     log "removed $old"
   done
   warn_about_future_dumps "$pruned_at"
@@ -131,18 +148,58 @@ prune() {
 # pg_dump writes to a hidden .partial file that is renamed when it is
 # complete, so a dump that was cut short never counts as a backup. Every
 # step is checked by hand because "set -e" is off inside "if dump".
+# The files of attachments into the archive $1: regular files named like an
+# attachment id, nothing else. The folder itself is the first entry, so that
+# an archive with no files in it is still an archive.
+archive_files() {
+  list="$1.list"
+  : >"$list"
+  # Not "name": that is the dump's, which dump() goes on to use.
+  for entry in $(ls -A "$files_dir" | grep -E "$ATTACHMENT_NAME"); do
+    if [ -f "$files_dir/$entry" ] && [ ! -L "$files_dir/$entry" ]; then
+      echo "$entry" >>"$list"
+    fi
+  done
+  status=0
+  tar -cf "$1" -C "$files_dir" --no-recursion . -T "$list" || status=$?
+  rm -f "$list"
+  return "$status"
+}
+
+# The files are archived first, the database after. A file deleted in
+# between is in the archive without a row, and the API sweeps it out after
+# a restore. A file uploaded in between is the other way round: its row is
+# in the dump and the file is not in the archive. After a restore that note
+# shows the file as missing, and the export and the JSON backup leave it out
+# and list it. Without stopping the API there is no moment at which both are
+# taken together; a dump of a stopped stack has no such gap.
 dump() {
   name="notes-$(date -u +%Y%m%dT%H%M%SZ).dump"
   partial="$dir/.$name.partial"
+  if [ -n "$files_dir" ]; then
+    files_partial="$dir/.$(files_of "$name").partial"
+    if ! archive_files "$files_partial"; then
+      rm -f "$files_partial"
+      files_partial=''
+      log "could not archive the files in $files_dir" >&2
+      return 1
+    fi
+  fi
   if ! pg_dump --format=custom --file="$partial"; then
-    rm -f "$partial"
+    rm -f "$partial" "$files_partial"
     partial=''
+    files_partial=''
     return 1
   fi
   # Docker runs this as root. Give the dump to whoever owns the folder, so
   # that on the host it belongs to the same user as the folder it is in.
   if [ "$(id -u)" = 0 ]; then
-    chown "$(stat -c %u:%g "$dir")" "$partial" 2>/dev/null || true
+    chown "$(stat -c %u:%g "$dir")" "$partial" ${files_partial:+"$files_partial"} 2>/dev/null || true
+  fi
+  # The archive is in place before the dump, so there is never a dump without its files.
+  if [ -n "$files_partial" ]; then
+    mv "$files_partial" "$dir/$(files_of "$name")" || return 1
+    files_partial=''
   fi
   mv "$partial" "$dir/$name" || return 1
   partial=''
@@ -186,7 +243,7 @@ nap() {
 #     suspended, and the dumps would come less often than daily.
 run() {
   check_settings
-  trap 'rm -f "$partial"; log "stopping"; exit 0' TERM INT
+  trap 'rm -f "$partial" "$files_partial"; log "stopping"; exit 0' TERM INT
   step=$((interval < 60 ? interval : 60))
   # Left behind if the last run was killed in the middle of a dump.
   rm -f "$dir"/.notes-*.partial
@@ -249,6 +306,95 @@ order by application_name
 SQL
 }
 
+# Whether the archive $1 holds only what archive_files puts in: the folder
+# itself and regular files named like an attachment id. No links, no other
+# names, no paths, so extracting it cannot write anywhere else.
+archive_is_clean() {
+  # BusyBox tar lists a hard link as a regular file, with " -> target"
+  # after the name; GNU tar says "link to". Either is refused here, before
+  # anything else is looked at.
+  if tar -tvf "$1" 2>/dev/null | grep -q -e ' -> ' -e ' link to '; then
+    return 1
+  fi
+  tar -tf "$1" >"$1.names" 2>/dev/null || { rm -f "$1.names"; return 1; }
+  tar -tvf "$1" 2>/dev/null | cut -c1 >"$1.types" || { rm -f "$1.names" "$1.types"; return 1; }
+  clean=0
+  if [ "$(wc -l <"$1.names")" != "$(wc -l <"$1.types")" ]; then
+    clean=1
+  else
+    paste -d ' ' "$1.types" "$1.names" >"$1.entries"
+    while read -r type entry; do
+      case $type in
+        d) [ "$entry" = . ] || [ "$entry" = ./ ] || clean=1 ;;
+        -) echo "$entry" | grep -q -E "$ATTACHMENT_NAME" || clean=1 ;;
+        *) clean=1 ;;
+      esac
+    done <"$1.entries"
+  fi
+  rm -f "$1.names" "$1.types" "$1.entries"
+  return "$clean"
+}
+
+# Unpacks the files archive $1 into $files_dir/.restoring, next to the files
+# in use, after checking it. Nothing in use is touched yet.
+stage_files() {
+  check="$files_dir/.checking.tar"
+  cp "$1" "$check"
+  if ! archive_is_clean "$check"; then
+    rm -f "$check"
+    fail "$(basename "$1") holds something other than attachment files. Nothing was restored."
+  fi
+  incoming_files="$files_dir/.restoring"
+  rm -rf "$incoming_files"
+  mkdir "$incoming_files"
+  if ! tar -xof "$check" -C "$incoming_files"; then
+    rm -rf "$incoming_files" "$check"
+    fail "could not unpack $(basename "$1"). Nothing was restored."
+  fi
+  rm -f "$check"
+  # Whatever the listing said, what came out has to be plain files and the
+  # folder: nothing else, and no file with a second name somewhere, which a
+  # hard link would be. Checked before anything changes an owner.
+  if [ -n "$(find "$incoming_files" -mindepth 1 \( ! -type f ! -type d \) -o \( -type f -links +1 \))" ]; then
+    rm -rf "$incoming_files"
+    fail "$(basename "$1") unpacked into something other than plain files. Nothing was restored."
+  fi
+  # The API reads and writes these files, so they belong to whoever owns the folder.
+  if [ "$(id -u)" = 0 ]; then
+    chown -R "$(stat -c %u:%g "$files_dir")" "$incoming_files" 2>/dev/null || true
+  fi
+}
+
+# Puts the staged files in the place of the ones in use. Only files named
+# like an attachment id are moved; anything else in the folder is left alone.
+swap_files() {
+  replaced_files="$files_dir/.replaced"
+  # A .replaced left by an earlier restore that failed half way holds files
+  # someone may still want. It is moved aside, not removed.
+  if [ -e "$replaced_files" ]; then
+    kept="$files_dir/.replaced-$(date -u +%Y%m%dT%H%M%SZ)"
+    mv "$replaced_files" "$kept"
+    log "warning: $replaced_files from an earlier restore was moved to $kept. Remove it once it is not needed." >&2
+  fi
+  mkdir "$replaced_files"
+  for entry in $(ls -A "$files_dir" | grep -E "$ATTACHMENT_NAME"); do
+    mv "$files_dir/$entry" "$replaced_files/" || swap_failed "$entry"
+  done
+  for entry in $(ls -A "$incoming_files" | grep -E "$ATTACHMENT_NAME"); do
+    mv "$incoming_files/$entry" "$files_dir/" || swap_failed "$entry"
+  done
+  rm -rf "$incoming_files" "$replaced_files"
+}
+
+# A file could not be moved after the database was already restored.
+swap_failed() {
+  log "could not move $1 while putting the restored files in place. The database is restored." >&2
+  log "The files that were in use are in $replaced_files, the restored ones still in $incoming_files." >&2
+  log "To go back to the old files: mv $replaced_files/* $files_dir/ (and restore the matching dump)." >&2
+  log "To finish instead: mv $incoming_files/* $files_dir/ and remove $replaced_files." >&2
+  exit 1
+}
+
 # Replaces $PGDATABASE with a dump, in an order that never leaves the server
 # without a database of that name:
 #
@@ -273,6 +419,27 @@ restore() {
   [ -f "$file" ] || file="$dir/$file"
   [ -f "$file" ] || fail "no such dump: $1"
 
+  # The files of attachments, when there are some to restore. They are
+  # checked and unpacked aside first, and only put in place once the
+  # database is.
+  files=''
+  if [ -n "$files_dir" ]; then
+    [ -d "$files_dir" ] || fail "ATTACHMENTS_DIR is set, but $files_dir is not a folder"
+    if [ -f "$(files_of "$file")" ]; then
+      files=$(files_of "$file")
+      # The API writes and removes files as it goes: while it runs, the folder is not ours to replace.
+      who=$(connected_to "$PGDATABASE")
+      case $who in
+        *notes-api*)
+          fail "the API is running (connected now: $who). Stop it before a restore. Nothing was restored."
+          ;;
+      esac
+      stage_files "$files"
+    else
+      log "warning: there is no $(basename "$(files_of "$file")") beside the dump, so the files of attachments are left as they are" >&2
+    fi
+  fi
+
   incoming="${PGDATABASE}_restoring"
   replaced="${PGDATABASE}_replaced"
   # Either can be left over from a restore that was cut short.
@@ -285,6 +452,7 @@ restore() {
   createdb "$incoming"
   if ! pg_restore --exit-on-error --no-owner --dbname="$incoming" "$file"; then
     drop "$incoming"
+    [ -z "$files" ] || rm -rf "$incoming_files"
     fail "could not restore $(basename "$file"), $PGDATABASE was left as it was"
   fi
 
@@ -296,12 +464,19 @@ restore() {
     # Nothing was renamed: the two renames stand or fall together.
     who=$(connected_to "$PGDATABASE")
     drop "$incoming"
+    [ -z "$files" ] || rm -rf "$incoming_files"
     log "could not put the restored copy in the place of $PGDATABASE. $PGDATABASE was left as it was." >&2
     if [ -n "$who" ]; then
       log "A database cannot be renamed while something is connected to it. Connected now: $who." >&2
       log "Stop those (with the compose stack: the api and the backup service) and try again." >&2
     fi
     exit 1
+  fi
+
+  # The database is restored. Its files go in now, so that rows and files are from the same moment.
+  if [ -n "$files" ]; then
+    swap_files
+    log "restored the files of attachments from $(basename "$files")"
   fi
 
   # The restore has happened. What follows is tidying up.

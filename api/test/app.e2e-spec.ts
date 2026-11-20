@@ -10,9 +10,13 @@ import { DiscoveryModule, DiscoveryService, MetadataScanner, Reflector } from '@
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
 import JSZip from 'jszip';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { signedPath } from '../src/attachments/signed-url';
 import { ALLOW_API_TOKEN } from '../src/common/allow-api-token.decorator';
 import { IS_PUBLIC } from '../src/common/public.decorator';
 import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
@@ -20,11 +24,15 @@ import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { TrashService } from '../src/trash/trash.service';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
 process.env.AUTH_THROTTLE_LIMIT ??= '1000';
 process.env.SEED_DEMO = 'false';
+// The files of attachments go to a folder of this run only.
+const attachmentsDir = mkdtempSync(join(tmpdir(), 'notes-e2e-attachments-'));
+process.env.ATTACHMENTS_DIR = attachmentsDir;
 // Mail is switched on, but nothing leaves the process: the transport below
 // stands in for SMTP and keeps what it is given.
 process.env.SMTP_HOST = 'smtp.invalid';
@@ -117,6 +125,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app.close();
+  rmSync(attachmentsDir, { recursive: true, force: true });
 });
 
 describe('auth', () => {
@@ -693,19 +702,24 @@ describe('api tokens', () => {
       'AuthController.updateProfile',
     ]);
     expect(names(routes.filter((route) => route.isPublic))).toEqual([
+      'AttachmentsController.file',
       'AuthController.login',
       'AuthController.register',
       'HealthController.check',
       'PasswordResetController.confirm',
       'PasswordResetController.request',
       'PasswordResetController.status',
+      'PublicSharesController.attachments',
+      'PublicSharesController.noteAttachments',
       'PublicSharesController.unlock',
       'PublicSharesController.view',
       'PublicSharesController.viewNote',
       'TransferController.downloadBackup',
     ]);
     expect([...new Set(open.map((route) => route.name.split('.')[0]))].sort()).toEqual([
+      'AttachmentsController',
       'AuthController',
+      'NoteAttachmentsController',
       'NotebookSharesController',
       'NotebooksController',
       'NotesController',
@@ -2045,6 +2059,285 @@ describe('links between shared notes', () => {
   });
 });
 
+describe('attachments', () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('pixels')]);
+  const upload = (auth: { Authorization: string }, noteId: string, bytes: Buffer, name: string) =>
+    request(app.getHttpServer()).post(`/api/notes/${noteId}/attachments`).set(auth).attach('file', bytes, name);
+  const note = async (auth: { Authorization: string }, body: object = { title: 'With a picture' }) =>
+    (await request(app.getHttpServer()).post('/api/notes').set(auth).send(body).expect(201)).body as { id: string };
+
+  it('takes an image, serves it at a signed address only, and says what it is from the bytes', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    const { id: noteId } = await note(owner.auth);
+
+    // Called .txt, but the bytes say PNG.
+    const added = await upload(owner.auth, noteId, png, 'holiday.txt').expect(201);
+    expect(added.body).toMatchObject({ noteId, fileName: 'holiday.txt', contentType: 'image/png', size: png.length });
+    expect(added.body.markdown).toBe(`![holiday.txt](attachment:${added.body.id as string})`);
+    expect((await request(server).get(`/api/notes/${noteId}/attachments`).set(owner.auth).expect(200)).body).toEqual([
+      expect.objectContaining({ id: added.body.id, url: expect.stringMatching(/^\/api\/attachments\//) }),
+    ]);
+
+    const served = await request(server)
+      .get(added.body.url as string)
+      .buffer(true)
+      .expect(200);
+    expect(served.headers).toMatchObject({
+      'content-type': 'image/png',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; sandbox",
+    });
+    expect(served.headers['content-disposition']).toMatch(/^inline; /);
+    expect(Buffer.from(served.body as Buffer)).toEqual(png);
+
+    // Without the signature, with a changed one, or once it has run out: the same 404.
+    const plain = `/api/attachments/${added.body.id as string}`;
+    const never = await request(server).get(plain).expect(404);
+    await request(server)
+      .get(`${added.body.url as string}x`)
+      .expect(404);
+    const old = signedPath(process.env.JWT_SECRET ?? '', added.body.id, 'someone', Date.now());
+    expect((await request(server).get(old).expect(404)).body).toEqual(never.body);
+    const ownerId = (await app.get(PrismaService).note.findUniqueOrThrow({ where: { id: noteId } })).userId;
+    await request(server)
+      .get(signedPath(process.env.JWT_SECRET ?? '', added.body.id, ownerId, Date.now() - 10 * 60_000))
+      .expect(404);
+  });
+
+  it('serves a PDF and text only as downloads, and refuses SVG, HTML and what it does not know', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    const { id: noteId } = await note(owner.auth);
+
+    const pdf = await upload(owner.auth, noteId, Buffer.from('%PDF-1.4\n...'), 'plan.pdf').expect(201);
+    expect(pdf.body.markdown).toBe(`[plan.pdf](attachment:${pdf.body.id as string})`);
+    const served = await request(server)
+      .get(pdf.body.url as string)
+      .expect(200);
+    expect(served.headers['content-type']).toBe('application/pdf');
+    expect(served.headers['content-disposition']).toMatch(/^attachment; filename="plan.pdf"/);
+
+    for (const [bytes, name] of [
+      ['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'cat.png'],
+      ['<!doctype html><script>alert(1)</script>', 'page.txt'],
+      [Buffer.from([0x4d, 0x5a, 0x90, 0x00]), 'tool.exe'],
+    ] as const) {
+      const refused = await upload(owner.auth, noteId, Buffer.from(bytes), name).expect(400);
+      expect(refused.body.message).toMatch(/Only PNG, JPEG, GIF and WebP images, PDF and plain text/);
+    }
+  });
+
+  it('keeps every account to its own notes and files', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    const stranger = await signUp();
+    const { id: noteId } = await note(owner.auth);
+    const added = await upload(owner.auth, noteId, png, 'a.png').expect(201);
+
+    await upload(stranger.auth, noteId, png, 'b.png').expect(404);
+    await request(server).get(`/api/notes/${noteId}/attachments`).set(stranger.auth).expect(404);
+    await request(server)
+      .delete(`/api/attachments/${added.body.id as string}`)
+      .set(stranger.auth)
+      .expect(404);
+
+    await request(server)
+      .delete(`/api/attachments/${added.body.id as string}`)
+      .set(owner.auth)
+      .expect(204);
+    expect(existsSync(join(attachmentsDir, added.body.id as string))).toBe(false);
+    await request(server)
+      .get(added.body.url as string)
+      .expect(404);
+  });
+
+  it('lets readers of a shared note load its own files, and nobody else’s', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    const { id: other } = await note(owner.auth, { title: 'Private' });
+    const secret = await upload(owner.auth, other, png, 'secret.png').expect(201);
+    const { id: noteId } = await note(owner.auth);
+    const shown = await upload(owner.auth, noteId, png, 'shown.png').expect(201);
+    await request(server)
+      .patch(`/api/notes/${noteId}`)
+      .set(owner.auth)
+      .send({ content: `${shown.body.markdown as string} ![x](attachment:${secret.body.id as string})`, revision: 0 })
+      .expect(200);
+    const share = await request(server).post(`/api/notes/${noteId}/share`).set(owner.auth).expect(200);
+
+    const link = `/api/public/notes/${share.body.token as string}`;
+    const read = await request(server).get(link).expect(200);
+    expect(Object.keys(read.body.attachments)).toEqual([shown.body.id]);
+    await request(server)
+      .get(read.body.attachments[shown.body.id] as string)
+      .expect(200);
+
+    // New addresses later on, for the same files only, and not counted as a view.
+    const views = async () =>
+      (await request(server).get(`/api/notes/${noteId}/share`).set(owner.auth)).body.share.viewCount as number;
+    const before = await views();
+    const fresh = await request(server).get(`${link}/attachments`).expect(200);
+    expect(Object.keys(fresh.body)).toEqual([shown.body.id]);
+    await request(server)
+      .get(fresh.body[shown.body.id] as string)
+      .expect(200);
+    expect(await views()).toBe(before);
+
+    // Behind a password, they need the password or the proof of it, like the note.
+    await request(server)
+      .patch(`/api/notes/${noteId}/share`)
+      .set(owner.auth)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    await request(server).get(`${link}/attachments`).expect(403);
+    const opened = await request(server).post(link).send({ password: 'open sesame' }).expect(200);
+    await request(server)
+      .get(`${link}/attachments`)
+      .set('X-Share-Access', opened.body.access as string)
+      .expect(200);
+  });
+
+  it('empties the trash without taking the files of a note restored half way through', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const owner = await signUp();
+    const { id: gone } = await note(owner.auth, { title: 'Going' });
+    const { id: back } = await note(owner.auth, { title: 'Coming back' });
+    const goneFile = await upload(owner.auth, gone, png, 'a.png').expect(201);
+    const backFile = await upload(owner.auth, back, png, 'b.png').expect(201);
+    for (const id of [gone, back]) await request(server).delete(`/api/notes/${id}`).set(owner.auth).expect(204);
+
+    // Between reading which notes and files to delete and deleting them, the owner restores one,
+    // on another connection, which commits at once.
+    const real = prisma.$transaction.bind(prisma);
+    const spy = jest.spyOn(prisma, '$transaction').mockImplementationOnce(((
+      fn: (tx: unknown) => unknown,
+      options?: unknown,
+    ) =>
+      real(
+        (tx) =>
+          fn(
+            new Proxy(tx, {
+              get(target, key, receiver) {
+                if (key !== 'attachment') return Reflect.get(target, key, receiver) as unknown;
+                return {
+                  findMany: async (args: object) => {
+                    const rows = await target.attachment.findMany(args as never);
+                    await prisma.note.update({ where: { id: back }, data: { deletedAt: null } });
+                    return rows;
+                  },
+                };
+              },
+            }),
+          ) as never,
+        options as never,
+      )) as never);
+
+    const { deleted } = await app
+      .get(TrashService)
+      .empty((await prisma.note.findUniqueOrThrow({ where: { id: gone } })).userId);
+    spy.mockRestore();
+
+    expect(deleted).toBe(1);
+    expect(await prisma.note.findUnique({ where: { id: gone } })).toBeNull();
+    expect(existsSync(join(attachmentsDir, goneFile.body.id as string))).toBe(false);
+    // The restored note keeps its row and its file.
+    expect(await prisma.note.findUnique({ where: { id: back } })).toMatchObject({ deletedAt: null });
+    expect(await prisma.attachment.count({ where: { noteId: back } })).toBe(1);
+    expect(existsSync(join(attachmentsDir, backFile.body.id as string))).toBe(true);
+  });
+
+  it('removes the files when their note is deleted for good', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    const { id: noteId } = await note(owner.auth);
+    const added = await upload(owner.auth, noteId, png, 'a.png').expect(201);
+    const path = join(attachmentsDir, added.body.id as string);
+    expect(existsSync(path)).toBe(true);
+
+    await request(server).delete(`/api/notes/${noteId}`).set(owner.auth).expect(204);
+    // In the trash the file stays: the note can come back.
+    expect(existsSync(path)).toBe(true);
+    await request(server).delete(`/api/trash/${noteId}`).set(owner.auth).expect(204);
+    expect(existsSync(path)).toBe(false);
+    expect(await app.get(PrismaService).attachment.count({ where: { noteId } })).toBe(0);
+  });
+
+  it('carries the files through the JSON backup and the zip export', async () => {
+    const server = app.getHttpServer();
+    const owner = await signUp();
+    const { id: noteId } = await note(owner.auth, { title: 'Album' });
+    const added = await upload(owner.auth, noteId, png, 'beach.png').expect(201);
+    await request(server)
+      .patch(`/api/notes/${noteId}`)
+      .set(owner.auth)
+      .send({ content: `Look: ${added.body.markdown as string}`, revision: 0 })
+      .expect(200);
+
+    const zip = await JSZip.loadAsync(
+      (
+        await request(server)
+          .get('/api/export')
+          .set(owner.auth)
+          .buffer(true)
+          .parse((res, done) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('end', () => done(null, Buffer.concat(chunks)));
+          })
+      ).body as Buffer,
+    );
+    const filePath = `attachments/${added.body.id as string}/beach.png`;
+    expect(await zip.file(filePath)?.async('nodebuffer')).toEqual(png);
+    expect(await zip.file('Album.md')?.async('string')).toContain(`Look: ![beach.png](${filePath})`);
+
+    const backup = await request(server)
+      .get('/api/export/backup')
+      .set(owner.auth)
+      .buffer(true)
+      .parse((res, done) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')));
+        res.on('end', () => done(null, body));
+      })
+      .expect(200);
+    const fresh = await signUp();
+    const restored = await request(server)
+      .post('/api/import/backup')
+      .set(fresh.auth)
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from(backup.body as string))
+      .expect(201);
+    expect(restored.body).toMatchObject({ notes: 1, attachments: 1 });
+
+    const list = await request(server).get('/api/notes').set(fresh.auth).expect(200);
+    const album = await request(server)
+      .get(`/api/notes/${list.body.items[0].id as string}`)
+      .set(fresh.auth)
+      .expect(200);
+    const files = (
+      await request(server)
+        .get(`/api/notes/${album.body.id as string}/attachments`)
+        .set(fresh.auth)
+        .expect(200)
+    ).body as { id: string; url: string }[];
+    expect(files).toHaveLength(1);
+    expect(files[0].id).not.toBe(added.body.id);
+    expect(album.body.content).toBe(`Look: ![beach.png](attachment:${files[0].id})`);
+    expect(Buffer.from((await request(server).get(files[0].url).buffer(true).expect(200)).body as Buffer)).toEqual(png);
+
+    // And the zip goes back in through the import, images and all.
+    const again = await signUp();
+    const imported = await request(server)
+      .post('/api/import')
+      .set(again.auth)
+      .attach('files', await zip.generateAsync({ type: 'nodebuffer' }), 'export.zip')
+      .expect(201);
+    expect(imported.body).toMatchObject({ imported: 1, attachmentsImported: 1, skipped: [] });
+  });
+});
+
 describe('the JSON backup', () => {
   interface Backup {
     format: string;
@@ -2150,7 +2443,7 @@ describe('the JSON backup', () => {
       .expect(200);
 
     const { raw, backup } = await download(owner.auth);
-    expect(backup).toMatchObject({ format: 'notes-backup', version: 1 });
+    expect(backup).toMatchObject({ format: 'notes-backup', version: 2 });
     expect(backup.notes).toHaveLength(4);
     expect(backup.notes.find((note) => note.title === 'Day')).toMatchObject({ isTemplate: true });
     expect(backup.notes.find((note) => note.title === 'Plan')).toMatchObject({ dailyDate: '2026-03-02' });
@@ -2177,7 +2470,14 @@ describe('the JSON backup', () => {
       .set('Content-Type', 'application/octet-stream')
       .send(Buffer.from(raw))
       .expect(201);
-    expect(restored.body).toEqual({ notes: 4, notebooks: 2, tags: 1, versions: 2, shareLinksNotRestored: 1 });
+    expect(restored.body).toEqual({
+      notes: 4,
+      notebooks: 2,
+      tags: 1,
+      versions: 2,
+      attachments: 0,
+      shareLinksNotRestored: 1,
+    });
 
     const again = await download(fresh.auth);
     const { shared, ...rest } = comparable(again.backup);
@@ -2264,7 +2564,14 @@ describe('the JSON backup', () => {
       .set('Content-Type', 'application/octet-stream')
       .send(Buffer.from(file))
       .expect(201);
-    expect(restored.body).toEqual({ notes: count, notebooks: 1, tags: 1, versions: 0, shareLinksNotRestored: 0 });
+    expect(restored.body).toEqual({
+      notes: count,
+      notebooks: 1,
+      tags: 1,
+      versions: 0,
+      attachments: 0,
+      shareLinksNotRestored: 0,
+    });
     const tagged = await request(server).get('/api/notes?tag=every-hundredth&pageSize=1').set(fresh.auth).expect(200);
     expect(tagged.body.total).toBe(201);
   }, 120_000);
@@ -2344,6 +2651,7 @@ describe('import and export', () => {
       notebooksCreated: 1,
       duplicates: 0,
       attachmentsSkipped: 0,
+      attachmentsImported: 0,
       skipped: [],
     });
 

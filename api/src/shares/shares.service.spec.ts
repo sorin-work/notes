@@ -31,6 +31,9 @@ describe('SharesService', () => {
         jwtSecret: SECRET,
       } as AppConfig,
       attempts,
+      {
+        urls: (list: { id: string }[]) => Object.fromEntries(list.map((item) => [item.id, `/signed/${item.id}`])),
+      } as never,
     );
   });
 
@@ -169,6 +172,7 @@ describe('SharesService', () => {
       content: 'Bread',
       updatedAt: createdAt,
       tags: [{ tag: { name: 'baking' } }],
+      attachments: [] as { id: string; userId: string }[],
     };
 
     beforeEach(() => {
@@ -176,6 +180,13 @@ describe('SharesService', () => {
       prisma.shareLink.findMany.mockResolvedValue([]);
       prisma.note.findFirst.mockResolvedValue(recipe);
       prisma.note.findMany.mockResolvedValue([]);
+    });
+
+    it("signs the addresses of the note's own attachments only", async () => {
+      prisma.note.findFirst.mockResolvedValue({ ...recipe, attachments: [{ id: 'a1', userId: OWNER }] });
+      await expect(service.view('tok')).resolves.toMatchObject({ attachments: { a1: '/signed/a1' } });
+      // They are asked for with the note itself, so only that note's files can be in the answer.
+      expect(prisma.note.findFirst.mock.calls[0][0].select.attachments).toEqual({ select: { id: true, userId: true } });
     });
 
     it('returns the note and counts the view', async () => {
@@ -186,6 +197,7 @@ describe('SharesService', () => {
         tags: ['baking'],
         updatedAt: createdAt,
         links: {},
+        attachments: {},
       });
       expect(prisma.note.findFirst.mock.calls[0][0].where).toEqual({ id: 'n1', userId: OWNER, deletedAt: null });
       expect(prisma.shareLink.update).toHaveBeenCalledWith({

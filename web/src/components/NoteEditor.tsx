@@ -3,6 +3,7 @@ import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, us
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError, getToken } from '../api/client';
+import { attachmentUrls, deleteAttachment, listAttachments, uploadAttachment } from '../api/attachments';
 import { listNotebooks } from '../api/notebooks';
 import {
   createNote,
@@ -48,6 +49,7 @@ import { fromTemplate } from '../lib/templates';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
+import { AttachmentsPanel } from './AttachmentsPanel';
 import { BacklinksPanel } from './BacklinksPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { PinIcon } from './Icons';
@@ -589,6 +591,49 @@ function LoadedEditor({ note }: { note: Note }) {
   });
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
+  // The addresses of the files run out after five minutes, so they are asked for again before that.
+  const attachments = useQuery({
+    queryKey: ['attachments', note.id],
+    queryFn: () => listAttachments(note.id),
+    refetchInterval: 4 * 60 * 1000,
+  });
+  const urls = useMemo(() => attachmentUrls(attachments.data), [attachments.data]);
+  const [uploading, setUploading] = useState(0);
+  const [uploadError, setUploadError] = useState<unknown>(null);
+  // The newest change(), for an upload that ends after the text moved on.
+  const changeRef = useRef(change);
+  changeRef.current = change;
+
+  /** Uploads files one by one and puts each one's link where the cursor is when it is done. */
+  const attachFiles = async (files: File[]) => {
+    if (readOnly || files.length === 0) return;
+    setUploadError(null);
+    setUploading((count) => count + files.length);
+    for (const file of files) {
+      try {
+        const added = await uploadAttachment(note.id, file);
+        queryClient.setQueryData(['attachments', note.id], (old: typeof attachments.data) => [...(old ?? []), added]);
+        const textarea = textareaRef.current;
+        const text = textarea?.value ?? content;
+        const at = textarea ? textarea.selectionStart : text.length;
+        const before = text.slice(0, at);
+        const inserted = `${before && !before.endsWith('\n') ? '\n' : ''}${added.markdown}\n`;
+        changeRef.current({ content: before + inserted + text.slice(at) });
+        if (textarea) {
+          const position = at + inserted.length;
+          requestAnimationFrame(() => textarea.setSelectionRange(position, position));
+        }
+      } catch (error) {
+        setUploadError(error);
+      } finally {
+        setUploading((count) => count - 1);
+      }
+    }
+  };
+  const removeAttachment = useMutation({
+    mutationFn: deleteAttachment,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['attachments', note.id] }),
+  });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
   const links = useQuery({ queryKey: ['links', note.id], queryFn: () => outgoingLinks(note.id) });
   const missingTitles = useMemo(
@@ -965,6 +1010,21 @@ function LoadedEditor({ note }: { note: Note }) {
               onKeyDown={onContentKeyDown}
               onClick={(event) => updateLinkState(content, event.currentTarget.selectionStart)}
               onBlur={() => setLink(null)}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                void attachFiles(files);
+              }}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                const files = Array.from(event.dataTransfer.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                void attachFiles(files);
+              }}
             />
             {link && (
               <LinkSuggestions
@@ -979,7 +1039,7 @@ function LoadedEditor({ note }: { note: Note }) {
         )}
         {mode === 'edit' && printing && (
           <div className="editor-preview print-only">
-            <MarkdownPreview content={content} missingTitles={missingTitles} />
+            <MarkdownPreview content={content} missingTitles={missingTitles} attachmentUrls={urls} />
           </div>
         )}
         {mode !== 'edit' && (
@@ -989,6 +1049,7 @@ function LoadedEditor({ note }: { note: Note }) {
               onWikiLink={openWikiLink}
               missingTitles={missingTitles}
               onToggleTask={readOnly ? undefined : onToggleTask}
+              attachmentUrls={urls}
             />
           </div>
         )}
@@ -1009,6 +1070,14 @@ function LoadedEditor({ note }: { note: Note }) {
         </span>
       </footer>
 
+      <AttachmentsPanel
+        attachments={attachments.data ?? []}
+        readOnly={readOnly}
+        uploading={uploading}
+        error={uploadError ?? removeAttachment.error}
+        onAttach={(files) => void attachFiles(files)}
+        onRemove={(id) => removeAttachment.mutate(id)}
+      />
       <BacklinksPanel noteId={note.id} />
 
       {dialog === 'history' && (

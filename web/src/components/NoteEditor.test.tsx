@@ -104,6 +104,43 @@ describe('NoteEditor', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument());
   });
 
+  it('uploads a pasted image, puts its link where the cursor is, and lists it to remove', async () => {
+    const id = '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e';
+    const added = {
+      id,
+      noteId: 'n1',
+      fileName: 'shot.png',
+      contentType: 'image/png',
+      size: 2048,
+      createdAt: '2026-01-02T10:00:00Z',
+      url: `/api/attachments/${id}?expires=1&signature=s`,
+      markdown: `![shot.png](attachment:${id})`,
+    };
+    const calls = mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': { body: note({ content: 'Before' }) },
+        'GET /api/notes/n1/attachments': { body: [] },
+        'POST /api/notes/n1/attachments': { status: 201, body: added },
+        [`DELETE /api/attachments/${id}`]: { status: 204 },
+      }),
+    );
+    renderEditor();
+    const textarea = (await screen.findByLabelText('Note content')) as HTMLTextAreaElement;
+    textarea.setSelectionRange(6, 6);
+
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(textarea, { clipboardData: { files: [file], types: ['Files'] } });
+
+    await waitFor(() => expect(textarea).toHaveValue(`Before\n![shot.png](attachment:${id})\n`));
+    const upload = calls.find((call) => call.method === 'POST' && call.url.endsWith('/attachments'));
+    expect((upload?.body as FormData).get('file')).toBe(file);
+    // The preview shows it from its signed address.
+    expect(await screen.findByRole('img', { name: 'shot.png' })).toHaveAttribute('src', added.url);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove shot.png' }));
+    await waitFor(() => expect(calls.some((call) => call.method === 'DELETE')).toBe(true));
+  });
+
   it('autosaves edits to the title and content', async () => {
     const calls = mockFetch(baseRoutes());
     renderEditor();

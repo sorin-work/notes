@@ -20,6 +20,7 @@ const note = (id: string) =>
     deletedAt: null,
     versions: [],
   });
+const file = JSON.stringify({ id: 'f1', noteId: 'a', fileName: 'x.png', createdAt: at, data: 'aGk=' });
 const head = `"format":"notes-backup","version":1,"exportedAt":"${at}"`;
 const sink = () => {
   const seen: string[] = [];
@@ -28,6 +29,7 @@ const sink = () => {
     sink: {
       notebooks: async () => void seen.push('notebooks'),
       tags: async () => void seen.push('tags'),
+      attachment: async (read: { id: string }) => void seen.push(`attachment ${read.id}`),
       note: async (read: { id: string }) => void seen.push(`note ${read.id}`),
     },
   };
@@ -40,11 +42,11 @@ describe('readBackupStream', () => {
     const { seen, sink: handlers } = sink();
     const summary = await readBackupStream(
       pieces(
-        `{${head},"preferences":null,"notebooks":[],"tags":[],"shareLinks":[],"notes":[${note('a')},${note('b')}],"later":{"x":[1]}}`,
+        `{${head},"preferences":null,"notebooks":[],"tags":[],"shareLinks":[],"attachments":[${file}],"notes":[${note('a')},${note('b')}],"later":{"x":[1]}}`,
       ),
       handlers,
     );
-    expect(seen).toEqual(['notebooks', 'tags', 'note a', 'note b']);
+    expect(seen).toEqual(['notebooks', 'tags', 'attachment f1', 'note a', 'note b']);
     expect(summary).toMatchObject({ notes: 2, shareLinks: 0 });
   });
 
@@ -55,6 +57,9 @@ describe('readBackupStream', () => {
     await expect(
       readBackupStream(pieces(`{${head},"notebooks":[],"notes":[${note('a')}`), sink().sink),
     ).rejects.toThrow(/ends too early/);
+    await expect(
+      readBackupStream(pieces(`{${head},"notebooks":[],"notes":[],"attachments":[${file}]}`), sink().sink),
+    ).rejects.toThrow(/attachments come after the notes/);
     await expect(readBackupStream(pieces(`{"format":"other","notebooks":[]}`), sink().sink)).rejects.toThrow(
       /is not a notes-backup file/,
     );

@@ -25,6 +25,7 @@ model User {
   tags           Tag[]
   passwordResets PasswordReset[]
   apiTokens      ApiToken[]
+  attachments    Attachment[]
 
   @@map("users")
 }
@@ -127,6 +128,7 @@ model Note {
   outgoingLinks NoteLink[]
   versions      NoteVersion[]
   share         ShareLink?
+  attachments   Attachment[]
 
   @@unique([userId, dailyDate])
   @@index([userId, deletedAt, updatedAt])
@@ -209,4 +211,28 @@ model ShareLink {
   notebook Notebook? @relation(fields: [notebookId], references: [id], onDelete: Cascade)
 
   @@map("share_links")
+}
+
+/// A file that belongs to a note: a pasted image or an attached PDF. The
+/// bytes are in ATTACHMENTS_DIR under the attachment's id, never under a
+/// name a user chose. The row goes with its note; the file is removed by
+/// the code that deletes notes, and a sweep removes any file left without
+/// a row.
+model Attachment {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  noteId      String   @map("note_id") @db.Uuid
+  /// The name it was uploaded with, for the download and the alt text only.
+  fileName    String   @map("file_name")
+  /// Decided from the bytes, not from what the upload claimed.
+  contentType String   @map("content_type")
+  size        Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@index([userId])
+  @@map("attachments")
 }

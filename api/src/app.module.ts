@@ -1,5 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_FILTER, DiscoveryModule } from '@nestjs/core';
+import { AttachmentsModule } from './attachments/attachments.module';
 import { AuthModule } from './auth/auth.module';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { RequestLoggerMiddleware } from './common/request-logger.middleware';
@@ -25,6 +26,7 @@ import { VersionsModule } from './versions/versions.module';
     AuthModule,
     NotebooksModule,
     NotesModule,
+    AttachmentsModule,
     TagsModule,
     VersionsModule,
     TrashModule,

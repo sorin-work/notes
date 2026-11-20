@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundEx
 import type { ShareLink } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPassword } from '../auth/password';
+import { AttachmentsService } from '../attachments/attachments.service';
 import { APP_CONFIG, AppConfig } from '../config/config';
 import { LinksService } from '../links/links.service';
 import { WORKING_NOTE } from '../notes/note-scope';
@@ -37,6 +38,12 @@ export interface SharedNote {
   updatedAt: Date;
   /** Where each link that is left leads, by normalised title: "/s/<token>" or "/s/<token>/<note id>". */
   links: Record<string, string>;
+  /**
+   * Signed addresses of this note's own attachments, by attachment id, for
+   * the `attachment:<id>` references in its text. They run out in minutes;
+   * the page asks again. Attachments of other notes are never in it.
+   */
+  attachments: Record<string, string>;
   /** Only in the answer to the right password. See share-access.ts. */
   access?: string;
 }
@@ -100,6 +107,7 @@ const NOTE_FIELDS = {
   content: true,
   updatedAt: true,
   tags: { include: { tag: true }, orderBy: { tag: { name: 'asc' as const } } },
+  attachments: { select: { id: true, userId: true } },
 };
 
 @Injectable()
@@ -109,6 +117,7 @@ export class SharesService {
     private readonly links: LinksService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly attempts: SharePasswordAttempts,
+    private readonly attachments: AttachmentsService,
   ) {}
 
   async get(userId: string, subject: ShareSubject): Promise<ShareView | null> {
@@ -172,6 +181,38 @@ export class SharesService {
     const note = await this.noteFor(open, token, { id: noteId, notebookId: { in: open.notebookIds } }, now);
     await this.count(open, viewer);
     return note;
+  }
+
+  /**
+   * Fresh signed addresses of a shared note's own files, for a page that has
+   * been open longer than they work. The same checks as reading the note,
+   * password or proof of it included, and not counted as a view. `noteId`
+   * is for a note of a shared notebook, null for a link to one note.
+   */
+  async attachmentUrls(
+    token: string,
+    noteId: string | null,
+    viewer: ShareViewer = {},
+    now = new Date(),
+  ): Promise<Record<string, string>> {
+    const open = await this.open(token, viewer, now);
+    const where = this.noteWhere(open, noteId);
+    const note = await this.prisma.note.findFirst({
+      where,
+      select: { attachments: { select: { id: true, userId: true } } },
+    });
+    if (!note) throw new NotFoundException(GONE);
+    return this.attachments.urls(note.attachments, now.getTime());
+  }
+
+  /** Which note a reader asks for: the link's own, or one of its notebook's. Null when the link has no such note. */
+  private noteWhere(open: OpenShare, noteId: string | null) {
+    if (noteId === null) {
+      if (!open.share.noteId) throw new NotFoundException(GONE);
+      return { id: open.share.noteId, userId: open.ownerId, deletedAt: null };
+    }
+    if (!open.notebookIds) throw new NotFoundException(GONE);
+    return { id: noteId, notebookId: { in: open.notebookIds }, userId: open.ownerId, ...WORKING_NOTE };
   }
 
   /**
@@ -277,6 +318,7 @@ export class SharesService {
       tags: note.tags.map((noteTag) => noteTag.tag.name),
       updatedAt: note.updatedAt,
       links: Object.fromEntries(links),
+      attachments: this.attachments.urls(note.attachments),
     };
   }
 
