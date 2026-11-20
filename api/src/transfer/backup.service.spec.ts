@@ -59,7 +59,7 @@ describe('readBackup', () => {
 
   it('holds the file to the rules of the app', () => {
     const cases: [object, RegExp][] = [
-      [{ version: 2 }, /version 2 is not 1/],
+      [{ version: 3 }, /version 3 is not one this app reads \(1, 2\)/],
       [{ notes: [note({ title: 'x'.repeat(201) })] }, /notes\[0\]\.title is longer than 200/],
       [{ notes: [note({ tags: Array(21).fill('t') })] }, /notes\[0\]\.tags has more than 20/],
       [{ notes: [note({ revision: -1 })] }, /revision is not a whole number/],

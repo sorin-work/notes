@@ -21,6 +21,9 @@ describe('loadConfig', () => {
       appUrl: 'http://localhost:5181',
       trustProxy: 0,
       apiDocs: true,
+      attachmentsDir: './data/attachments',
+      attachmentMaxBytes: 10 * 1024 * 1024,
+      attachmentAccountBytes: 500 * 1024 * 1024,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
   });

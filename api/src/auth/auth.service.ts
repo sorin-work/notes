@@ -4,9 +4,11 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { AttachmentsService } from '../attachments/attachments.service';
 import type { Prisma, User } from '@prisma/client';
 import type { AuthUser } from '../common/current-user.decorator';
 import { templateNotes } from '../notes/note-scope';
@@ -58,6 +60,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    @Optional() private readonly attachments?: AttachmentsService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResult> {
@@ -171,7 +174,10 @@ export class AuthService {
   async deleteAccount(userId: string, dto: DeleteAccountDto): Promise<void> {
     const user = await this.find(userId);
     await this.checkPassword(user, dto.password, 'Password is incorrect');
+    const files = (await this.attachments?.idsOfNotes({ userId })) ?? [];
     await this.prisma.user.delete({ where: { id: userId } });
+    // The rows went with the account. The files go now; the sweep takes whatever this misses.
+    await this.attachments?.removeFiles(files);
   }
 
   /**

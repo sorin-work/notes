@@ -1,11 +1,11 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { forgetShareAccess } from '../api/shares';
 import { expectNoAxeViolations } from '../test/axe';
 import { mockFetch, renderWithProviders } from '../test/render';
-import { SharedNotePage } from './SharedNotePage';
+import { ATTACHMENT_REFRESH_MS, SharedNotePage } from './SharedNotePage';
 
 function renderShared(route = '/s/tok123') {
   return renderWithProviders(
@@ -42,6 +42,36 @@ describe('SharedNotePage', () => {
     expect(screen.getByRole('checkbox')).toBeDisabled();
     expect(screen.getByText(/#baking/)).toBeInTheDocument();
     expect(calls[0]?.url).toBe('/api/public/notes/tok123');
+  });
+
+  it('asks for new addresses of its images before they run out, without counting a view', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const id = '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e';
+    let round = 0;
+    const calls = mockFetch({
+      'GET /api/public/notes/tok123': {
+        body: {
+          kind: 'note',
+          title: 'Album',
+          content: `![Beach](attachment:${id})`,
+          tags: [],
+          updatedAt: '2026-01-02T10:00:00Z',
+          links: {},
+          attachments: { [id]: '/api/attachments/first' },
+        },
+      },
+      'GET /api/public/notes/tok123/attachments': () => ({ body: { [id]: `/api/attachments/fresh-${++round}` } }),
+    });
+    renderShared();
+
+    expect(await screen.findByRole('img', { name: 'Beach' })).toHaveAttribute('src', '/api/attachments/first');
+    await vi.advanceTimersByTimeAsync(ATTACHMENT_REFRESH_MS + 1000);
+    await waitFor(() =>
+      expect(screen.getByRole('img', { name: 'Beach' })).toHaveAttribute('src', '/api/attachments/fresh-1'),
+    );
+    // The note itself, which counts the view, was asked for once.
+    expect(calls.filter((call) => call.url.endsWith('/api/public/notes/tok123'))).toHaveLength(1);
+    vi.useRealTimers();
   });
 
   it('explains when the link no longer works', async () => {

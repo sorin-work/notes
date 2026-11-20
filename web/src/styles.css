@@ -1775,6 +1775,43 @@ ul.error-box {
   padding-left: 1.2rem;
 }
 
+/* The files of a note, under the editor. */
+.attachments {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.attachments-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.attachments-header h2 {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.attachment-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.attachment-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.attachment-missing {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* "Print" or "Save as PDF" in the browser: the note as the preview shows it, and nothing of the app around it. */
 .print-only {
   display: none;
@@ -1826,7 +1863,8 @@ ul.error-box {
   .shared-footer,
   .shared-locked,
   .update-banner,
-  .offline-banner {
+  .offline-banner,
+  .attachments {
     display: none !important;
   }
 

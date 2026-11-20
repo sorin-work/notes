@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { LinksService } from '../links/links.service';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
+import type { AttachmentsService } from '../attachments/attachments.service';
 import { TagsService } from '../tags/tags.service';
 import { ImportService, notebookPath, splitPath } from './import.service';
 
@@ -33,6 +34,7 @@ describe('ImportService', () => {
   let prisma: PrismaMock;
   let tags: { setNoteTags: jest.Mock };
   let links: { sync: jest.Mock };
+  let attachments: { store: jest.Mock; hasRoom: jest.Mock; removeFiles: jest.Mock };
   let service: ImportService;
   let notebookCount: number;
 
@@ -40,10 +42,18 @@ describe('ImportService', () => {
     prisma = createPrismaMock();
     tags = { setNoteTags: jest.fn() };
     links = { sync: jest.fn() };
+    attachments = {
+      store: jest.fn((name: string, bytes: Buffer, id: string) =>
+        Promise.resolve({ id, fileName: name.split('/').pop(), contentType: 'image/png', size: bytes.length }),
+      ),
+      hasRoom: jest.fn().mockResolvedValue(true),
+      removeFiles: jest.fn(),
+    };
     service = new ImportService(
       asPrismaService(prisma),
       tags as unknown as TagsService,
       links as unknown as LinksService,
+      attachments as unknown as AttachmentsService,
     );
     notebookCount = 0;
     prisma.notebook.findFirst.mockResolvedValue(null);
@@ -60,7 +70,14 @@ describe('ImportService', () => {
       '---\ntitle: Weekly plan\ntags: [work, plan]\npinned: true\ntemplate: true\ncreated: 2026-01-02\n---\nSee [[Atlas]]';
     const result = await service.import(USER, [file('plan.md', text)]);
 
-    expect(result).toEqual({ imported: 1, notebooksCreated: 0, duplicates: 0, attachmentsSkipped: 0, skipped: [] });
+    expect(result).toEqual({
+      imported: 1,
+      notebooksCreated: 0,
+      duplicates: 0,
+      attachmentsSkipped: 0,
+      attachmentsImported: 0,
+      skipped: [],
+    });
     expect(prisma.note.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         userId: USER,
@@ -103,7 +120,7 @@ describe('ImportService', () => {
 
     expect(result.imported).toBe(4);
     expect(result.notebooksCreated).toBe(2);
-    expect(result.skipped).toEqual([{ file: 'Work/diagram.png', reason: 'Not a Markdown or text file' }]);
+    expect(result.skipped).toEqual([{ file: 'Work/diagram.png', reason: 'No note links to it' }]);
     expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: null, name: 'Work' } });
     expect(prisma.notebook.create).toHaveBeenCalledWith({ data: { userId: USER, parentId: 'nb-1', name: 'Meetings' } });
   });
@@ -118,15 +135,21 @@ describe('ImportService', () => {
   });
 
   it('skips files it cannot read', async () => {
-    const result = await service.import(USER, [file('photo.jpg', 'x'), file('broken.zip', 'not a zip')]);
+    const result = await service.import(USER, [
+      file('photo.jpg', 'x'),
+      file('broken.zip', 'not a zip'),
+      file('song.mp3', 'x'),
+    ]);
     expect(result).toEqual({
       imported: 0,
       notebooksCreated: 0,
       duplicates: 0,
       attachmentsSkipped: 0,
+      attachmentsImported: 0,
       skipped: [
-        { file: 'photo.jpg', reason: 'Not a Markdown, text, Evernote or zip file' },
         { file: 'broken.zip', reason: 'Not a valid zip file' },
+        { file: 'song.mp3', reason: 'Not a Markdown, text, Evernote or zip file' },
+        { file: 'photo.jpg', reason: 'No note links to it' },
       ],
     });
   });
@@ -250,7 +273,7 @@ describe('ImportService', () => {
       const result = await service.import(USER, [file('Export.zip', await zip.generateAsync({ type: 'nodebuffer' }))]);
 
       expect(result).toMatchObject({ imported: 3, notebooksCreated: 1 });
-      expect(result.skipped).toEqual([{ file: `Plans ${id(1)}/photo.png`, reason: 'Not a Markdown or text file' }]);
+      expect(result.skipped).toEqual([{ file: 'Plans/photo.png', reason: 'No note links to it' }]);
       const created = Object.fromEntries(
         prisma.note.create.mock.calls.map(([call]) => [call.data.title, [call.data.notebookId, call.data.content]]),
       );
@@ -271,5 +294,71 @@ describe('ImportService', () => {
     ]);
     expect(result.skipped).toEqual([{ file: 'long.md', reason: 'The note is too long' }]);
     expect(prisma.note.create.mock.calls[0][0].data.title).toHaveLength(200);
+  });
+
+  describe('images and PDFs', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    beforeEach(() => prisma.$queryRaw.mockResolvedValue([]));
+
+    it('attaches the files a vault note links to or embeds, and rewrites the links', async () => {
+      const zip = new JSZip();
+      zip.file(
+        'Vault/Trip.md',
+        'Day one ![[beach.png]] and ![[Beach.PNG|the beach]].\n\n![The map](../maps/map%20one.png) [Plan](plan.pdf) [site](https://example.com/x.png)\n\n```\n![[beach.png]]\n```',
+      );
+      zip.file('Vault/attachments/beach.png', png);
+      zip.file('maps/map one.png', png);
+      zip.file('Vault/plan.pdf', '%PDF-1.4');
+      zip.file('Vault/unused.png', png);
+      const result = await service.import(USER, [file('vault.zip', await zip.generateAsync({ type: 'nodebuffer' }))]);
+
+      expect(result).toMatchObject({ imported: 1, attachmentsImported: 3 });
+      expect(result.skipped).toEqual([{ file: 'Vault/unused.png', reason: 'No note links to it' }]);
+      const content: string = prisma.note.create.mock.calls[0][0].data.content;
+      const ids = [...content.matchAll(/attachment:([0-9a-f-]{36})/g)].map((match) => match[1]);
+      // The same file twice in one note is one attachment.
+      expect(ids).toHaveLength(4);
+      expect(new Set(ids).size).toBe(3);
+      expect(content).toBe(
+        `Day one ![beach.png](attachment:${ids[0]}) and ![the beach](attachment:${ids[0]}).\n\n` +
+          `![The map](attachment:${ids[2]}) [Plan](attachment:${ids[3]}) [site](https://example.com/x.png)\n\n` +
+          '```\n![[beach.png]]\n```',
+      );
+      expect(attachments.store.mock.calls.map(([name]) => name)).toEqual([
+        'Vault/attachments/beach.png',
+        'maps/map one.png',
+        'Vault/plan.pdf',
+      ]);
+      const rows = prisma.attachment.createMany.mock.calls[0][0].data;
+      expect(rows.map((row: { noteId: string; userId: string }) => [row.noteId, row.userId])).toEqual([
+        ['note-Trip', USER],
+        ['note-Trip', USER],
+        ['note-Trip', USER],
+      ]);
+    });
+
+    it('leaves a link as it was when its file is refused, and removes the files past the account limit', async () => {
+      attachments.store.mockResolvedValueOnce(null);
+      const one = await service.import(USER, [file('a.md', 'See ![x](bad.png)'), file('bad.png', png)]);
+      expect(prisma.note.create.mock.calls[0][0].data.content).toBe('See ![x](bad.png)');
+      expect(one.skipped).toEqual([
+        { file: 'bad.png', reason: 'Not an image or PDF that can be attached, or too large' },
+      ]);
+
+      attachments.hasRoom.mockResolvedValueOnce(false);
+      const two = await service.import(USER, [file('b.md', 'See ![x](big.png)'), file('big.png', png)]);
+      expect(prisma.note.create.mock.calls[1][0].data.content).toBe('See ![x](big.png)');
+      expect(two).toMatchObject({ imported: 1, attachmentsImported: 0 });
+      expect(two.skipped).toEqual([{ file: 'b.md', reason: 'Its images and PDFs would go past the account limit' }]);
+      expect(attachments.removeFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts a note with images as there already whichever attachments its links name', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }]);
+      const result = await service.import(USER, [file('a.md', 'See ![x](p.png)'), file('p.png', png)]);
+      expect(result).toMatchObject({ imported: 0, duplicates: 1 });
+      expect(attachments.store).not.toHaveBeenCalled();
+      expect(result.skipped).toEqual([]);
+    });
   });
 });

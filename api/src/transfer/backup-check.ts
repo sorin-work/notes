@@ -5,8 +5,10 @@ import { normalizeTagNames } from '../tags/tag-name';
 import { MAX_VERSIONS_PER_NOTE } from '../versions/versions.service';
 import {
   Backup,
+  BackupAttachment,
   BACKUP_FORMAT,
   BACKUP_VERSION,
+  READABLE_BACKUP_VERSIONS,
   BackupNote,
   BackupNotebook,
   BackupPreferences,
@@ -67,7 +69,9 @@ function id(value: unknown, where: string): string {
 
 export function readFormat(format: unknown, version: unknown): void {
   if (format !== BACKUP_FORMAT) invalid('the file', `is not a ${BACKUP_FORMAT} file`);
-  if (version !== BACKUP_VERSION) invalid('version', `${String(version)} is not ${BACKUP_VERSION}`);
+  if (typeof version !== 'number' || !READABLE_BACKUP_VERSIONS.includes(version)) {
+    invalid('version', `${String(version)} is not one this app reads (${READABLE_BACKUP_VERSIONS.join(', ')})`);
+  }
 }
 
 export function readExportedAt(value: unknown): string {
@@ -127,6 +131,21 @@ export function readShareLinks(value: unknown): BackupShareLink[] {
       createdAt: date(entry.createdAt, `${where}.createdAt`),
     };
   });
+}
+
+/** An attachment's file in base64. Whether its bytes are a type that may be attached is decided on restore. */
+export function readAttachment(entry: unknown, index: number): BackupAttachment {
+  const where = `attachments[${index}]`;
+  if (!isObject(entry)) invalid(where, 'is not an object');
+  const data = entry.data;
+  if (typeof data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) invalid(`${where}.data`, 'is not base64');
+  return {
+    id: id(entry.id, `${where}.id`),
+    noteId: id(entry.noteId, `${where}.noteId`),
+    fileName: text(entry.fileName, `${where}.fileName`, 200, { empty: false }),
+    createdAt: date(entry.createdAt, `${where}.createdAt`),
+    data,
+  };
 }
 
 /** One note, with the limits of a note typed in the app. `notebooks` are the ids the file holds. */
@@ -237,6 +256,7 @@ export function readBackup(value: unknown): Backup {
     notebooks,
     tags: readTags(value.tags),
     shareLinks: readShareLinks(value.shareLinks),
+    attachments: value.attachments === undefined ? [] : list(value.attachments, 'attachments').map(readAttachment),
     notes,
   };
 }

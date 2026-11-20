@@ -39,6 +39,13 @@ const publicPath = (token: string, noteId?: string) =>
  */
 export const getShared = (token: string) => api<SharedNote | SharedNotebook>(publicPath(token), asReader(token));
 
+/**
+ * Fresh signed addresses of a shared note's files, by id. They work for five
+ * minutes; a page open longer asks again. Not counted as a view.
+ */
+export const getSharedAttachments = (token: string, noteId?: string) =>
+  api<Record<string, string>>(`${publicPath(token, noteId)}/attachments`, asReader(token));
+
 /** One note of a shared notebook. */
 export const getSharedNoteIn = (token: string, noteId: string) =>
   api<SharedNote>(publicPath(token, noteId), asReader(token));

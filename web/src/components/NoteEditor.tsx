@@ -3,6 +3,7 @@ import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, us
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError, getToken } from '../api/client';
+import { attachmentUrls, deleteAttachment, listAttachments, uploadAttachment } from '../api/attachments';
 import { listNotebooks } from '../api/notebooks';
 import {
   createNote,
@@ -48,6 +49,7 @@ import { fromTemplate } from '../lib/templates';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { countWords, DEFAULT_TITLE, readingMinutes, savedTitle } from '../lib/text';
 import { normalizeTitle, openLinkAt } from '../lib/wikilinks';
+import { AttachmentsPanel } from './AttachmentsPanel';
 import { BacklinksPanel } from './BacklinksPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { PinIcon } from './Icons';
@@ -381,9 +383,11 @@ function LoadedEditor({ note }: { note: Note }) {
   );
 
   // "Keep mine" and "keep mine, put theirs in the history": save again, on the revision of the conflict.
-  const keepMine = (withTheirsInHistory: boolean) => {
+  // A "keep both" whose copy could not be made (storage full, say) leaves the question open and says why.
+  const [keepError, setKeepError] = useState<unknown>(null);
+  const keepMine = async (withTheirsInHistory: boolean) => {
     if (!theirs) return;
-    setDialog(null);
+    setKeepError(null);
     if (elsewhere && ownerId) {
       // "Keep mine" replaces the other tab's text only if it is still exactly
       // what the question showed: queued with that text as the parent, any
@@ -391,7 +395,7 @@ function LoadedEditor({ note }: { note: Note }) {
       // that text as a note of its own, under an id that stays the same if
       // this is tried again, so a retry makes no second copy.
       const other = elsewhere;
-      void (async () => {
+      try {
         if (withTheirsInHistory) {
           await createOffline(
             ownerId,
@@ -399,14 +403,23 @@ function LoadedEditor({ note }: { note: Note }) {
             keepBothId(other, 'theirs'),
           );
         }
-        parent.current = { title: other.title, content: other.content };
-        await autosave.retry();
-      })();
+      } catch (error) {
+        setKeepError(
+          new Error(
+            `The other tab's text could not be kept as a note of its own, so nothing was changed. ${error instanceof Error ? error.message : ''}`.trim(),
+          ),
+        );
+        return;
+      }
+      setDialog(null);
+      parent.current = { title: other.title, content: other.content };
+      await autosave.retry();
       return;
     }
+    setDialog(null);
     revision.current = theirs.revision;
     keepTheirs.current = withTheirsInHistory;
-    void autosave.retry();
+    await autosave.retry();
   };
 
   // "Take theirs" fetches the note as it is now. The copy that came with the
@@ -596,6 +609,67 @@ function LoadedEditor({ note }: { note: Note }) {
   });
 
   const notebooks = useQuery({ queryKey: ['notebooks'], queryFn: listNotebooks });
+  // The addresses of the files run out after five minutes, so they are asked for again before that.
+  const attachments = useQuery({
+    queryKey: ['attachments', note.id],
+    queryFn: () => listAttachments(note.id),
+    refetchInterval: 4 * 60 * 1000,
+  });
+  const urls = useMemo(() => attachmentUrls(attachments.data), [attachments.data]);
+  const [uploading, setUploading] = useState(0);
+  const [uploadError, setUploadError] = useState<unknown>(null);
+  // The newest change(), for an upload that ends after the text moved on.
+  const changeRef = useRef(change);
+  changeRef.current = change;
+
+  /** Uploads files one by one and puts each one's link where the cursor is when it is done. */
+  const attachFiles = async (files: File[]) => {
+    if (readOnly || files.length === 0) return;
+    setUploadError(null);
+    // A file goes to the server at once; it is never queued. Without a
+    // connection, or for a note that is not on the server yet, nothing is
+    // added to the text, so no link is left pointing at a file that is not there.
+    const waitingCreate = openEntryFor(note.id)?.kind === 'create';
+    if (!navigator.onLine || waitingCreate) {
+      setUploadError(
+        new Error(
+          waitingCreate
+            ? 'Files can be attached once this note has reached the server. Nothing was added to the note.'
+            : 'Files cannot be attached without a connection. Nothing was added to the note.',
+        ),
+      );
+      return;
+    }
+    setUploading((count) => count + files.length);
+    for (const file of files) {
+      try {
+        const added = await uploadAttachment(note.id, file);
+        queryClient.setQueryData(['attachments', note.id], (old: typeof attachments.data) => [...(old ?? []), added]);
+        const textarea = textareaRef.current;
+        const text = textarea?.value ?? content;
+        const at = textarea ? textarea.selectionStart : text.length;
+        const before = text.slice(0, at);
+        const inserted = `${before && !before.endsWith('\n') ? '\n' : ''}${added.markdown}\n`;
+        changeRef.current({ content: before + inserted + text.slice(at) });
+        if (textarea) {
+          const position = at + inserted.length;
+          requestAnimationFrame(() => textarea.setSelectionRange(position, position));
+        }
+      } catch (error) {
+        setUploadError(
+          cannotReachServer(error)
+            ? new Error('The connection went while the file was being attached. Nothing was added to the note.')
+            : error,
+        );
+      } finally {
+        setUploading((count) => count - 1);
+      }
+    }
+  };
+  const removeAttachment = useMutation({
+    mutationFn: deleteAttachment,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['attachments', note.id] }),
+  });
   const tags = useQuery({ queryKey: ['tags'], queryFn: listTags });
   const links = useQuery({ queryKey: ['links', note.id], queryFn: () => outgoingLinks(note.id) });
   const missingTitles = useMemo(
@@ -979,6 +1053,21 @@ function LoadedEditor({ note }: { note: Note }) {
               onKeyDown={onContentKeyDown}
               onClick={(event) => updateLinkState(content, event.currentTarget.selectionStart)}
               onBlur={() => setLink(null)}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                void attachFiles(files);
+              }}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                const files = Array.from(event.dataTransfer.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                void attachFiles(files);
+              }}
             />
             {link && (
               <LinkSuggestions
@@ -993,7 +1082,7 @@ function LoadedEditor({ note }: { note: Note }) {
         )}
         {mode === 'edit' && printing && (
           <div className="editor-preview print-only">
-            <MarkdownPreview content={content} missingTitles={missingTitles} />
+            <MarkdownPreview content={content} missingTitles={missingTitles} attachmentUrls={urls} />
           </div>
         )}
         {mode !== 'edit' && (
@@ -1003,6 +1092,7 @@ function LoadedEditor({ note }: { note: Note }) {
               onWikiLink={openWikiLink}
               missingTitles={missingTitles}
               onToggleTask={readOnly ? undefined : onToggleTask}
+              attachmentUrls={urls}
             />
           </div>
         )}
@@ -1023,6 +1113,14 @@ function LoadedEditor({ note }: { note: Note }) {
         </span>
       </footer>
 
+      <AttachmentsPanel
+        attachments={attachments.data ?? []}
+        readOnly={readOnly}
+        uploading={uploading}
+        error={uploadError ?? removeAttachment.error}
+        onAttach={(files) => void attachFiles(files)}
+        onRemove={(id) => removeAttachment.mutate(id)}
+      />
       <BacklinksPanel noteId={note.id} />
 
       {dialog === 'history' && (
@@ -1081,11 +1179,11 @@ function LoadedEditor({ note }: { note: Note }) {
       )}
       {dialog === 'conflict' && theirs && (
         <ConflictDialog
-          onKeepBoth={() => keepMine(true)}
-          onKeepMine={() => keepMine(false)}
+          onKeepBoth={() => void keepMine(true)}
+          onKeepMine={() => void keepMine(false)}
           onTakeTheirs={() => takeTheirs.mutate()}
           busy={takeTheirs.isPending}
-          error={takeTheirs.error}
+          error={keepError ?? takeTheirs.error}
           onClose={() => setDialog(null)}
         />
       )}
