@@ -8,7 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import type { Note, Prisma } from '@prisma/client';
+import { type Note, Prisma } from '@prisma/client';
 import { Page, PaginationQuery, skipFor } from '../common/pagination';
 import { LinksService } from '../links/links.service';
 import { ParsePool } from '../links/parse-pool';
@@ -111,17 +111,26 @@ export class MentionsService {
    * mention that "Link" would accept is given, found with the same function
    * "Link" uses, so every mention listed can be linked.
    */
-  async list(userId: string, noteId: string, page: PaginationQuery): Promise<MentionPage> {
-    return this.oneAtATime(userId, () => this.listNow(userId, noteId, page));
+  /**
+   * With `notebookIds`, only notes in those notebooks are read for mentions:
+   * what a member of a shared notebook may see of its owner's notes.
+   */
+  async list(userId: string, noteId: string, page: PaginationQuery, notebookIds?: string[]): Promise<MentionPage> {
+    return this.oneAtATime(userId, () => this.listNow(userId, noteId, page, notebookIds));
   }
 
-  private async listNow(userId: string, noteId: string, page: PaginationQuery): Promise<MentionPage> {
+  private async listNow(
+    userId: string,
+    noteId: string,
+    page: PaginationQuery,
+    notebookIds?: string[],
+  ): Promise<MentionPage> {
     const target = await this.findNote(userId, noteId);
     if (await this.whyNot(userId, target)) {
       return { items: [], total: 0, page: page.page, pageSize: page.pageSize, capped: false };
     }
 
-    const candidates = await this.candidateIds(userId, target, MAX_CANDIDATES + 1);
+    const candidates = await this.candidateIds(userId, target, MAX_CANDIDATES + 1, notebookIds);
     let capped = candidates.length > MAX_CANDIDATES;
     let budget = MAX_PARSED_LENGTH;
     const deadline = Date.now() + MAX_PARSE_MS;
@@ -130,7 +139,11 @@ export class MentionsService {
     for (let from = 0; from < Math.min(candidates.length, MAX_CANDIDATES) && !spent; from += BATCH) {
       const ids = candidates.slice(from, Math.min(from + BATCH, MAX_CANDIDATES));
       const notes = await this.prisma.note.findMany({
-        where: { id: { in: ids }, ...workingNotes(userId) },
+        where: {
+          id: { in: ids },
+          ...workingNotes(userId),
+          ...(notebookIds ? { notebookId: { in: notebookIds } } : {}),
+        },
         select: { id: true, title: true, content: true, updatedAt: true, revision: true },
       });
       // findMany does not promise the order of the ids it was given.
@@ -377,11 +390,16 @@ export class MentionsService {
   }
 
   /** Ids of the notes whose indexed words contain the title as a phrase and that do not link to it yet. */
-  private async candidateIds(userId: string, target: Note, limit: number): Promise<string[]> {
+  private async candidateIds(userId: string, target: Note, limit: number, notebookIds?: string[]): Promise<string[]> {
+    const inside = notebookIds
+      ? notebookIds.length > 0
+        ? Prisma.sql`AND n.notebook_id IN (${Prisma.join(notebookIds.map((id) => Prisma.sql`${id}::uuid`))})`
+        : Prisma.sql`AND false`
+      : Prisma.empty;
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT n.id
       FROM notes n
-      WHERE n.user_id = ${userId}::uuid AND ${workingNoteSql('n')} AND n.id <> ${target.id}::uuid
+      WHERE n.user_id = ${userId}::uuid AND ${workingNoteSql('n')} AND n.id <> ${target.id}::uuid ${inside}
         AND n.search_vector @@ phraseto_tsquery('english', ${target.title})
         AND NOT EXISTS (
           SELECT 1 FROM note_links l

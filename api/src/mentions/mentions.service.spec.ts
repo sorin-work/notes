@@ -97,6 +97,8 @@ describe('MentionsService', () => {
         USER,
         expect.objectContaining({ strings: ['n.deleted_at IS NULL AND n.is_template = false'] }),
         'target',
+        // No notebook limit: the owner reads all of their notes.
+        expect.objectContaining({ strings: [''] }),
         'Project Atlas',
         'project atlas',
         201,
