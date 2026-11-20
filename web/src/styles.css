@@ -1755,6 +1755,7 @@ ul.error-box {
   background: var(--surface-2);
   color: var(--text);
   font-size: 0.9rem;
+}
 
 /* "Print" or "Save as PDF" in the browser: the note as the preview shows it, and nothing of the app around it. */
 .print-only {
