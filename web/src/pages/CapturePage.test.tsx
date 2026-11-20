@@ -24,7 +24,8 @@ describe('CapturePage', () => {
     renderCapture('?title=Bread%20basics&url=https%3A%2F%2Fexample.com%2Fbread');
 
     expect(screen.getByLabelText('Title')).toHaveValue('Bread basics');
-    expect(screen.getByLabelText('Text')).toHaveValue('[Bread basics](<https://example.com/bread>)\n\n');
+    expect(screen.getByLabelText('Text')).toHaveValue('<https://example.com/bread>\n\n');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(calls).toHaveLength(0);
     await expectNoAxeViolations({ part: true });
 
@@ -36,7 +37,7 @@ describe('CapturePage', () => {
     expect(calls[0]).toMatchObject({
       method: 'POST',
       url: '/api/notes',
-      body: { title: 'Bread basics', content: '[Bread basics](<https://example.com/bread>)\n\nTry the overnight one.' },
+      body: { title: 'Bread basics', content: '<https://example.com/bread>\n\nTry the overnight one.' },
     });
   });
 
@@ -50,6 +51,16 @@ describe('CapturePage', () => {
 
     expect(await screen.findByText('All notes')).toBeInTheDocument();
     expect(calls).toHaveLength(0);
+  });
+
+  it('says so when the address in the link was not a web address, and drafts nothing from it', () => {
+    mockFetch({});
+    const smuggled = encodeURIComponent('![](https://evil.example/p.gif)\n\n[Sign in again](https://evil.example)');
+    renderCapture(`?title=Hello&url=${smuggled}`);
+
+    expect(screen.getByLabelText('Title')).toHaveValue('Hello');
+    expect(screen.getByLabelText('Text')).toHaveValue('');
+    expect(screen.getByRole('status')).toHaveTextContent('The address that came with this link was left out');
   });
 
   it('shows why when the note could not be saved', async () => {
