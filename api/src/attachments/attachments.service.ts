@@ -38,6 +38,8 @@ export interface StoredFile {
   fileName: string;
   contentType: string;
   size: number;
+  /** When it was attached, for a file that comes from a backup. */
+  createdAt?: Date;
 }
 
 export interface ServedFile {
@@ -76,6 +78,11 @@ export class AttachmentsService {
     private readonly storage: AttachmentStorage,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  /** Bytes all attachments of one account may have together. */
+  get accountBytes(): number {
+    return this.config.attachmentAccountBytes;
+  }
 
   view(attachment: Attachment, now = Date.now()): AttachmentView {
     return {

@@ -2144,7 +2144,14 @@ describe('the JSON backup', () => {
       .set('Content-Type', 'application/octet-stream')
       .send(Buffer.from(raw))
       .expect(201);
-    expect(restored.body).toEqual({ notes: 4, notebooks: 2, tags: 1, versions: 2, shareLinksNotRestored: 1 });
+    expect(restored.body).toEqual({
+      notes: 4,
+      notebooks: 2,
+      tags: 1,
+      versions: 2,
+      attachments: 0,
+      shareLinksNotRestored: 1,
+    });
 
     const again = await download(fresh.auth);
     const { shared, ...rest } = comparable(again.backup);
@@ -2231,7 +2238,14 @@ describe('the JSON backup', () => {
       .set('Content-Type', 'application/octet-stream')
       .send(Buffer.from(file))
       .expect(201);
-    expect(restored.body).toEqual({ notes: count, notebooks: 1, tags: 1, versions: 0, shareLinksNotRestored: 0 });
+    expect(restored.body).toEqual({
+      notes: count,
+      notebooks: 1,
+      tags: 1,
+      versions: 0,
+      attachments: 0,
+      shareLinksNotRestored: 0,
+    });
     const tagged = await request(server).get('/api/notes?tag=every-hundredth&pageSize=1').set(fresh.auth).expect(200);
     expect(tagged.body.total).toBe(201);
   }, 120_000);

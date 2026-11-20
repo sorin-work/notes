@@ -4,10 +4,11 @@ import { parser } from 'stream-json';
 import Assembler from 'stream-json/Assembler';
 import { MAX_CONTENT_LENGTH } from '../notes/dto/note.dto';
 import { MAX_VERSIONS_PER_NOTE } from '../versions/versions.service';
-import { BackupNote, BackupNotebook, BackupPreferences, BackupTag } from './backup';
+import { BackupAttachment, BackupNote, BackupNotebook, BackupPreferences, BackupTag } from './backup';
 import {
   invalid,
   NoteRules,
+  readAttachment,
   readExportedAt,
   readFormat,
   readNote,
@@ -21,6 +22,7 @@ import {
 export interface BackupSink {
   notebooks(notebooks: BackupNotebook[]): Promise<void>;
   tags(tags: BackupTag[]): Promise<void>;
+  attachment(attachment: BackupAttachment): Promise<void>;
   note(note: BackupNote): Promise<void>;
 }
 
@@ -36,6 +38,8 @@ export interface BackupSummary {
  * coming in, so no single note can fill the memory.
  */
 const MAX_NOTE_CHARS = (MAX_VERSIONS_PER_NOTE + 1) * (MAX_CONTENT_LENGTH + 1_000) + 100_000;
+/** An attachment holds a file of up to 50 MB, in base64. */
+const MAX_ATTACHMENT_CHARS = Math.ceil((50 * 1024 * 1024 * 4) / 3) + 100_000;
 /** The lists before the notes are small. */
 const MAX_LIST_CHARS = 64 * 1024 * 1024;
 
@@ -83,7 +87,10 @@ export async function readBackupStream(source: Readable, sink: BackupSink): Prom
 
   let depth = 0;
   let key: string | null = null;
-  let inNotes = false;
+  /** The list whose entries are read one at a time, while inside it. */
+  let inList: 'notes' | 'attachments' | null = null;
+  let attachments = 0;
+  let notesSeen = false;
   let assembler: Assembler | null = null;
   let chars = 0;
   let finished = false;
@@ -132,8 +139,12 @@ export async function readBackupStream(source: Readable, sink: BackupSink): Prom
     for await (const token of tokens as AsyncIterable<Token>) {
       if (CHUNK.has(token.name)) {
         chars += token.value?.length ?? 0;
-        if (chars > (inNotes ? MAX_NOTE_CHARS : MAX_LIST_CHARS)) {
-          invalid(inNotes ? `notes[${notes}]` : (key ?? 'the file'), 'is larger than anything the app writes');
+        const limit =
+          inList === 'notes' ? MAX_NOTE_CHARS : inList === 'attachments' ? MAX_ATTACHMENT_CHARS : MAX_LIST_CHARS;
+        if (chars > limit) {
+          const where =
+            inList === 'notes' ? `notes[${notes}]` : inList ? `attachments[${attachments}]` : (key ?? 'the file');
+          invalid(where, 'is larger than anything the app writes');
         }
         continue;
       }
@@ -143,7 +154,12 @@ export async function readBackupStream(source: Readable, sink: BackupSink): Prom
         if (handled && assembler.done) {
           const value: unknown = assembler.current;
           assembler = null;
-          if (inNotes) {
+          if (inList === 'attachments') {
+            checkFormat();
+            const attachment = readAttachment(value, attachments);
+            attachments++;
+            await sink.attachment(attachment);
+          } else if (inList === 'notes') {
             if (!notebookIds) invalid('notes', 'come before the notebooks');
             checkFormat();
             const note = readNote(value, notes, notebookIds);
@@ -161,9 +177,9 @@ export async function readBackupStream(source: Readable, sink: BackupSink): Prom
         depth = 1;
         continue;
       }
-      if (inNotes) {
+      if (inList) {
         if (token.name === 'endArray') {
-          inNotes = false;
+          inList = null;
         } else if (VALUE_START.has(token.name)) {
           chars = 0;
           assembler = new Assembler();
@@ -180,8 +196,10 @@ export async function readBackupStream(source: Readable, sink: BackupSink): Prom
         finished = true;
         continue;
       }
-      if (key === 'notes' && token.name === 'startArray') {
-        inNotes = true;
+      if ((key === 'notes' || key === 'attachments') && token.name === 'startArray') {
+        if (key === 'attachments' && notesSeen) invalid('attachments', 'come after the notes');
+        if (key === 'notes') notesSeen = true;
+        inList = key;
         continue;
       }
       if (VALUE_START.has(token.name)) {
