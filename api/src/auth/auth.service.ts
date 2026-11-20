@@ -137,11 +137,12 @@ export class AuthService {
     if (sent.dateFormat !== undefined) daily.dateFormat = sent.dateFormat;
 
     const next: Preferences = { ...preferences, dailyNotes: daily };
-    await this.prisma.user.update({
+    const saved = await this.prisma.user.update({
       where: { id: userId },
       data: { preferences: next as unknown as Prisma.InputJsonObject },
     });
-    return next;
+    // The answer is what the next read gives, and not what was put together above.
+    return readPreferences(saved.preferences);
   }
 
   /**
