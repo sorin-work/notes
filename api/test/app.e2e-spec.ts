@@ -267,6 +267,90 @@ describe('password reset', () => {
   });
 });
 
+describe('api tokens', () => {
+  const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  it('work in place of a login, within their limits', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+
+    await request(server).post('/api/auth/tokens').set(auth).send({}).expect(400);
+    const created = await request(server).post('/api/auth/tokens').set(auth).send({ name: ' script ' }).expect(201);
+    expect(created.body).toMatchObject({ name: 'script', readOnly: false, lastUsedAt: null });
+    expect(created.body.token).toMatch(/^nt_[\w-]{43}$/);
+    const token = bearer(created.body.token);
+
+    // Shown once: the list has the name, never the token or its hash.
+    const listed = await request(server).get('/api/auth/tokens').set(auth).expect(200);
+    expect(listed.body).toEqual([
+      { id: created.body.id, name: 'script', readOnly: false, lastUsedAt: null, createdAt: created.body.createdAt },
+    ]);
+
+    const note = await request(server).post('/api/notes').set(token).send({ title: 'From a script' }).expect(201);
+    const notes = await request(server).get('/api/notes').set(token).expect(200);
+    expect(notes.body.total).toBe(1);
+    await request(server).get('/api/auth/me').set(token).expect(200);
+    const used = await request(server).get('/api/auth/tokens').set(auth).expect(200);
+    expect(used.body[0].lastUsedAt).not.toBeNull();
+
+    // Managing the account and the tokens takes a login.
+    await request(server).get('/api/auth/tokens').set(token).expect(403);
+    await request(server).post('/api/auth/tokens').set(token).send({ name: 'more' }).expect(403);
+    await request(server).delete(`/api/auth/tokens/${created.body.id}`).set(token).expect(403);
+    await request(server).patch('/api/auth/me').set(token).send({ name: 'Mallory' }).expect(403);
+    await request(server)
+      .patch('/api/auth/password')
+      .set(token)
+      .send({ currentPassword: 'password123', newPassword: 'password456' })
+      .expect(403);
+    await request(server).post('/api/auth/logout-all').set(token).expect(403);
+    await request(server).delete('/api/auth/me').set(token).send({ password: 'password123' }).expect(403);
+
+    const reader = await request(server)
+      .post('/api/auth/tokens')
+      .set(auth)
+      .send({ name: 'reader', readOnly: true })
+      .expect(201);
+    const readOnly = bearer(reader.body.token);
+    await request(server).get(`/api/notes/${note.body.id}`).set(readOnly).expect(200);
+    await request(server).get('/api/search?q=script').set(readOnly).expect(200);
+    await request(server).post('/api/notes').set(readOnly).send({ title: 'No' }).expect(403);
+    await request(server).patch(`/api/notes/${note.body.id}`).set(readOnly).send({ title: 'No' }).expect(403);
+    await request(server).delete(`/api/notes/${note.body.id}`).set(readOnly).expect(403);
+    await request(server).post(`/api/notes/${note.body.id}/share`).set(readOnly).expect(403);
+    await request(server).get(`/api/notes/${note.body.id}`).set(auth).expect(200);
+  });
+
+  it('outlive "sign out everywhere", and end with a revoke or with the account', async () => {
+    const server = app.getHttpServer();
+    const email = `tokens-${Date.now()}@example.com`;
+    const session = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+    const auth = bearer(session.body.token);
+    const first = await request(server).post('/api/auth/tokens').set(auth).send({ name: 'first' }).expect(201);
+    const second = await request(server).post('/api/auth/tokens').set(auth).send({ name: 'second' }).expect(201);
+
+    await request(server).post('/api/auth/logout-all').set(auth).expect(204);
+    await request(server).get('/api/notes').set(auth).expect(401);
+    await request(server).get('/api/notes').set(bearer(first.body.token)).expect(200);
+
+    const login = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
+    const again = bearer(login.body.token);
+    const stranger = await signUp();
+    await request(server).delete(`/api/auth/tokens/${first.body.id}`).set(stranger.auth).expect(404);
+    await request(server).delete(`/api/auth/tokens/${first.body.id}`).set(again).expect(204);
+    await request(server).delete(`/api/auth/tokens/${first.body.id}`).set(again).expect(404);
+    await request(server).get('/api/notes').set(bearer(first.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer(second.body.token)).expect(200);
+
+    await request(server).delete('/api/auth/me').set(again).send({ password: 'password123' }).expect(204);
+    await request(server).get('/api/notes').set(bearer(second.body.token)).expect(401);
+    await request(server).get('/api/notes').set(bearer('nt_made-up')).expect(401);
+  });
+});
+
 describe('notes', () => {
   it('creates, edits, lists and trashes notes', async () => {
     const { auth } = await signUp();
