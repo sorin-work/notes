@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { user } from '../test/fixtures';
@@ -48,5 +49,16 @@ describe('SettingsPage', () => {
 
     expect(screen.getByText('The new passwords do not match.')).toBeInTheDocument();
     expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
+  });
+
+  it('passes the axe checks', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/tags': { body: [{ id: 't1', name: 'atlas', noteCount: 2 }] },
+    });
+    renderSettings();
+    expect(await screen.findByText(user.email)).toBeInTheDocument();
+    await screen.findAllByText(/atlas/);
+    await expectNoAxeViolations({ part: true });
   });
 });

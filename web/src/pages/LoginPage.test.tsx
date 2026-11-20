@@ -2,6 +2,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { getToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { GuestOnly } from '../auth/guards';
@@ -90,5 +91,17 @@ describe('RegisterPage', () => {
 
     expect(await screen.findByText('Your notes')).toBeInTheDocument();
     expect(calls[0]?.body).toEqual({ name: 'Ada', email: 'ada@example.com', password: 'long-enough' });
+  });
+});
+
+describe('the sign-in and sign-up pages', () => {
+  it('pass the axe checks', async () => {
+    mockFetch({});
+    const login = renderAuth('/login');
+    await expectNoAxeViolations();
+    login.unmount();
+
+    renderAuth('/register');
+    await expectNoAxeViolations();
   });
 });

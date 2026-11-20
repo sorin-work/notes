@@ -1,4 +1,4 @@
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import { configureAxe } from 'vitest-axe';
 
 const axe = configureAxe({
@@ -14,6 +14,8 @@ const axe = configureAxe({
  * around it, where the rule that all content sits inside a landmark cannot hold.
  */
 export async function expectNoAxeViolations({ part = false }: { part?: boolean } = {}): Promise<void> {
+  // axe draws on a canvas to tell icon fonts from text. jsdom has no canvas and logs a line for every attempt.
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
   const results = await axe(document.body, {
     rules: {
       // Only off for parts of a page. Whole pages are checked with it on.
