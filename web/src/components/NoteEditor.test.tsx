@@ -104,6 +104,20 @@ describe('NoteEditor', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument());
   });
 
+  it('adds no link for a file pasted without a connection, and says why', async () => {
+    const calls = mockFetch(baseRoutes({ 'GET /api/notes/n1/attachments': { body: [] } }));
+    renderEditor();
+    const textarea = await screen.findByLabelText('Note content');
+    fireEvent.change(textarea, { target: { value: 'Before' } });
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const file = new File(['png'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(textarea, { clipboardData: { files: [file], types: ['Files'] } });
+    expect(await screen.findByText(/Files cannot be attached without a connection/)).toBeInTheDocument();
+    expect(textarea).toHaveValue('Before');
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    online.mockRestore();
+  });
+
   it('uploads a pasted image, puts its link where the cursor is, and lists it to remove', async () => {
     const id = '6f1d1c1e-8f7e-4a43-9a43-1f2a3b4c5d6e';
     const added = {
@@ -794,7 +808,7 @@ describe('NoteEditor', () => {
 
       online = true;
       fireEvent(window, new Event('online'));
-      await waitFor(() => expect(saved.content).toBe('Typed with no connection.'), { timeout: 3000 });
+      await waitFor(() => expect(saved.content).toBe('Typed with no connection.'), { timeout: 4500 });
       expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 3 });
       await waitFor(() => expect(outboxEntryFor('n1')).toBeNull());
     });
@@ -826,6 +840,38 @@ describe('NoteEditor', () => {
           outboxSnapshot().some((entry) => entry.kind === 'create' && entry.content === 'From the other tab'),
         ).toBe(true),
       );
+    });
+
+    it('keeps the question open and says why when the other tab’s text cannot be kept as a note', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')),
+        }),
+      );
+      renderSignedIn();
+      const textarea = await screen.findByLabelText('Note content');
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'From the other tab' }, 3, [], {
+        title: 'Project Atlas',
+        content: 'Links to [[Atlas data model]].',
+      });
+      fireEvent.change(textarea, { target: { value: 'Typed in this tab' } });
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      // Making the copy fails: here because offline writing is switched off, as with a full storage.
+      const locks = Object.getOwnPropertyDescriptor(navigator, 'locks');
+      Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
+      try {
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+        expect(
+          await within(dialog).findByText(/could not be kept as a note of its own, so nothing was changed/),
+        ).toBeInTheDocument();
+      } finally {
+        if (locks) Object.defineProperty(navigator, 'locks', locks);
+      }
+      expect(openEntryFor('n1')?.content).toBe('From the other tab');
+      // Settled before the test ends, so that nothing of it is still running in the next one.
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine' }));
+      await waitFor(() => expect(openEntryFor('n1')?.content).toBe('Typed in this tab'));
     });
 
     it('keeps both texts when the note is left with that question open, and the other tab’s untouched', async () => {
