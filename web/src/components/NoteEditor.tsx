@@ -30,7 +30,7 @@ import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
 import { notify } from '../lib/notices';
-import { cannotReachServer, onSent, outboxEntryFor, queueText, resolveEntry, useOutbox } from '../lib/outbox';
+import { cannotReachServer, onSent, openEntryFor, queueText, resolveEntry, useOutbox } from '../lib/outbox';
 import { newlyPublicThrough } from '../lib/sharing';
 import { toggleTask } from '../lib/tasks';
 import { fromTemplate } from '../lib/templates';
@@ -91,7 +91,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const previewRef = useRef<HTMLDivElement>(null);
 
   // Text kept on this device that the server has not seen yet is newer than the note it came with.
-  const [queuedAtOpen] = useState(() => outboxEntryFor(note.id));
+  const [queuedAtOpen] = useState(() => openEntryFor(note.id));
   const [title, setTitle] = useState(queuedAtOpen?.title ?? note.title);
   const [content, setContent] = useState(queuedAtOpen?.content ?? note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
@@ -153,7 +153,7 @@ function LoadedEditor({ note }: { note: Note }) {
         server.title === savedTitle(sent.title) && server.content === sent.content;
       // While this note has text waiting on the device, newer text joins it
       // there, so that the changes to the note reach the server in order.
-      if (ownerId && outboxEntryFor(note.id)) {
+      if (ownerId && openEntryFor(note.id)) {
         await queueText(ownerId, note.id, draft, revision.current);
         return;
       }
