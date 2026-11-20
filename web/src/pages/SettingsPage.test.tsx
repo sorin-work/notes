@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { expectNoAxeViolations } from '../test/axe';
@@ -93,8 +93,26 @@ describe('SettingsPage', () => {
         'Restored 12 notes in 1 notebook, with 40 older versions. 2 shared links were not made again.',
       ),
     ).toBeInTheDocument();
-    const body = calls.find((call) => call.url.endsWith('/import/backup'))?.body as FormData;
-    expect((body.get('file') as File).name).toBe('notes-backup.json');
+    const call = calls.find((item) => item.url.endsWith('/import/backup'));
+    expect((call?.body as File).name).toBe('notes-backup.json');
+  });
+
+  it('downloads the backup through a one-time link the browser follows itself', async () => {
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.getAttribute('href') ?? '');
+    });
+    const calls = mockFetch({
+      ...loaded,
+      'POST /api/export/backup/link': { status: 201, body: { url: '/api/export/backup/download?ticket=t1' } },
+    });
+    renderSettings();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Download a full backup' }));
+    await waitFor(() => expect(clicked).toEqual(['/api/export/backup/download?ticket=t1']));
+    // The file itself is not fetched by the page.
+    expect(calls.some((call) => call.url.includes('/export/backup/download'))).toBe(false);
+    click.mockRestore();
   });
 
   it('shows why a backup was not restored', async () => {
