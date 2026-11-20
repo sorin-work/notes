@@ -16,6 +16,7 @@ const note = {
   pinned: false,
   favorite: false,
   isTemplate: false,
+  dailyDate: null,
   deletedAt: null as Date | null,
   createdAt: now,
   updatedAt: now,

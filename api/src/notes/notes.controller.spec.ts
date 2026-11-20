@@ -18,6 +18,7 @@ describe('NotesController', () => {
     orphanedLinkCount: jest.fn(),
     renameLinks: jest.fn(),
     duplicate: jest.fn(),
+    daily: jest.fn(),
   };
   const links = { backlinks: jest.fn(), outgoing: jest.fn(), resolve: jest.fn() };
   const exporter = { exportNote: jest.fn() };
@@ -38,6 +39,9 @@ describe('NotesController', () => {
     await controller.trash(user, 'n1');
     await controller.duplicate(user, 'n1');
     expect(notes.duplicate).toHaveBeenCalledWith('user-1', 'n1');
+    const today = { date: '2026-11-20', title: '2026-11-20' };
+    await controller.daily(user, today);
+    expect(notes.daily).toHaveBeenCalledWith('user-1', today);
     expect(notes.list).toHaveBeenCalledWith('user-1', query);
     expect(notes.get).toHaveBeenCalledWith('user-1', 'n1');
     expect(notes.create).toHaveBeenCalledWith('user-1', { title: 'x' });
