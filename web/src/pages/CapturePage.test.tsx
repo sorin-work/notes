@@ -2,6 +2,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import { expectNoAxeViolations } from '../test/axe';
 import { note } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { CapturePage } from './CapturePage';
@@ -25,6 +26,7 @@ describe('CapturePage', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('Bread basics');
     expect(screen.getByLabelText('Text')).toHaveValue('[Bread basics](<https://example.com/bread>)\n\n');
     expect(calls).toHaveLength(0);
+    await expectNoAxeViolations({ part: true });
 
     await userEvent.type(screen.getByLabelText('Text'), 'Try the overnight one.');
     await userEvent.click(screen.getByRole('button', { name: 'Save note' }));
