@@ -70,27 +70,23 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByText(/Password changed/)).toBeInTheDocument();
     expect(getToken()).toBe('tok-2');
-    // No API tokens, so nothing to say about them.
-    expect(screen.queryByRole('button', { name: 'Revoke all tokens' })).not.toBeInTheDocument();
+    expect(await screen.findByText('The account has no API tokens.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revoke all' })).not.toBeInTheDocument();
   });
 
-  it('lists the API tokens after a password change and revokes them all on one click', async () => {
+  it('says after a password change how many API tokens still work, and revokes them all on one click', async () => {
     let revoked = false;
+    const token = (id: string, name: string) => ({
+      id,
+      name,
+      readOnly: false,
+      lastUsedAt: null,
+      createdAt: '2026-01-01T00:00:00Z',
+    });
     const calls = mockFetch({
       ...loaded,
       'GET /api/auth/tokens': () => ({
-        body: revoked
-          ? []
-          : [
-              {
-                id: 't1',
-                name: 'backup script',
-                readOnly: false,
-                lastUsedAt: null,
-                createdAt: '2026-01-01T00:00:00Z',
-              },
-              { id: 't2', name: 'old laptop', readOnly: true, lastUsedAt: null, createdAt: '2026-01-01T00:00:00Z' },
-            ],
+        body: revoked ? [] : [token('t1', 'backup script'), token('t2', 'old laptop')],
       }),
       'PATCH /api/auth/password': { body: { token: 'tok-2', user } },
       'DELETE /api/auth/tokens': () => {
@@ -105,13 +101,11 @@ describe('SettingsPage', () => {
     await userEvent.type(screen.getByLabelText('Repeat new password'), 'new-password');
     await userEvent.click(screen.getByRole('button', { name: 'Change password' }));
 
-    // Not revoked behind the owner's back: shown, with the choice.
-    const notice = within(await screen.findByRole('group', { name: 'API tokens that still work' }));
-    expect(notice.getByText('backup script')).toBeInTheDocument();
-    expect(notice.getByText('old laptop')).toBeInTheDocument();
+    // "All signed out" would not be the whole truth: the tokens are kept, and said to be.
+    expect(await screen.findByText(/2 API tokens still work\./)).toBeInTheDocument();
     expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
 
-    await userEvent.click(notice.getByRole('button', { name: 'Revoke all tokens' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke all' }));
 
     expect(await screen.findByText(/All API tokens are revoked/)).toBeInTheDocument();
     expect(calls.filter((call) => call.method === 'DELETE').map((call) => call.url)).toEqual(['/api/auth/tokens']);
