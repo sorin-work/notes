@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
+import { resetLocks } from './locks';
 import { cleanup, configure } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 import { clearNotices } from '../lib/notices';
@@ -15,5 +16,6 @@ afterEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   clearNotices();
+  resetLocks();
   return Promise.all([dropOtherOfflineCaches(null), resetOutbox()]);
 });

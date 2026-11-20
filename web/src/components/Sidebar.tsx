@@ -11,7 +11,13 @@ import { dropStashes } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { notebookTree, totalNotes, trashedWith } from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
-import { cannotReachServer, createOffline, dropOutbox, unsentAfterTrying } from '../lib/outbox';
+import {
+  cannotReachServer,
+  createOffline,
+  dropOutbox,
+  offlineWritingAvailable,
+  unsentAfterTrying,
+} from '../lib/outbox';
 import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { LinkIcon, PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
@@ -83,7 +89,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       } catch (error) {
         // Without a connection a plain new note is made here and sent later. A
         // note from a template needs the template, which is on the server.
-        if (!user || !cannotReachServer(error) || changes.templateId) throw error;
+        if (!user || !cannotReachServer(error) || changes.templateId || !offlineWritingAvailable()) throw error;
         const note = await createOffline(user.id, { notebookId: changes.notebookId ?? null });
         queryClient.setQueryData(['note', note.id], note);
         return note;

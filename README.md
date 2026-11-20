@@ -746,17 +746,37 @@ in that browser's storage, readable by whoever can open the browser profile,
 until one of those things happens there. Only text and new notes wait: a pin,
 a tag, a notebook or a move to the trash still need a connection.
 
+A change is only ever queued on top of text the editor has seen. Each save
+names the text the editor started from. If the note already has text waiting
+that came from another tab, and is not that text, nothing is written over it:
+the editor asks the usual question, with the other tab's text as "theirs".
+"Keep mine, put theirs in the history" keeps the other text as a new note of
+its own. In the same way, the revision a change is based on is the one this
+editor loaded or saved, or one this tab sent itself. When another tab sends a
+change of the note, an editor open on it here only says that it is out of
+date; its next change meets the other one as a conflict.
+
 Every send checks that the login token still names the user the change
 belongs to, so a sign-in as someone else in another tab never sends it under
 their name. Changes are written and read under a lock shared by the tabs (Web
-Locks), held only briefly, and a send is put back only if the entry did not
-change while the request was on its way; otherwise the newer text stays and
-goes next, on the revision the answer named. A server error is tried again
-later, waiting longer each time, up to ten minutes. A change to a note that is
-gone, no longer shared, or in the trash is listed with "Save as a new note",
-"Copy text" and "Discard this change", and is tried again every few minutes,
-so restoring the note from the trash sends it. New text of that note never
-goes into such a stuck change.
+Locks), held only briefly. A text is marked as maybe sent before its request
+goes, and a send is put back only if the entry did not change meanwhile; a
+newer text written on top of it stays and goes next, on the revision the
+answer named. Each request of a send gives up after 15 seconds, and signing
+out waits at most 10 seconds for what is being sent. A server error is tried
+again later, waiting longer each time, up to ten minutes. A change to a note
+that is gone, no longer shared, or in the trash is listed with "Save as a new
+note", "Copy text" and "Discard this change", and is tried again every few
+minutes, so restoring the note from the trash sends it. New text of that note
+never goes into such a stuck change. A change discarded while its request was
+already on its way may still reach the server; then a notice says so, and the
+text before it is in the history of the note.
+
+Writing offline needs a secure context: the app served over HTTPS, or from
+localhost, because Web Locks and `crypto.randomUUID` exist only there. Served
+over plain HTTP from another address, the outbox is off. The offline line says
+so, saving works as before while there is a connection, and text that cannot
+be saved stays in the editor as an unsaved change.
 
 ## API overview
 
