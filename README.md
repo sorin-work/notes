@@ -649,8 +649,10 @@ ended, or the note changed once more on the way out).
 What waits in the outbox belongs to the user who wrote it. It goes when that
 user signs out and agrees to throw it away, when the account is deleted and
 when another user signs in on this browser. It stays when the session ends
-by itself (a 401, or a sign-out in another tab), and is sent at that user's
-next sign-in here. Only text and new notes wait: a pin, a tag, a notebook or
+by itself (a 401, "Sign out everywhere", or a sign-out in another tab): unsent
+changes stay in that browser until the same person signs in there again and
+they are sent, or someone else signs in there and they are deleted. Settings
+says so beside "Sign out everywhere". Only text and new notes wait: a pin, a tag, a notebook or
 a move to the trash still need a connection.
 
 ## API overview

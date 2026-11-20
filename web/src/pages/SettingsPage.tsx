@@ -191,6 +191,10 @@ function SessionsSection() {
         A login lasts a week. If you left one open somewhere, this signs you out in every browser and on every device,
         this one included. API tokens are not signed out: revoke those under API tokens.
       </p>
+      <p className="muted">
+        Changes made without a connection that have not been sent yet stay in the browser they were made in, until you
+        sign in there again and they are sent, or someone else signs in there and they are deleted.
+      </p>
       {signOut.error && <ErrorMessage error={signOut.error} />}
       <div className="form-actions start">
         <button type="button" className="button" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
