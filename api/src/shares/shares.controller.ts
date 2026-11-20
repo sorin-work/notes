@@ -10,9 +10,11 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { bearerToken } from '../auth/jwt-auth.guard';
 import { AllowApiToken } from '../common/allow-api-token.decorator';
@@ -20,7 +22,7 @@ import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
 import { ShareOptionsDto, UnlockShareDto } from './dto/share.dto';
 import { PublicThrottlerGuard } from './public-throttler.guard';
-import { ShareLinkThrottlerGuard } from './share-link-throttler.guard';
+import { TooManyWrongPasswords } from './share-password-attempts';
 import { SharedNote, SharesService, ShareView } from './shares.service';
 
 @AllowApiToken()
@@ -102,19 +104,27 @@ export class PublicSharesController {
   /**
    * The same note, for a link with a password. The password goes in the body, never in the address.
    *
-   * Attempts are throttled twice with the strict allowance: per client, and
-   * per link whoever is asking.
+   * Throttled per client with the strict allowance. The link itself also
+   * takes only so many wrong passwords a minute, whoever sends them.
    */
   @Public()
-  @UseGuards(ThrottlerGuard, ShareLinkThrottlerGuard)
+  @UseGuards(ThrottlerGuard)
   @Post(':token')
   @HttpCode(HttpStatus.OK)
   async unlock(
     @Param('token') token: string,
     @Body() dto: UnlockShareDto,
     @Headers('authorization') authorization: string | undefined,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<SharedNote> {
-    return this.shares.view(token, { userId: await this.viewerId(authorization), password: dto.password });
+    try {
+      return await this.shares.view(token, { userId: await this.viewerId(authorization), password: dto.password });
+    } catch (error) {
+      if (error instanceof TooManyWrongPasswords) {
+        response.setHeader('Retry-After', String(error.retryAfterSeconds));
+      }
+      throw error;
+    }
   }
 
   /** The account behind a login token that came with the request. Anything else counts as a stranger. */

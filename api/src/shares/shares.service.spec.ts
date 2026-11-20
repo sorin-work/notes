@@ -1,6 +1,8 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
 import { hashPassword, verifyPassword } from '../auth/password';
+import type { AppConfig } from '../config/config';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
+import { SharePasswordAttempts, TooManyWrongPasswords } from './share-password-attempts';
 import { newShareToken, SharesService } from './shares.service';
 
 const USER = 'user-1';
@@ -9,10 +11,13 @@ const createdAt = new Date('2026-02-14T10:00:00Z');
 describe('SharesService', () => {
   let prisma: PrismaMock;
   let service: SharesService;
+  let attempts: SharePasswordAttempts;
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new SharesService(asPrismaService(prisma));
+    // Three wrong passwords a minute for a link.
+    attempts = new SharePasswordAttempts({ authThrottleLimit: 3 } as AppConfig);
+    service = new SharesService(asPrismaService(prisma), attempts);
   });
 
   it('returns null for a note that is not shared', async () => {
@@ -193,6 +198,71 @@ describe('SharesService', () => {
         prisma.shareLink.findUnique.mockResolvedValue(protectedLink);
         await expect(service.view('tok', { password: 'open sesame' })).resolves.toMatchObject({ title: 'Recipe' });
         expect(prisma.shareLink.update).toHaveBeenCalledTimes(1);
+      });
+
+      /** How a password was refused. Fails the test when it was taken. */
+      const guess = async (viewer: { userId?: string; password: string }): Promise<HttpException> => {
+        try {
+          await service.view('tok', viewer);
+        } catch (error) {
+          return error as HttpException;
+        }
+        throw new Error(`"${viewer.password}" opened the note`);
+      };
+
+      it('takes three wrong passwords a minute and then refuses every password, the right one too', async () => {
+        prisma.shareLink.findUnique.mockResolvedValue(protectedLink);
+        for (const password of ['guess-1', 'guess-2', 'guess-3']) {
+          expect((await guess({ password })).getStatus()).toBe(403);
+        }
+        const fourth = await guess({ password: 'guess-4' });
+        expect(fourth).toBeInstanceOf(TooManyWrongPasswords);
+        expect(fourth.getStatus()).toBe(429);
+        expect((fourth as TooManyWrongPasswords).retryAfterSeconds).toBeGreaterThan(0);
+        expect((await guess({ password: 'open sesame' })).getStatus()).toBe(429);
+        expect(prisma.shareLink.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses without comparing the password once the allowance is gone', async () => {
+        // A hash that makes the comparison throw, so reaching it would show.
+        prisma.shareLink.findUnique.mockResolvedValue({ ...protectedLink, passwordHash: 42 });
+        for (let i = 0; i < 3; i++) attempts.take('s1');
+        expect((await guess({ password: 'open sesame' })).getStatus()).toBe(429);
+      });
+
+      it('does not count right passwords, so readers do not close the link to each other', async () => {
+        prisma.shareLink.findUnique.mockResolvedValue(protectedLink);
+        for (let i = 0; i < 5; i++) {
+          await expect(service.view('tok', { password: 'open sesame' })).resolves.toMatchObject({ title: 'Recipe' });
+        }
+        expect((await guess({ password: 'guess-1' })).getStatus()).toBe(403);
+        expect((await guess({ password: 'guess-2' })).getStatus()).toBe(403);
+        await expect(service.view('tok', { password: 'open sesame' })).resolves.toMatchObject({ title: 'Recipe' });
+        expect((await guess({ password: 'guess-3' })).getStatus()).toBe(403);
+        expect((await guess({ password: 'open sesame' })).getStatus()).toBe(429);
+      });
+
+      it('never holds the owner back, and does not count the owner against the link', async () => {
+        prisma.shareLink.findUnique.mockResolvedValue(protectedLink);
+        // The owner mistypes more often than the link allows: still 403, and nothing is used up.
+        for (let i = 0; i < 4; i++) {
+          expect((await guess({ userId: 'owner-1', password: 'mistyped' })).getStatus()).toBe(403);
+        }
+        for (const password of ['guess-1', 'guess-2', 'guess-3']) {
+          expect((await guess({ password })).getStatus()).toBe(403);
+        }
+        expect((await guess({ userId: 'someone-else', password: 'open sesame' })).getStatus()).toBe(429);
+        // Closed to everyone else, open to the owner.
+        await expect(service.view('tok', { userId: 'owner-1', password: 'open sesame' })).resolves.toMatchObject({
+          title: 'Recipe',
+        });
+      });
+
+      it('counts each link on its own', async () => {
+        prisma.shareLink.findUnique.mockResolvedValue(protectedLink);
+        for (const password of ['guess-1', 'guess-2', 'guess-3']) await guess({ password });
+        prisma.shareLink.findUnique.mockResolvedValue({ ...protectedLink, id: 's2' });
+        await expect(service.view('tok-2', { password: 'open sesame' })).resolves.toMatchObject({ title: 'Recipe' });
       });
 
       it('looks like any dead link once it has run out, password or not', async () => {

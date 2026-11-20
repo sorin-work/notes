@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPassword } from '../auth/password';
 import { PrismaService } from '../prisma/prisma.service';
 import { ShareOptionsDto } from './dto/share.dto';
+import { SharePasswordAttempts, TooManyWrongPasswords } from './share-password-attempts';
 
 /** What the owner sees of a link. The password itself is never given back, only whether there is one. */
 export interface ShareView {
@@ -52,7 +53,10 @@ function passwordRequired(message: string): ForbiddenException {
 
 @Injectable()
 export class SharesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly attempts: SharePasswordAttempts,
+  ) {}
 
   async get(userId: string, noteId: string): Promise<ShareView | null> {
     await this.findNote(userId, noteId);
@@ -100,7 +104,9 @@ export class SharesService {
    *
    * The order of the checks matters. "Gone" comes first, so an expired link
    * with a password looks like any other dead link and not like a prompt.
-   * The view is counted last, and not for the owner looking at their own.
+   * The link's allowance of wrong passwords comes before the password is
+   * compared, so a link that is being guessed at costs no hashing. The view
+   * is counted last, and not for the owner looking at their own.
    */
   async view(token: string, viewer: ShareViewer = {}, now = new Date()): Promise<SharedNote> {
     const share = await this.prisma.shareLink.findUnique({
@@ -110,15 +116,23 @@ export class SharesService {
     if (!share || share.note.deletedAt || isExpired(share, now)) {
       throw new NotFoundException(GONE);
     }
+    const owner = viewer.userId === share.note.userId;
     if (share.passwordHash) {
       if (viewer.password === undefined) {
         throw passwordRequired('This note is protected by a password');
       }
+      // The owner signed in is not guessing: their attempts are neither
+      // counted against the link nor refused because others used it up.
+      const wait = owner ? 0 : this.attempts.take(share.id);
+      if (wait > 0) {
+        throw new TooManyWrongPasswords(wait);
+      }
       if (!(await verifyPassword(viewer.password, share.passwordHash))) {
         throw passwordRequired('That password is not right');
       }
+      if (!owner) this.attempts.giveBack(share.id);
     }
-    if (viewer.userId !== share.note.userId) {
+    if (!owner) {
       await this.prisma.shareLink.update({ where: { id: share.id }, data: { viewCount: { increment: 1 } } });
     }
     return {

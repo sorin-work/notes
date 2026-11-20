@@ -1459,42 +1459,78 @@ describe('password guesses with a low throttle limit', () => {
     await request(server).get('/api/health').expect(200);
   });
 
-  it('lets a client read a handful of shared notes a minute, and counts password attempts per link and per client', async () => {
+  const shareWithPassword = async (owner: { Authorization: string }, title: string) => {
+    const server = limited.getHttpServer();
+    const note = await request(server).post('/api/notes').set(owner).send({ title }).expect(201);
+    const link = await request(server)
+      .post(`/api/notes/${note.body.id}/share`)
+      .set(owner)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    return `/api/public/notes/${link.body.token as string}`;
+  };
+
+  it('lets a client read a handful of shared notes a minute, with the roomy allowance and not the strict one', async () => {
+    const server = limited.getHttpServer();
+    const link = await shareWithPassword(await account('sharer'), 'First');
+
+    for (let i = 0; i < 5; i++) {
+      await request(server).get(link).set(from('203.0.113.1')).expect(403);
+    }
+    const refused = await request(server).get(link).set(from('203.0.113.1')).expect(429);
+    expect(refused.headers['retry-after']).toBeDefined();
+    // Not to be kept either, although no handler ran.
+    expect(refused.headers['cache-control']).toBe('no-store');
+    await request(server).get(link).set(from('203.0.113.2')).expect(403);
+  });
+
+  it('takes three wrong passwords a minute for a link, whoever sends them, and never holds the owner back', async () => {
     const server = limited.getHttpServer();
     const owner = await account('sharer');
-    const share = async (title: string) => {
-      const note = await request(server).post('/api/notes').set(owner).send({ title }).expect(201);
-      const link = await request(server)
-        .post(`/api/notes/${note.body.id}/share`)
-        .set(owner)
-        .send({ password: 'open sesame' })
-        .expect(200);
-      return `/api/public/notes/${link.body.token as string}`;
-    };
-    const first = await share('First');
-    const second = await share('Second');
-    const from = (address: string) => ({ 'X-Forwarded-For': address });
+    const first = await shareWithPassword(owner, 'First');
+    const second = await shareWithPassword(owner, 'Second');
+    const guess = (link: string, address: string, password: string) =>
+      request(server).post(link).set(from(address)).send({ password });
 
-    // Reading: five a minute for one address, with the roomy allowance and not the strict one.
-    for (let i = 0; i < 5; i++) {
-      await request(server).get(first).set(from('203.0.113.1')).expect(403);
-    }
-    await request(server).get(first).set(from('203.0.113.1')).expect(429);
-    await request(server).get(first).set(from('203.0.113.2')).expect(403);
-
-    // Guessing from a new address every time: the link itself runs out of attempts after three.
-    await request(server).post(first).set(from('198.51.100.1')).send({ password: 'guess-1' }).expect(403);
-    await request(server).post(first).set(from('198.51.100.2')).send({ password: 'guess-2' }).expect(403);
-    await request(server).post(first).set(from('198.51.100.3')).send({ password: 'guess-3' }).expect(403);
-    await request(server).post(first).set(from('198.51.100.4')).send({ password: 'guess-4' }).expect(429);
+    // Guessing from a new address every time: the link itself stops taking passwords after three wrong ones.
+    await guess(first, '198.51.100.1', 'guess-1').expect(403);
+    await guess(first, '198.51.100.2', 'guess-2').expect(403);
+    await guess(first, '198.51.100.3', 'guess-3').expect(403);
+    const refused = await guess(first, '198.51.100.4', 'guess-4').expect(429);
+    expect(refused.body.message).toBe('Too many wrong passwords for this link. Try again in a minute.');
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+    expect(refused.headers['cache-control']).toBe('no-store');
     // The right password does not get through either until the minute is over.
-    await request(server).post(first).set(from('198.51.100.5')).send({ password: 'open sesame' }).expect(429);
+    await guess(first, '198.51.100.5', 'open sesame').expect(429);
 
-    // Another link is not affected, until one address has used up its own three attempts on it.
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'guess-1' }).expect(403);
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'guess-2' }).expect(403);
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'open sesame' }).expect(200);
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'open sesame' }).expect(429);
+    // The owner, signed in, is not held back by what others did to the link.
+    await guess(first, '198.51.100.6', 'open sesame').set(owner).expect(200);
+    await guess(first, '198.51.100.6', 'mistyped').set(owner).expect(403);
+
+    // Another link is not affected.
+    await guess(second, '198.51.100.7', 'open sesame').expect(200);
+  });
+
+  it('does not count right passwords against a link, only against the client that sends them', async () => {
+    const server = limited.getHttpServer();
+    const link = await shareWithPassword(await account('sharer'), 'Popular');
+    const open = (address: string, password = 'open sesame') =>
+      request(server).post(link).set(from(address)).send({ password });
+
+    // More readers in a minute than the link takes wrong passwords.
+    for (let reader = 1; reader <= 5; reader++) {
+      await open(`192.0.2.${reader}`).expect(200);
+    }
+    // Two wrong ones leave room for a third attempt.
+    await open('192.0.2.10', 'guess-1').expect(403);
+    await open('192.0.2.11', 'guess-2').expect(403);
+    await open('192.0.2.12').expect(200);
+
+    // One address still has only its own three requests a minute on the route.
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(429);
   });
 
   it('caps the guesses against one account across the routes that check the password', async () => {

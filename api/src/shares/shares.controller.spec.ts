@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { AuthService } from '../auth/auth.service';
 import { IS_PUBLIC } from '../common/public.decorator';
 import { noStore } from './no-store.middleware';
+import { TooManyWrongPasswords } from './share-password-attempts';
 import { PublicSharesController, SharesController } from './shares.controller';
 import { SharesService } from './shares.service';
 
@@ -28,6 +29,8 @@ describe('SharesController', () => {
 describe('PublicSharesController', () => {
   const service = { view: jest.fn() };
   const auth = { identify: jest.fn() };
+  const response = { setHeader: jest.fn() };
+  const sent = response as unknown as Response;
   let controller: PublicSharesController;
 
   beforeEach(() => {
@@ -46,6 +49,19 @@ describe('PublicSharesController', () => {
     expect(auth.identify).not.toHaveBeenCalled();
   });
 
+  it('says how long to wait when the link has had its wrong passwords, and passes other refusals on as they are', async () => {
+    service.view.mockRejectedValue(new TooManyWrongPasswords(42));
+    await expect(controller.unlock('tok', { password: 'guess' }, undefined, sent)).rejects.toMatchObject({
+      status: 429,
+    });
+    expect(response.setHeader).toHaveBeenCalledWith('Retry-After', '42');
+
+    response.setHeader.mockClear();
+    service.view.mockRejectedValue(new Error('gone'));
+    await expect(controller.unlock('tok', { password: 'guess' }, undefined, sent)).rejects.toThrow('gone');
+    expect(response.setHeader).not.toHaveBeenCalled();
+  });
+
   it('passes on who is asking when a login comes with the request, so the owner is not counted', async () => {
     auth.identify.mockResolvedValue({ id: 'user-1', email: 'ada@example.com' });
     await controller.view('tok', 'Bearer login-token');
@@ -55,7 +71,7 @@ describe('PublicSharesController', () => {
 
   it('treats a login that is no good as no login', async () => {
     auth.identify.mockResolvedValue(null);
-    await controller.unlock('tok', { password: 'open sesame' }, 'Bearer stale');
+    await controller.unlock('tok', { password: 'open sesame' }, 'Bearer stale', sent);
     expect(service.view).toHaveBeenCalledWith('tok', { userId: undefined, password: 'open sesame' });
   });
 });
