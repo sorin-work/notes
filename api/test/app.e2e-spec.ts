@@ -23,6 +23,7 @@ import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { TrashService } from '../src/trash/trash.service';
 import { setupApp } from '../src/setup-app';
 
 process.env.JWT_SECRET ??= 'e2e-secret-that-is-long-enough-0123456789';
@@ -2162,6 +2163,56 @@ describe('attachments', () => {
       .get(`${link}/attachments`)
       .set('X-Share-Access', opened.body.access as string)
       .expect(200);
+  });
+
+  it('empties the trash without taking the files of a note restored half way through', async () => {
+    const server = app.getHttpServer();
+    const prisma = app.get(PrismaService);
+    const owner = await signUp();
+    const { id: gone } = await note(owner.auth, { title: 'Going' });
+    const { id: back } = await note(owner.auth, { title: 'Coming back' });
+    const goneFile = await upload(owner.auth, gone, png, 'a.png').expect(201);
+    const backFile = await upload(owner.auth, back, png, 'b.png').expect(201);
+    for (const id of [gone, back]) await request(server).delete(`/api/notes/${id}`).set(owner.auth).expect(204);
+
+    // Between reading which notes and files to delete and deleting them, the owner restores one,
+    // on another connection, which commits at once.
+    const real = prisma.$transaction.bind(prisma);
+    const spy = jest.spyOn(prisma, '$transaction').mockImplementationOnce(((
+      fn: (tx: unknown) => unknown,
+      options?: unknown,
+    ) =>
+      real(
+        (tx) =>
+          fn(
+            new Proxy(tx, {
+              get(target, key, receiver) {
+                if (key !== 'attachment') return Reflect.get(target, key, receiver) as unknown;
+                return {
+                  findMany: async (args: object) => {
+                    const rows = await target.attachment.findMany(args as never);
+                    await prisma.note.update({ where: { id: back }, data: { deletedAt: null } });
+                    return rows;
+                  },
+                };
+              },
+            }),
+          ) as never,
+        options as never,
+      )) as never);
+
+    const { deleted } = await app
+      .get(TrashService)
+      .empty((await prisma.note.findUniqueOrThrow({ where: { id: gone } })).userId);
+    spy.mockRestore();
+
+    expect(deleted).toBe(1);
+    expect(await prisma.note.findUnique({ where: { id: gone } })).toBeNull();
+    expect(existsSync(join(attachmentsDir, goneFile.body.id as string))).toBe(false);
+    // The restored note keeps its row and its file.
+    expect(await prisma.note.findUnique({ where: { id: back } })).toMatchObject({ deletedAt: null });
+    expect(await prisma.attachment.count({ where: { noteId: back } })).toBe(1);
+    expect(existsSync(join(attachmentsDir, backFile.body.id as string))).toBe(true);
   });
 
   it('removes the files when their note is deleted for good', async () => {
