@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { excerpt } from '../common/text';
 import { PrismaService } from '../prisma/prisma.service';
 import { extractWikiLinks, normalizeTitle } from './wikilinks';
@@ -17,6 +17,35 @@ export interface OutgoingLink {
   /** The note the link resolves to, or null when no note has that title. */
   noteId: string | null;
 }
+
+export interface GraphNode {
+  id: string;
+  title: string;
+}
+
+/** A link from one note in the graph to another, each pair once in each direction at most. */
+export interface GraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface Graph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** How many notes match the filters. More than there are nodes when the limit cut the graph short. */
+  total: number;
+}
+
+/** A drawing of more notes than this is a ball of wool. The notes edited last are kept. */
+export const MAX_GRAPH_NODES = 300;
+
+/**
+ * How a title is turned into the key that links are matched by, in SQL. It
+ * has to give what normalizeTitle gives, and it is the expression resolveKeys
+ * uses. The column name is one of two fixed strings, never input.
+ */
+const titleKey = (column: 'title' | 'n.title') =>
+  Prisma.raw(`lower(regexp_replace(btrim(${column}), '\\s+', ' ', 'g'))`);
 
 @Injectable()
 export class LinksService {
@@ -77,8 +106,67 @@ export class LinksService {
           SELECT 1
           FROM note_links incoming JOIN notes source ON source.id = incoming.source_id
           WHERE source.user_id = ${userId}::uuid AND source.deleted_at IS NULL AND source.id <> n.id
-            AND incoming.target_key = lower(regexp_replace(btrim(n.title), '\\s+', ' ', 'g')))`;
+            AND incoming.target_key = ${titleKey('n.title')})`;
     return rows.map((row) => row.id);
+  }
+
+  /**
+   * Notes outside the trash as nodes, and the links between them as edges,
+   * in one query. A link leads to the note its title resolves to: the most
+   * recently edited one with that title, as everywhere else. Links to notes
+   * outside the graph, to missing notes and from a note to itself are left out.
+   *
+   * `notebookIds` narrows the graph to those notebooks, or with "none" to
+   * the notes outside any notebook. `tag` narrows it to the notes with that tag.
+   */
+  async graph(userId: string, filter: { notebookIds?: string[] | 'none'; tag?: string } = {}): Promise<Graph> {
+    const conditions = [Prisma.sql`n.user_id = ${userId}::uuid`, Prisma.sql`n.deleted_at IS NULL`];
+    if (filter.notebookIds === 'none') {
+      conditions.push(Prisma.sql`n.notebook_id IS NULL`);
+    } else if (filter.notebookIds) {
+      const ids = filter.notebookIds.map((id) => Prisma.sql`${id}::uuid`);
+      conditions.push(Prisma.sql`n.notebook_id IN (${Prisma.join(ids)})`);
+    }
+    if (filter.tag) {
+      conditions.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+         WHERE nt.note_id = n.id AND t.user_id = ${userId}::uuid AND t.name = ${filter.tag})`);
+    }
+
+    const rows = await this.prisma.$queryRaw<{ total: bigint; nodes: GraphNode[]; edges: GraphEdge[] }[]>`
+      WITH matching AS (
+        SELECT n.id, n.title, n.updated_at
+        FROM notes n
+        WHERE ${Prisma.join(conditions, ' AND ')}
+      ),
+      picked AS (
+        SELECT * FROM matching ORDER BY updated_at DESC, id LIMIT ${MAX_GRAPH_NODES}
+      ),
+      titled AS (
+        SELECT DISTINCT ON (key) id, key
+        FROM (
+          SELECT id, ${titleKey('title')} AS key, updated_at
+          FROM notes
+          WHERE user_id = ${userId}::uuid AND deleted_at IS NULL
+        ) named
+        ORDER BY key, updated_at DESC
+      ),
+      linked AS (
+        SELECT DISTINCT link.source_id AS source, titled.id AS target
+        FROM note_links link
+        JOIN picked origin ON origin.id = link.source_id
+        JOIN titled ON titled.key = link.target_key
+        JOIN picked destination ON destination.id = titled.id
+        WHERE link.source_id <> titled.id
+      )
+      SELECT
+        (SELECT count(*) FROM matching) AS total,
+        (SELECT coalesce(json_agg(json_build_object('id', id, 'title', title) ORDER BY updated_at DESC, id), '[]'::json)
+           FROM picked) AS nodes,
+        (SELECT coalesce(json_agg(json_build_object('source', source, 'target', target) ORDER BY source, target), '[]'::json)
+           FROM linked) AS edges`;
+    const row = rows[0];
+    return { nodes: row?.nodes ?? [], edges: row?.edges ?? [], total: Number(row?.total ?? 0) };
   }
 
   /** The links written in a note, with the note each one currently resolves to. */
