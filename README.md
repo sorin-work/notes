@@ -66,7 +66,9 @@ Markdown import/export.
   Notion export (page ids are stripped and links between pages become
   `[[wiki links]]`), and Evernote `.enex` files (each file becomes a notebook,
   attachments are left out). Importing the same files again leaves out the
-  notes that are there already.
+  notes that are there already. A full JSON backup of one account (trash,
+  history and all) restores into an empty account. "Print" in the browser
+  gives the note alone, ready to save as PDF.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
@@ -195,8 +197,10 @@ of the `api` service, or set `TRUST_PROXY=0`.
 ## Backup and restore
 
 "Export all notes" in Settings leaves out the trash, version history and
-share links. For a full copy there is a `backup` service that dumps the whole
-database with `pg_dump`. It is behind a Compose profile, so it only runs when
+share links. "Download a full backup" next to it keeps them: see
+[The JSON backup](#the-json-backup) below. For a copy of the whole database,
+every account in it, there is a `backup` service that dumps it with
+`pg_dump`. It is behind a Compose profile, so it only runs when
 asked for:
 
 ```bash
@@ -274,6 +278,72 @@ Good to know:
   every dump and every failure, and a failed dump is tried again a minute
   later.
 - `docker compose down -v` removes the database volume, not the dumps.
+
+### The JSON backup
+
+`GET /export/backup` (Settings, "Download a full backup") writes one
+account's data as a JSON file. It is written out as it is read, a batch of
+notes at a time. The format is versioned. This is version 1:
+
+```json
+{
+  "format": "notes-backup",
+  "version": 1,
+  "exportedAt": "2026-11-20T21:00:00.000Z",
+  "notebooks": [
+    {
+      "id": "…",
+      "name": "Work",
+      "parentId": null,
+      "createdAt": "…",
+      "updatedAt": "…"
+    }
+  ],
+  "tags": [{ "name": "q1", "createdAt": "…" }],
+  "shareLinks": [
+    {
+      "noteId": "…",
+      "notebookId": null,
+      "hasPassword": true,
+      "expiresAt": null,
+      "viewCount": 4,
+      "createdAt": "…"
+    }
+  ],
+  "notes": [
+    {
+      "id": "…",
+      "title": "Plan",
+      "content": "Markdown",
+      "notebookId": "…",
+      "tags": ["q1"],
+      "pinned": false,
+      "favorite": false,
+      "revision": 7,
+      "createdAt": "…",
+      "updatedAt": "…",
+      "deletedAt": null,
+      "versions": [{ "title": "Plan", "content": "…", "createdAt": "…" }]
+    }
+  ]
+}
+```
+
+All times are UTC. `deletedAt` is set for a note in the trash. `versions` is
+the note's history, oldest first. Notebooks come before the notebooks inside
+them. `shareLinks` is a record of what was shared. It has no link addresses
+and no password hashes, so the file opens nothing for whoever holds it.
+Templates are not in it, because the app has none yet.
+
+`POST /import/backup` with the file as `file` (Settings, "Restore") puts a
+backup into an account that has no notes, notebooks or tags yet: the same
+notes with their history, revisions, tags, notebooks and trash, under new
+ids, with links synced. The whole file is checked against the app's limits
+first, and it is written in one transaction, so a refused or failed restore
+leaves the account empty. An account that has something in it gets `409`. A
+backup may be up to 200 MB. Share links are not made again: a new link would
+have a new address, and a link that had a password would come back without
+one. Share again what should be shared.
 
 ## Running locally
 
@@ -659,4 +729,5 @@ The endpoints a script is most likely to want. The rest is in `/api/docs`.
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
 | `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
 | `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
+| `GET /export/backup`, `POST /import/backup`  | The JSON backup, and its restore          |
 | `POST /import`                               | Markdown, text, `.enex` or zip, `files`   |
