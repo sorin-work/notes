@@ -48,6 +48,9 @@ Markdown import/export.
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
   that have SMTP settings.
+- **API tokens** for scripts: made and revoked in Settings, shown once, and
+  read-only if you want. A token stands in for a login on everything except
+  the account itself.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
@@ -219,23 +222,24 @@ npm run dev
 
 ### Configuration
 
-| Variable               | Default                 | Purpose                                                                    |
-| ---------------------- | ----------------------- | -------------------------------------------------------------------------- |
-| `DATABASE_URL`         | (required)              | Postgres connection string                                                 |
-| `JWT_SECRET`           | (required)              | Signs login tokens, at least 32 characters                                 |
-| `JWT_EXPIRES_IN`       | `7d`                    | How long a login lasts                                                     |
-| `PORT`                 | `4401`                  | API port                                                                   |
-| `CORS_ORIGINS`         | (none)                  | Comma-separated browser origins, only needed without nginx                 |
-| `LOG_LEVEL`            | `info`                  | `debug`, `info`, `warn` or `error`                                         |
-| `SEED_DEMO`            | `false`                 | Create the demo account on start-up                                        |
-| `TRASH_RETENTION_DAYS` | `30`                    | Days before trashed notes are deleted for good                             |
-| `AUTH_THROTTLE_LIMIT`  | `10`                    | Per-minute limit per client on routes that take a password                 |
-| `SMTP_HOST`            | (none)                  | SMTP server. Without it no mail is sent and password reset is off          |
-| `SMTP_PORT`            | `587`                   | Its port. `465` means TLS from the start, others use STARTTLS when offered |
-| `SMTP_FROM`            | (none)                  | Sender of the mails, required with `SMTP_HOST`                             |
-| `SMTP_USER`            | (none)                  | Login for the SMTP server, if it wants one                                 |
-| `SMTP_PASSWORD`        | (none)                  | Password for that login                                                    |
-| `APP_URL`              | `http://localhost:5181` | Address of the web app, used for the links in mails                        |
+| Variable                   | Default                 | Purpose                                                                    |
+| -------------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| `DATABASE_URL`             | (required)              | Postgres connection string                                                 |
+| `JWT_SECRET`               | (required)              | Signs login tokens, at least 32 characters                                 |
+| `JWT_EXPIRES_IN`           | `7d`                    | How long a login lasts                                                     |
+| `PORT`                     | `4401`                  | API port                                                                   |
+| `CORS_ORIGINS`             | (none)                  | Comma-separated browser origins, only needed without nginx                 |
+| `LOG_LEVEL`                | `info`                  | `debug`, `info`, `warn` or `error`                                         |
+| `SEED_DEMO`                | `false`                 | Create the demo account on start-up                                        |
+| `TRASH_RETENTION_DAYS`     | `30`                    | Days before trashed notes are deleted for good                             |
+| `AUTH_THROTTLE_LIMIT`      | `10`                    | Per-minute limit per client on routes that take a password                 |
+| `API_TOKEN_THROTTLE_LIMIT` | `120`                   | Requests a minute that one API token may make                              |
+| `SMTP_HOST`                | (none)                  | SMTP server. Without it no mail is sent and password reset is off          |
+| `SMTP_PORT`                | `587`                   | Its port. `465` means TLS from the start, others use STARTTLS when offered |
+| `SMTP_FROM`                | (none)                  | Sender of the mails, required with `SMTP_HOST`                             |
+| `SMTP_USER`                | (none)                  | Login for the SMTP server, if it wants one                                 |
+| `SMTP_PASSWORD`            | (none)                  | Password for that login                                                    |
+| `APP_URL`                  | `http://localhost:5181` | Address of the web app, used for the links in mails                        |
 
 The API on its own sends no mail unless `SMTP_HOST` is set, and mailpit's
 SMTP port is not reachable from outside the Compose network. To work on
@@ -364,12 +368,34 @@ and an account gets one mail a minute at most. Without `SMTP_HOST` both
 answer `404`, and `GET /auth/password-reset` says `{ "enabled": false }`,
 which is how the sign-in page knows to hide the link.
 
+A script does not have to log in. A personal API token from Settings goes in
+the same header:
+
+```bash
+curl -H "Authorization: Bearer nt_..." http://localhost:5181/api/notes
+```
+
+The token is shown once, when it is made, and only its SHA-256 hash is
+stored. It acts as the account it belongs to, with these limits:
+
+- A read-only token gets a `403` on everything that is not a `GET`.
+- No token can touch the account: listing, making or revoking tokens,
+  changing the name, email or password, deleting the account and signing out
+  everywhere all answer `403`. `GET /auth/me` works. Sign in for the rest.
+- Each token may make `API_TOKEN_THROTTLE_LIMIT` requests a minute, 120
+  unless set. After that the answer is `429` with a `Retry-After` header.
+
+Tokens do not expire. Changing the password and signing out everywhere end
+logins, not tokens. A token ends when it is revoked or the account is
+deleted. An account can have 20 of them.
+
 | Method & path                                                  | What it does                              |
 | -------------------------------------------------------------- | ----------------------------------------- |
 | `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
 | `GET/PATCH/DELETE /auth/me`                                    | Read, change or delete the current user   |
 | `PATCH /auth/password`, `POST /auth/logout-all`                | Change password, sign out everywhere      |
 | `GET/POST /auth/password-reset`, `POST .../confirm`            | Reset a forgotten password by mail        |
+| `GET/POST /auth/tokens`, `DELETE /auth/tokens/:id`             | Personal API tokens                       |
 | `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
