@@ -1441,6 +1441,11 @@ ul.error-box {
   margin-bottom: 0.4rem;
 }
 
+/* The heading of a message that replaced the form takes the focus, to be read out. It needs no ring. */
+.auth-card h1:focus {
+  outline: none;
+}
+
 .auth-card p {
   margin: 0;
   text-align: center;
