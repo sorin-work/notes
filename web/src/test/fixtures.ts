@@ -43,6 +43,7 @@ export function notebook(overrides: Partial<Notebook> = {}): Notebook {
     name: 'Work',
     parentId: null,
     noteCount: 0,
+    templateCount: 0,
     createdAt: '2026-01-01T10:00:00Z',
     updatedAt: '2026-01-01T10:00:00Z',
     ...overrides,

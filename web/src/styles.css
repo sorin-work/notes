@@ -341,7 +341,13 @@ mark {
 }
 
 .new-from-template {
-  width: 100%;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.new-from-template select {
+  flex: 1;
+  min-width: 0;
 }
 
 .brand {

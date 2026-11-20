@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Notebook } from '../api/types';
-import { notebookLabel, notebookTree, totalNotes } from './notebooks';
+import { notebookLabel, notebookTree, totalNotes, trashedWith } from './notebooks';
 
-function nb(id: string, name: string, parentId: string | null = null, noteCount = 0): Notebook {
-  return { id, name, parentId, noteCount, createdAt: '', updatedAt: '' };
+function nb(id: string, name: string, parentId: string | null = null, noteCount = 0, templateCount = 0): Notebook {
+  return { id, name, parentId, noteCount, templateCount, createdAt: '', updatedAt: '' };
 }
 
 const notebooks = [
@@ -30,5 +30,19 @@ describe('notebookLabel', () => {
     expect(notebookLabel(notebooks, 'm')).toBe('Work / Meetings');
     expect(notebookLabel(notebooks, 'w')).toBe('Work');
     expect(notebookLabel(notebooks, 'x')).toBeNull();
+  });
+});
+
+describe('trashedWith', () => {
+  it('counts the notes and the templates of the notebook and those inside it', () => {
+    const withTemplates = [...notebooks, nb('t', 'Forms', 'w', 0, 1), nb('o', 'Only templates', null, 0, 2)];
+    expect(trashedWith(withTemplates, 'w')).toBe(
+      '9 notes and 1 template move to the trash, where you can restore them for 30 days.',
+    );
+    expect(trashedWith(withTemplates, 'o')).toBe(
+      '2 templates move to the trash, where you can restore them for 30 days.',
+    );
+    expect(trashedWith(withTemplates, 'p')).toBe('1 note moves to the trash, where you can restore it for 30 days.');
+    expect(trashedWith([nb('e', 'Empty')], 'e')).toBe('There are no notes in it.');
   });
 });

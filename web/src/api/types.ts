@@ -36,6 +36,8 @@ export interface Notebook {
   name: string;
   parentId: string | null;
   noteCount: number;
+  /** Templates are not counted as notes, but deleting the notebook trashes them too. */
+  templateCount: number;
   createdAt: string;
   updatedAt: string;
 }
