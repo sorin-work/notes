@@ -23,7 +23,8 @@ Markdown import/export.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
-  bookmarked. The **Orphans** view lists the notes with no links in or out.
+  bookmarked. The **Orphans** view lists the notes with no links in or out,
+  counting only links that lead to another note outside the trash.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
@@ -398,16 +399,23 @@ recently edited one wins. Renaming a note therefore leaves links to the old
 title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
 
-An unlinked mention is a title written out in another note, as whole words,
-ignoring case and extra spaces, outside code, links, images and URLs. Notes
-that already link to the title are left out. Titles shorter than three
-characters get no mentions, and neither do titles that cannot be written as
-a link (with `[`, `]`, `|`, `#` or a backtick in them). The search index
-picks the candidates, so a title made only of very common words ("The Who")
-finds nothing, and only the 200 notes edited last that match are read. The
-Link button changes the other note: its old text is saved as a version first,
-so the change can be undone from its history, and its "last edited" time
-stays as it was.
+An unlinked mention is a title written out in the plain text of another note,
+as whole words, ignoring case and extra spaces. A Markdown parser decides what
+plain text is: not code of any kind, not the text or the target of a link or
+an image, not a URL, not HTML, and not an existing `[[link]]`. Notes that
+already link to the title are left out. A title gets no mentions when it is
+shorter than three characters, when it cannot be written as a link (with `[`,
+`]`, `|`, `#` or a backtick in it), when another note outside the trash has
+the same title, or when the note is still called "Untitled": a link has to
+lead to this note and no other. The search index picks the candidates, so a
+title made only of very common words ("The Who") finds nothing, and only the
+200 notes edited last that match are read.
+
+The list shows the line of the mention that the Link button will wrap. The
+button changes the other note: its old text is saved as a version first, so
+the change can be undone from its history, and its "last edited" time stays as
+it was. If that note has been edited since the list was made, nothing is
+changed and the list is loaded again.
 
 When a rename leaves links dangling, the editor shows how many notes still
 link to the old title and offers to update them, naming both titles. The

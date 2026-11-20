@@ -414,18 +414,24 @@ requests but not answers.
 
 The Orphans view and the unlinked mentions are built. The graph is the other
 half and follows in a change of its own. Orphans is a view in the sidebar,
-`GET /notes?orphans=true`, for notes that link nowhere and that no note
-outside the trash links to. It combines with the notebook and tag selects.
-Under the backlinks, `UnlinkedMentions` lists the notes that write the title
-of the open note without linking to it (`GET /notes/:id/mentions`). The
-full-text index names the candidates with a phrase query, and `findMention`
-beside `extractWikiLinks` then reads each one: whole words, the same title key
-as `NoteLink.targetKey`, nothing inside code, links, images or URLs. Titles
-under three characters get no mentions, and neither do titles that cannot be
-written as a link. The list is paged, and only the 200 newest candidates are
-read. "Link" (`POST /notes/:id/mentions/:sourceId/link`) wraps the first
-mention in the other note inside one transaction, saves its old text as a
-version, syncs its links and leaves its `updatedAt` alone. Still open: a title
-of only very common words finds nothing, because the index drops those words.
-Common titles ("Ideas") are as noisy as predicted, and there is no way to
-dismiss a mention. Only the first mention in a note is offered at a time.
+`GET /notes?orphans=true`, for notes with no link to or from another note
+outside the trash. A link to a missing title, to the trash or to the note
+itself connects nothing. It combines with the notebook and tag selects. Under
+the backlinks, `UnlinkedMentions` lists the notes that write the title of the
+open note without linking to it (`GET /notes/:id/mentions`). The full-text
+index names the candidates with a phrase query, and `findMention` beside
+`extractWikiLinks` then reads each one. A Markdown parser (`@lezer/markdown`,
+in `prose.ts`) says which stretches are plain text, and a mention has to lie
+inside one of them as whole words, with the same title key as
+`NoteLink.targetKey`. Titles under three characters get no mentions, and
+neither do titles that cannot be written as a link, titles that another note
+has too, and "Untitled". The list is paged, only the 200 newest candidates are
+read, and each note comes with the line, the position and the version of the
+mention it shows. "Link" (`POST /notes/:id/mentions/:sourceId/link`) takes
+those three, and wraps that mention inside one transaction if the note still
+has that version. It saves the old text as a version, syncs the links and
+leaves `updatedAt` alone. Still open: a title of only very common words finds
+nothing, because the index drops those words. Common titles ("Ideas") are as
+noisy as predicted, and there is no way to dismiss a mention. Only the first
+mention in a note is offered at a time. The version is a hash of the text
+until notes have a revision number.
