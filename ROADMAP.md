@@ -441,15 +441,28 @@ leaves `updatedAt` alone.
 
 The graph is a page of its own. `GET /links/graph` returns nodes and resolved
 edges from one query, with titles matched by the SQL expression `resolveKeys`
-uses, for the 300 notes edited last at most. `layoutGraph` runs d3-force to
-its end in a plain function, so the page draws the settled picture as SVG and
-animates nothing. It can be dragged and zoomed, a click on a dot opens the
-note, and the notebook and tag selects narrow it down. The same notes and
-links are listed in words under the picture, which is what a screen reader
-gets. The page is loaded on demand, so d3-force is not in the main bundle.
+uses, for the 300 notes edited last at most. It takes the notebook and the tag
+and refuses anything else, paging included. Every node also carries the number
+of links it has in all, so the list can say when they lead to notes that are
+not shown. `layoutGraph` runs d3-force to its end in a plain function, after
+the page has been drawn and once per answer of the server, so the page shows
+the settled picture as SVG and animates nothing. The picture depends only on
+which notes and links there are: notes are laid out in the order of their ids,
+and there is no seed. Dots and titles are sized in pixels of the screen
+whatever the zoom, a dot can be clicked within 12 pixels of its middle, and
+with more than 40 notes in view titles only show for the note pointed at, in
+the picture or in the list. It can be dragged, zoomed with the buttons or with
+Ctrl or Cmd and the wheel, a click on a dot opens the note, and the notebook
+and tag selects narrow it down. The same notes and links are listed in words
+under the picture, which is what a screen reader and the keyboard get. The
+page is loaded on demand, so d3-force is not in the main bundle, and
+`lazyPage` keeps a failed load inside the layout with a way to try again.
 
 Still open: a title of only very common words finds nothing, because the index
 drops those words. Common titles ("Ideas") are as noisy as predicted, and
 there is no way to dismiss a mention. Only the first mention in a note is
 offered at a time. In the graph, dots cannot be moved by hand, links have no
-arrowheads, and above 300 notes only the filters show the rest.
+arrowheads, and above 300 notes only the filters show the rest. The dots are
+not tab stops, and two fingers on a touch screen do not zoom: the buttons do.
+The layout still runs on the main thread, for about a third of a second at 300
+notes.

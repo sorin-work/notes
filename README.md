@@ -73,11 +73,15 @@ Markdown import/export.
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
 - **Graph**: a page that draws every note as a dot and every link as a line,
-  to spot clusters and notes nothing leads to. Drag it, zoom with the wheel or
-  the buttons, and click a dot to open the note. The notebook and tag selects
+  to spot clusters and notes nothing leads to. Drag it, zoom with the buttons
+  or with Ctrl or Cmd and the wheel, and click a dot to open the note. A plain
+  turn of the wheel scrolls the page. Dots and titles keep their size on the
+  screen at every zoom. With many notes in view the titles are left out until
+  one is pointed at or the picture is zoomed in. The notebook and tag selects
   narrow it down. It draws 300 notes at most, the ones edited last, and says
   so when there are more. Under the picture the same notes and links are
-  listed in words.
+  listed in words, and a note whose links lead to notes that are not shown
+  says so.
 - **Keyboard and screen readers**: skip links lead past the sidebar to the
   content and to the open note, dialogs keep Tab inside them, the arrow keys
   move through the note list, and the link suggestions and the quick switcher
