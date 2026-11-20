@@ -503,7 +503,13 @@ same note, which the database guarantees with a unique index. The note is
 found by its day and not by its title, so it stays the note of that day when
 it is renamed or when the date format is changed. A note written by hand
 under the title of the day, in any of the three formats, is taken for the
-note of that day the first time "Today" finds it. A daily note in the trash
+note of that day the first time "Today" finds it. That is so for any note
+titled with the day, also one that has nothing to do with it: "Not the daily
+note" in its toolbar takes it off the day, and from then on neither the day
+nor its title makes it the daily note again. The next "Today" starts a new
+one. The title of a new daily note is written by the server, in the format
+the account has when the note is made, so a tab left open while the format
+was changed elsewhere still gets it right. A daily note in the trash
 makes room: "Today" starts a new one, and the old one comes back from the
 trash as an ordinary note. The three formats are `2026-11-20`,
 `20 November 2026` and `November 20, 2026`. In the template of a daily note
@@ -548,12 +554,15 @@ The API only puts in what it is sent and never works out a date by itself.
 `templateCount`.
 `PATCH /notes/:id` with `"isTemplate"` turns a note into a template or back.
 
-`POST /notes/daily` with `{"date": "2026-11-20", "title": "20 November 2026"}`
-answers with the daily note of that day and makes it when there is none.
-`title` has to be that date in one of the three formats, and `placeholders`
-can come along for the template. `GET /auth/me` has the account's
-`preferences`, and `PATCH /auth/preferences` changes the ones that are sent:
+`POST /notes/daily` with `{"date": "2026-11-20"}` answers with the daily note
+of that day and makes it when there is none, titled in the account's date
+format. `placeholders` can come along for the template. A note has a
+`dailyDate` when it is a daily note, and `DELETE /notes/:id/daily` takes it
+off its day. `GET /auth/me` has the account's `preferences`, and
+`PATCH /auth/preferences` changes the ones that are sent and answers with
+them as a read gives them:
 `{"dailyNotes": {"notebookId": null, "templateId": "...", "dateFormat": "long"}}`.
+`notebookId` and `templateId` can be `null` for none. `dateFormat` cannot.
 
 A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
 changes or `POST /auth/logout-all` is called. Each token carries the
