@@ -362,14 +362,20 @@ trigger, as for `search_vector`, and not by the services. That way every
 write of the text bumps the revision in its own statement: saves, restores,
 link rewrites and code that is not written yet. `useAutosave` has a `conflict`
 state and does not retry, and the editor asks what to keep: mine, theirs, or
-mine with theirs put into the history. Closing the question decides nothing,
-and leaving the note with it open saves my text and keeps theirs as a
-version. A restore now saves what is typed first, and is refused when that
-fails or when a save gets in between. A save without a revision works as
-before: the last write wins. Still open: the two texts are not merged, the
-question shows no diff (History does, after "keep mine, put theirs in the
-history"), and a tab that only has a note open is not told about a change
-before it saves.
+mine with theirs put into the history. "Take theirs" fetches the note anew.
+Closing the question decides nothing. Leaving the note with it open, or with
+a change from elsewhere that only the last save notices, saves my text and
+keeps theirs as a version, and a notice says so afterwards. A draft that
+cannot be saved when a note is left, because the connection or the session is
+gone, is kept in the tab under the user's id and offered when the note is
+opened there again. Signing out saves first and asks before it discards. A
+save whose answer got lost is recognised by its text and is no conflict. A
+restore now saves what is typed first, and is refused when that fails or when
+a save gets in between. A save without a revision works as before: the last
+write wins. Still open: the two texts are not merged, the question shows no
+diff (History does, after "keep mine, put theirs in the history"), a tab that
+only has a note open is not told about a change before it saves, and a kept
+draft does not outlive its tab.
 
 ### 11. Account settings and sessions
 
