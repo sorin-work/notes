@@ -32,6 +32,44 @@ describe('MarkdownPreview', () => {
     expect(screen.getByText('Private note')).toHaveClass('wikilink-static');
   });
 
+  it('keeps task boxes read-only without a handler', () => {
+    render(<MarkdownPreview content={'- [ ] open\n- [x] done'} />);
+    const [open, done] = screen.getAllByRole('checkbox');
+    expect(open).toBeDisabled();
+    expect(done).toBeDisabled();
+    expect(done).toBeChecked();
+  });
+
+  it('calls back with the source line when a task box is clicked', async () => {
+    const onToggleTask = vi.fn();
+    const content = [
+      'Left over from [[Project Atlas|the project]]',
+      'and [[Weekly review]].',
+      '',
+      '```',
+      '- [ ] not a task',
+      '```',
+      '',
+      '- [ ] Read [[Atlas data model]]',
+      '  - [x] Nested task',
+      '',
+      '1. [ ] Loose item',
+      '',
+      '2. [ ] Second loose item',
+    ].join('\n');
+    render(<MarkdownPreview content={content} onToggleTask={onToggleTask} />);
+
+    expect(screen.getAllByRole('checkbox')).toHaveLength(4);
+    const nested = screen.getByRole('checkbox', { name: 'Nested task' });
+    expect(nested).toBeEnabled();
+    expect(nested).toBeChecked();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Read Atlas data model' }));
+    await userEvent.click(nested);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Second loose item' }));
+    expect(onToggleTask.mock.calls).toEqual([[8], [9], [13]]);
+  });
+
   it('opens normal links in a new tab and drops javascript: URLs', () => {
     render(<MarkdownPreview content="[docs](https://example.com) [bad](javascript:alert(1))" />);
     expect(screen.getByRole('link', { name: 'docs' })).toHaveAttribute('target', '_blank');

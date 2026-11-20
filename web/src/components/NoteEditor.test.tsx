@@ -94,11 +94,43 @@ describe('NoteEditor', () => {
     expect(textarea).toHaveValue('See [[Weekly sync]]');
   });
 
+  it('ticks tasks from the preview and saves the change like typed text', async () => {
+    const content = 'For [[Dinner]]:\n\n- [x] Lemons\n- [ ] Bread flour\n';
+    const calls = mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ content }) } }));
+    renderEditor();
+
+    const flour = await screen.findByRole('checkbox', { name: 'Bread flour' });
+    const textarea = screen.getByLabelText<HTMLTextAreaElement>('Note content');
+    textarea.setSelectionRange(4, 14);
+
+    await userEvent.click(flour);
+    expect(textarea).toHaveValue('For [[Dinner]]:\n\n- [x] Lemons\n- [x] Bread flour\n');
+    // The box is still the same element, so keyboard users keep their place.
+    expect(flour).toBeChecked();
+    expect(flour).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Lemons' }));
+    const ticked = 'For [[Dinner]]:\n\n- [ ] Lemons\n- [x] Bread flour\n';
+    expect(textarea).toHaveValue(ticked);
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'PATCH')).toBe(true), { timeout: 2000 });
+    expect(calls.filter((call) => call.method === 'PATCH').map((call) => call.body)).toEqual([
+      { title: 'Project Atlas', content: ticked },
+    ]);
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([4, 14]);
+  });
+
   it('shows notes in the trash as read-only', async () => {
-    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ deletedAt: '2026-01-03T00:00:00Z' }) } }));
+    mockFetch(
+      baseRoutes({
+        'GET /api/notes/n1': { body: note({ content: '- [ ] Call the bank', deletedAt: '2026-01-03T00:00:00Z' }) },
+      }),
+    );
     renderEditor();
     expect(await screen.findByText(/This note is in the trash/)).toBeInTheDocument();
     expect(screen.getByLabelText('Note content')).toHaveAttribute('readonly');
+    expect(screen.getByRole('checkbox')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
