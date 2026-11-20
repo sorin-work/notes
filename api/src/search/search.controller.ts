@@ -1,6 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, MaxLength } from 'class-validator';
+import { AccessService } from '../access/access.service';
 import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Page } from '../common/pagination';
@@ -21,11 +22,18 @@ export class SearchQuery extends NoteFilterQuery {
 @AllowApiToken()
 @Controller('search')
 export class SearchController {
-  constructor(private readonly searchService: SearchService) {}
+  constructor(
+    private readonly searchService: SearchService,
+    private readonly access: AccessService,
+  ) {}
 
-  /** Full-text search over titles and text, best match first. */
+  /**
+   * Full-text search over titles and text, best match first. Your own notes,
+   * or, with `notebookId` of a notebook shared with you, the notes in it.
+   */
   @Get()
-  search(@CurrentUser() user: AuthUser, @Query() query: SearchQuery): Promise<Page<SearchHit>> {
-    return this.searchService.search(user.id, query.q, query);
+  async search(@CurrentUser() user: AuthUser, @Query() query: SearchQuery): Promise<Page<SearchHit>> {
+    const { ownerId } = await this.access.ownerForFilter(user.id, query.notebookId);
+    return this.searchService.search(ownerId, query.q, query);
   }
 }

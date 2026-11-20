@@ -1,9 +1,11 @@
+import { AccessService } from '../access/access.service';
 import { VersionsController } from './versions.controller';
 import { VersionsService } from './versions.service';
 
 describe('VersionsController', () => {
   const service = { list: jest.fn(), get: jest.fn(), restore: jest.fn() };
-  const controller = new VersionsController(service as unknown as VersionsService);
+  const access = { note: jest.fn().mockResolvedValue({ ownerId: 'user-1', access: 'owner' }) };
+  const controller = new VersionsController(service as unknown as VersionsService, access as unknown as AccessService);
   const user = { id: 'user-1', email: 'ada@example.com' };
 
   it('scopes versions to the note and the current user', async () => {

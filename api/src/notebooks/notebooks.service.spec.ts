@@ -1,3 +1,4 @@
+import { AccessService } from '../access/access.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { NotebooksService } from './notebooks.service';
@@ -25,7 +26,7 @@ describe('NotebooksService', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new NotebooksService(asPrismaService(prisma));
+    service = new NotebooksService(asPrismaService(prisma), new AccessService(asPrismaService(prisma)));
     prisma.note.groupBy.mockResolvedValue([]);
   });
 

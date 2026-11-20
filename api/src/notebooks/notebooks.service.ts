@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Notebook, Prisma } from '@prisma/client';
+import { Access, AccessService } from '../access/access.service';
 import { templateNotes, WORKING_NOTE } from '../notes/note-scope';
 import { sharedThrough, SharedThrough } from '../notes/note-view';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,12 +23,18 @@ export interface NotebookView {
    * inside, if one does.
    */
   sharedThrough: SharedThrough | null;
+  /** `owner`, or the role of a member for a notebook shared with them. */
+  access: Access;
+  /** For a notebook shared with you: whose it is. */
+  owner: { name: string } | null;
+  /** How many other accounts it is shared with. Only the owner is told. */
+  memberCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const notebookInclude = {
-  _count: { select: { notes: { where: WORKING_NOTE } } },
+  _count: { select: { notes: { where: WORKING_NOTE }, members: true } },
   share: { select: { expiresAt: true } },
   parent: { select: { id: true, name: true, share: { select: { expiresAt: true } } } },
 } satisfies Prisma.NotebookInclude;
@@ -43,12 +50,46 @@ function toNotebookView(
     templateCount,
     shared: share !== null,
     sharedThrough: sharedThrough({ id: rest.id, name: rest.name, share, parent }),
+    access: 'owner',
+    owner: null,
+    memberCount: _count.members,
   };
 }
 
 @Injectable()
 export class NotebooksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: AccessService,
+  ) {}
+
+  /**
+   * The notebooks other accounts share with this one, the ones inside them
+   * included. A member sees the name, the role, whose it is and how many
+   * notes are in it: not the templates, the share links or the members.
+   * A notebook shared without its parent is shown at the top level.
+   */
+  async listShared(userId: string): Promise<NotebookView[]> {
+    const shared = await this.access.sharedNotebooks(userId);
+    if (shared.size === 0) return [];
+    const notebooks = await this.prisma.notebook.findMany({
+      where: { id: { in: [...shared.keys()] } },
+      orderBy: { name: 'asc' },
+      include: { ...notebookInclude, user: { select: { name: true } } },
+    });
+    return notebooks.map(({ user, ...notebook }) => {
+      const view = toNotebookView(notebook, 0);
+      return {
+        ...view,
+        parentId: view.parentId && shared.has(view.parentId) ? view.parentId : null,
+        shared: false,
+        sharedThrough: null,
+        access: shared.get(notebook.id)!.role,
+        owner: { name: user.name },
+        memberCount: 0,
+      };
+    });
+  }
 
   async list(userId: string): Promise<NotebookView[]> {
     const notebooks = await this.prisma.notebook.findMany({

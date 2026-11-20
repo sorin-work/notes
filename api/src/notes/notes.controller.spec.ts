@@ -1,4 +1,5 @@
-import { StreamableFile } from '@nestjs/common';
+import { ForbiddenException, StreamableFile } from '@nestjs/common';
+import { AccessService } from '../access/access.service';
 import { LinksService } from '../links/links.service';
 import { ExportService } from '../transfer/export.service';
 import { ListNotesQuery } from './dto/note.dto';
@@ -22,13 +23,63 @@ describe('NotesController', () => {
   };
   const links = { backlinks: jest.fn(), outgoing: jest.fn(), resolve: jest.fn() };
   const exporter = { exportNote: jest.fn() };
+  const owner = { ownerId: 'user-1', access: 'owner' };
+  const access = {
+    note: jest.fn(),
+    notebook: jest.fn(),
+    ownerForFilter: jest.fn(),
+    visibleNotebookIds: jest.fn(),
+  };
   const controller = new NotesController(
     notes as unknown as NotesService,
     links as unknown as LinksService,
     exporter as unknown as ExportService,
+    access as unknown as AccessService,
   );
 
-  beforeEach(() => jest.resetAllMocks());
+  beforeEach(() => {
+    jest.resetAllMocks();
+    access.note.mockResolvedValue(owner);
+    access.notebook.mockResolvedValue(owner);
+    access.ownerForFilter.mockResolvedValue(owner);
+    access.visibleNotebookIds.mockResolvedValue(null);
+  });
+
+  describe('for a member of a shared notebook', () => {
+    const member = { ownerId: 'owner-1', access: 'edit' };
+    beforeEach(() => {
+      access.note.mockResolvedValue(member);
+      access.notebook.mockResolvedValue(member);
+      access.visibleNotebookIds.mockResolvedValue(new Set(['nb1']));
+    });
+
+    it('works on the owner’s note, with text and tags only', async () => {
+      notes.update.mockResolvedValue({ id: 'n1', access: 'owner' });
+      await expect(controller.update(user, 'n1', { content: 'x', tags: ['a'] })).resolves.toMatchObject({
+        access: 'edit',
+      });
+      expect(notes.update).toHaveBeenCalledWith('owner-1', 'n1', { content: 'x', tags: ['a'] });
+      await expect(controller.update(user, 'n1', { pinned: true })).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(controller.update(user, 'n1', { notebookId: null })).rejects.toBeInstanceOf(ForbiddenException);
+      expect(access.note).toHaveBeenCalledWith('user-1', 'n1', 'edit');
+    });
+
+    it('keeps links and backlinks to the notebooks shared with them', async () => {
+      await controller.outgoing(user, 'n1');
+      await controller.backlinks(user, 'n1');
+      expect(links.outgoing).toHaveBeenCalledWith('owner-1', 'n1', ['nb1']);
+      expect(links.backlinks).toHaveBeenCalledWith('owner-1', 'n1', ['nb1']);
+    });
+
+    it('adds notes to the shared notebook as the owner’s, and nothing an owner keeps for themselves', async () => {
+      notes.create.mockResolvedValue({ id: 'n2' });
+      await controller.create(user, { title: 'x', notebookId: 'nb1' });
+      expect(notes.create).toHaveBeenCalledWith('owner-1', { title: 'x', notebookId: 'nb1' });
+      await expect(controller.create(user, { notebookId: 'nb1', templateId: 't1' })).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+  });
 
   it('scopes every call to the current user', async () => {
     const query = new ListNotesQuery();
@@ -53,9 +104,9 @@ describe('NotesController', () => {
     await controller.backlinks(user, 'n1');
     await controller.outgoing(user, 'n1');
     await controller.resolve(user, { title: 'Atlas' });
-    expect(links.backlinks).toHaveBeenCalledWith('user-1', 'n1');
-    expect(links.outgoing).toHaveBeenCalledWith('user-1', 'n1');
-    expect(links.resolve).toHaveBeenCalledWith('user-1', 'Atlas');
+    expect(links.backlinks).toHaveBeenCalledWith('user-1', 'n1', undefined);
+    expect(links.outgoing).toHaveBeenCalledWith('user-1', 'n1', undefined);
+    expect(links.resolve).toHaveBeenCalledWith('user-1', 'Atlas', undefined);
   });
 
   it('counts and rewrites the links a rename left behind', async () => {
@@ -70,7 +121,7 @@ describe('NotesController', () => {
 
   it('passes the title query and limit through', async () => {
     await controller.titles(user, { q: 'pro', limit: 5 });
-    expect(notes.titles).toHaveBeenCalledWith('user-1', 'pro', 5);
+    expect(notes.titles).toHaveBeenCalledWith('user-1', 'pro', 5, undefined);
   });
 
   it('exports a note as a Markdown download', async () => {

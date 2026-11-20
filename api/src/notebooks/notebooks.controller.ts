@@ -9,10 +9,10 @@ import { NotebooksService, NotebookView } from './notebooks.service';
 export class NotebooksController {
   constructor(private readonly notebooks: NotebooksService) {}
 
-  /** Lists the notebooks with their note counts. */
+  /** Lists the notebooks with their note counts: your own, then those shared with you (`access` is not `owner`). */
   @Get()
-  list(@CurrentUser() user: AuthUser): Promise<NotebookView[]> {
-    return this.notebooks.list(user.id);
+  async list(@CurrentUser() user: AuthUser): Promise<NotebookView[]> {
+    return [...(await this.notebooks.list(user.id)), ...(await this.notebooks.listShared(user.id))];
   }
 
   /** Creates a notebook, at the top level or inside a top-level one. */
