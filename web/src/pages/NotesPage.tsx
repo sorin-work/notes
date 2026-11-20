@@ -127,7 +127,8 @@ export function NotesPage() {
         ) : (
           <EmptyState title="Pick a note, or start a new one">
             <p className="muted">
-              Alt+N creates a note, / jumps to search, Ctrl+S saves and Ctrl+E switches between edit and preview.
+              Alt+N creates a note, Ctrl+K (Cmd+K on a Mac) opens a note by its title, / jumps to search, Ctrl+S saves
+              and Ctrl+E switches between edit and preview.
             </p>
           </EmptyState>
         )}

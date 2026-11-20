@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { MemoryRouter } from 'react-router';
+import { type InitialEntry, MemoryRouter } from 'react-router';
 import { vi } from 'vitest';
 
-export function renderWithProviders(ui: ReactElement, { route = '/' }: { route?: string } = {}) {
+export function renderWithProviders(ui: ReactElement, { route = '/' }: { route?: InitialEntry } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return {
     queryClient,
@@ -17,7 +17,7 @@ export function renderWithProviders(ui: ReactElement, { route = '/' }: { route?:
 }
 
 type Reply = { status?: number; body?: unknown };
-type Route = Reply | ((request: { url: string; body: unknown }) => Reply);
+type Route = Reply | ((request: { url: string; body: unknown }) => Reply | Promise<Reply>);
 
 export interface RecordedCall {
   method: string;
@@ -44,7 +44,7 @@ export function mockFetch(routes: Record<string, Route>): RecordedCall[] {
           status: 404,
         });
       }
-      const reply = typeof route === 'function' ? route({ url, body }) : route;
+      const reply = typeof route === 'function' ? await route({ url, body }) : route;
       const status = reply.status ?? 200;
       return new Response(status === 204 ? null : JSON.stringify(reply.body ?? {}), {
         status,

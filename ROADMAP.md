@@ -10,7 +10,7 @@ What the app does today is in the [README](README.md).
 - **Next**: small or well understood. I would start with these.
 - **Later**: worth doing, but bigger or waiting on a decision.
 - **Maybe**: not sure yet that they are worth the extra complexity.
-- **Shipped**: done. What was built is at the end of this file.
+- **Shipped**: built. The notes at the end say how each one turned out.
 
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
@@ -21,7 +21,7 @@ couple of weekends, **L** several weeks of spare time.
 | --- | -------------------------------------- | ------- | -------- | ---- | ---------- |
 | 1   | Clickable task lists in the preview    | Next    | frontend | S    | -          |
 | 2   | Changes view in version history        | Next    | frontend | S    | -          |
-| 3   | Quick switcher                         | Next    | frontend | S    | -          |
+| 3   | Quick switcher                         | Shipped | frontend | S    | -          |
 | 4   | Search filters, phrases and paging     | Next    | both     | M    | -          |
 | 5   | Rename a note without breaking links   | Next    | both     | M    | -          |
 | 6   | Accessibility pass                     | Next    | frontend | M    | -          |
@@ -72,21 +72,6 @@ version and the current text.
 - Undecided: add the `diff` package or write a small line-based diff in
   `web/src/lib`. A note can be a million characters (`MAX_CONTENT_LENGTH`),
   so either way it needs a cut-off for very long notes.
-
-### 3. Quick switcher
-
-`Ctrl+K` / `Cmd+K` opens a small dialog: type part of a title, press Enter,
-land on the note. Quicker than the sidebar search when I know the name.
-
-- `GET /notes/titles?q=` already does prefix-then-contains matching for `[[`
-  completion and can be used as it is.
-- Built on `Modal`, with the key handler next to the `/` shortcut in
-  `Layout`. The option handling around `LinkSuggestions` (active index, arrow
-  keys, Enter) is close to what is needed and could move into a shared hook.
-- Notes first. Notebooks, tags and actions ("New note", "Empty trash") can
-  follow once the dialog exists.
-- The shortcut table in the README and the hint on the empty `NotesPage`
-  need the new key.
 
 ### 4. Search filters, phrases and paging
 
@@ -358,20 +343,36 @@ Two ways to get more out of the links that are already stored.
 
 ## Shipped
 
+### 3. Quick switcher
+
+`Ctrl+K` (`Cmd+K` on a Mac, where `Ctrl+K` deletes to the end of the line)
+opens a dialog built on `Modal` that lists the notes edited last and, once I
+type, the titles from `GET /notes/titles?q=`, which is used as it was. Arrow
+keys and Enter pick a note, and the cursor lands in its text, or on the
+preview in preview mode. The arrow key handling moved out of `NoteEditor` into
+`useActiveOption` and is shared with the `[[` suggestions. Beyond the design:
+Enter pressed before the list is up to date waits for the answer instead of
+opening a stale row, the note that is already open is left out, and the key
+does nothing while another dialog is open. Still open: notebooks, tags and
+actions in the list. Notes that share a title look the same there, and the
+dialog has no button, so it needs a keyboard.
+
 ### 7. Scheduled backups
 
 A `backup` service in `docker-compose.yml`, behind the `backup` profile, runs
 `scripts/backup.sh` in the `postgres:17-alpine` image: a `pg_dump` into
 `./backups` once a day, keeping the newest seven. It is a shell loop with
-`sleep` rather than cron, and it goes by the age of the newest dump, so a
-restart does not add one. Beyond the design, the same script restores
+`sleep` rather than cron. It reads the age of the newest dump from the file
+names when it starts, so a restart does not add one, and then looks at the
+clock every minute. Beyond the design, the same script restores
 (`backup restore <file>`), loading the dump into a new database that replaces
 the old one only when the load worked. The README has the commands, and CI
-runs `scripts/check-backup.sh` after the end-to-end tests: three dumps while
-keeping two, a restore into a scratch database and a row count of every
-table. Still open: the dumps are not encrypted, they stay on the same machine
-unless `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails
-apart from the service log.
+runs `scripts/check-backup.sh` after the end-to-end tests: the loop and the
+pruning against clocks that are wrong, three dumps while keeping two, a
+restore into a scratch database and a row count of every table. Still open:
+the dumps are not encrypted, they stay on the same machine unless
+`BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
+the service log.
 
 ### 11. Account settings and sessions
 
