@@ -4,6 +4,7 @@ import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
+import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, summary, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { Sidebar } from './Sidebar';
@@ -90,6 +91,7 @@ describe('Sidebar', () => {
 
     expect(await screen.findByRole('link', { name: 'Templates' })).toHaveAttribute('aria-current', 'page');
     const choice = await screen.findByRole('combobox', { name: 'New from template' });
+    await expectNoAxeViolations({ part: true });
     expect(calls.find((call) => call.url.startsWith('/api/notes?'))?.url).toContain('templates=true');
     await userEvent.selectOptions(choice, 'Weekly review template');
 

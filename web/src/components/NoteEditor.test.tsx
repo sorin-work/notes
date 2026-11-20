@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes, useParams } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { Note, NoteChanges } from '../api/types';
+import { expectNoAxeViolations } from '../test/axe';
 import { note } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
@@ -403,6 +404,7 @@ describe('NoteEditor', () => {
       renderEditor();
       const { textarea } = await typeIntoConflict();
       expect(screen.getByRole('status')).toHaveTextContent('Not saved. This note was changed somewhere else.');
+      await expectNoAxeViolations({ part: true });
 
       await userEvent.click(screen.getByRole('button', { name: choice }));
       await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^Saved/));
@@ -598,6 +600,7 @@ describe('NoteEditor', () => {
     expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({ isTemplate: true });
 
     expect(screen.getByText(/This is a template/)).toBeInTheDocument();
+    await expectNoAxeViolations({ part: true });
     await userEvent.click(screen.getByRole('button', { name: 'New note from this template' }));
     await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
     expect(calls.find((call) => call.method === 'POST')?.body).toEqual({
