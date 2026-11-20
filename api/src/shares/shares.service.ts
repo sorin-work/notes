@@ -8,6 +8,7 @@ import { extractWikiLinks, normalizeTitle, unlinkExcept } from '../links/wikilin
 import { PrismaService } from '../prisma/prisma.service';
 import { ShareOptionsDto } from './dto/share.dto';
 import { accessIsValid, signAccess } from './share-access';
+import { SharePasswordAttempts, TooManyWrongPasswords } from './share-password-attempts';
 
 /** What a link shares: one note, or one notebook with everything in it. */
 export type ShareSubject = { noteId: string } | { notebookId: string };
@@ -106,6 +107,7 @@ export class SharesService {
     private readonly prisma: PrismaService,
     private readonly links: LinksService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly attempts: SharePasswordAttempts,
   ) {}
 
   async get(userId: string, subject: ShareSubject): Promise<ShareView | null> {
@@ -189,12 +191,22 @@ export class SharesService {
       throw new NotFoundException(GONE);
     }
 
+    const owner = viewer.userId === ownerId;
     let access: string | undefined;
     if (share.passwordHash) {
       if (viewer.password !== undefined) {
+        // The link's allowance of wrong passwords comes before the password is
+        // compared, so a link that is being guessed at costs no hashing. The
+        // owner signed in is not guessing: their attempts are neither counted
+        // against the link nor refused because others used it up.
+        const wait = owner ? 0 : this.attempts.take(share.id);
+        if (wait > 0) {
+          throw new TooManyWrongPasswords(wait);
+        }
         if (!(await verifyPassword(viewer.password, share.passwordHash))) {
           throw passwordRequired('That password is not right');
         }
+        if (!owner) this.attempts.giveBack(share.id);
         access = signAccess(this.config.jwtSecret, share.id, share.passwordHash, now);
       } else if (!accessIsValid(this.config.jwtSecret, viewer.access, share.id, share.passwordHash, now)) {
         throw passwordRequired('This link is protected by a password');
@@ -313,8 +325,10 @@ export class SharesService {
     const changes: { expiresAt?: Date | null; passwordHash?: string | null } = {};
     if (options.expiresAt !== undefined) {
       const expiresAt = options.expiresAt === null ? null : new Date(options.expiresAt);
-      if (expiresAt && expiresAt.getTime() <= Date.now()) {
-        throw new BadRequestException('expiresAt must be in the future');
+      // The first half repeats what the DTO checks. A date that cannot be
+      // read is "not a number", which is neither before nor after now.
+      if (expiresAt && !(expiresAt.getTime() > Date.now())) {
+        throw new BadRequestException('expiresAt must be a date and time in the future');
       }
       changes.expiresAt = expiresAt;
     }

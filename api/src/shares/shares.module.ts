@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { LinksModule } from '../links/links.module';
-import { ShareLinkThrottlerGuard } from './share-link-throttler.guard';
+import { noStore } from './no-store.middleware';
+import { SharePasswordAttempts } from './share-password-attempts';
 import { NotebookSharesController, PublicSharesController, SharesController } from './shares.controller';
 import { SharesService } from './shares.service';
 
@@ -10,6 +11,10 @@ import { SharesService } from './shares.service';
   // LinksService finds the notes that the [[links]] of a shared note lead to.
   imports: [AuthModule, LinksModule],
   controllers: [SharesController, NotebookSharesController, PublicSharesController],
-  providers: [SharesService, ShareLinkThrottlerGuard],
+  providers: [SharesService, SharePasswordAttempts],
 })
-export class SharesModule {}
+export class SharesModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(noStore).forRoutes(PublicSharesController);
+  }
+}

@@ -569,9 +569,16 @@ things can come back besides the note:
   The password is only ever sent in a body, never in an address, where it
   would end up in logs and histories. A wrong password gets the same `403`.
 - `429` when a client reads more than `PUBLIC_THROTTLE_LIMIT` shared notes a
-  minute, or when password attempts go past `AUTH_THROTTLE_LIMIT` a minute.
-  Attempts are counted per client and per link, so guessing from many
-  addresses does not get more tries.
+  minute, or sends more than `AUTH_THROTTLE_LIMIT` passwords a minute. A link
+  also takes only `AUTH_THROTTLE_LIMIT` wrong passwords a minute in total,
+  from all clients together, so guessing from many addresses does not get
+  more tries. A right password does not count against the link. Once the
+  wrong ones are used up, the link refuses every password, the right one
+  too, until the minute that began with the first wrong one is over, and
+  the `429` carries `Retry-After`. So someone who keeps guessing can keep
+  readers out for as long as they keep at it, without getting closer to the
+  note. The owner, signed in, is never counted or refused by the link's
+  limit.
 
 Every answer of the public routes carries `Cache-Control: no-store`, so that
 a link that is revoked, runs out or gets a password stops working at once

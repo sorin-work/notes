@@ -13,7 +13,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { bearerToken } from '../auth/jwt-auth.guard';
@@ -21,7 +21,8 @@ import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { Public } from '../common/public.decorator';
 import { ShareOptionsDto, UnlockShareDto } from './dto/share.dto';
-import { ShareLinkThrottlerGuard } from './share-link-throttler.guard';
+import { PublicThrottlerGuard } from './public-throttler.guard';
+import { TooManyWrongPasswords } from './share-password-attempts';
 import { SharedNote, SharedNotebook, SharesService, ShareView } from './shares.service';
 
 @AllowApiToken()
@@ -119,7 +120,8 @@ export class NotebookSharesController {
  * Nothing here may be kept by a browser or a proxy: a link that is revoked,
  * runs out or gets a password has to stop working at once, and a note
  * behind a password must not sit in a cache. So every answer, the errors
- * too, goes out with "Cache-Control: no-store".
+ * too, goes out with "Cache-Control: no-store". SharesModule sets it in a
+ * middleware, ahead of the guards.
  */
 @Controller('public/notes')
 export class PublicSharesController {
@@ -136,16 +138,13 @@ export class PublicSharesController {
    * in the X-Share-Access header.
    */
   @Public()
-  @SkipThrottle({ default: true })
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(PublicThrottlerGuard)
   @Get(':token')
   async view(
     @Param('token') token: string,
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-share-access') access: string | undefined,
-    @Res({ passthrough: true }) response: Response,
   ): Promise<SharedNote | SharedNotebook> {
-    response.setHeader('Cache-Control', 'no-store');
     return this.shares.view(token, { userId: await this.viewerId(authorization), access });
   }
 
@@ -153,11 +152,12 @@ export class PublicSharesController {
    * The same, for a link with a password. The password goes in the body, never in the address.
    *
    * The answer has an `access` value to send with later requests instead of
-   * the password. Attempts are throttled twice with the strict allowance:
-   * per client, and per link whoever is asking.
+   * the password. Throttled per client with the strict allowance. The link
+   * itself also takes only so many wrong passwords a minute, whoever sends
+   * them.
    */
   @Public()
-  @UseGuards(ThrottlerGuard, ShareLinkThrottlerGuard)
+  @UseGuards(ThrottlerGuard)
   @Post(':token')
   @HttpCode(HttpStatus.OK)
   async unlock(
@@ -166,23 +166,26 @@ export class PublicSharesController {
     @Headers('authorization') authorization: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ): Promise<SharedNote | SharedNotebook> {
-    response.setHeader('Cache-Control', 'no-store');
-    return this.shares.view(token, { userId: await this.viewerId(authorization), password: dto.password });
+    try {
+      return await this.shares.view(token, { userId: await this.viewerId(authorization), password: dto.password });
+    } catch (error) {
+      if (error instanceof TooManyWrongPasswords) {
+        response.setHeader('Retry-After', String(error.retryAfterSeconds));
+      }
+      throw error;
+    }
   }
 
   /** One note of a shared notebook. `404` for a note that is not in it, or not any more. */
   @Public()
-  @SkipThrottle({ default: true })
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(PublicThrottlerGuard)
   @Get(':token/:noteId')
   async viewNote(
     @Param('token') token: string,
     @Param('noteId', ParseUUIDPipe) noteId: string,
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-share-access') access: string | undefined,
-    @Res({ passthrough: true }) response: Response,
   ): Promise<SharedNote> {
-    response.setHeader('Cache-Control', 'no-store');
     return this.shares.viewNote(token, noteId, { userId: await this.viewerId(authorization), access });
   }
 

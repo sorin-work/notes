@@ -14,7 +14,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { ALLOW_API_TOKEN } from '../src/common/allow-api-token.decorator';
 import { IS_PUBLIC } from '../src/common/public.decorator';
-import { APP_CONFIG, loadConfig } from '../src/config/config';
+import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
@@ -1283,7 +1283,8 @@ describe('sharing', () => {
       .expect(403);
     expect(wrong.body).toMatchObject({ passwordRequired: true, message: 'That password is not right' });
     expect(wrong.headers['cache-control']).toBe('no-store');
-    await request(server).post(`/api/public/notes/${token}`).send({}).expect(400);
+    const empty = await request(server).post(`/api/public/notes/${token}`).send({}).expect(400);
+    expect(empty.headers['cache-control']).toBe('no-store');
 
     const opened = await request(server)
       .post(`/api/public/notes/${token}`)
@@ -1307,6 +1308,11 @@ describe('sharing', () => {
 
     await request(server).patch(path).set(auth).send({ expiresAt: 'next week' }).expect(400);
     await request(server).patch(path).set(auth).send({ expiresAt: '2020-01-01T00:00:00Z' }).expect(400);
+    // Forms that pass for ISO 8601 and that no date can be made of, or only with a guess at the zone.
+    for (const unreadable of ['2027-W01', '20270101', '2099-01-01T10:00']) {
+      const refused = await request(server).patch(path).set(auth).send({ expiresAt: unreadable }).expect(400);
+      expect(refused.body.message).toEqual(['expiresAt must be a date and time such as 2026-03-01T12:00:00Z']);
+    }
     const limited = await request(server)
       .patch(path)
       .set(auth)
@@ -1592,6 +1598,20 @@ describe('import and export', () => {
   });
 });
 
+/** A second app on the same database, with other settings. One proxy is trusted, so a test can come from several addresses. */
+async function startApp(settings: Partial<AppConfig>): Promise<INestApplication<App>> {
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(APP_CONFIG)
+    .useValue({ ...loadConfig(), ...settings })
+    .overrideProvider(MAIL_TRANSPORT)
+    .useValue(fakeTransport)
+    .compile();
+  const nest: INestApplication<App> = moduleRef.createNestApplication();
+  setupApp(nest, { trustProxy: 1 });
+  await nest.init();
+  return nest;
+}
+
 /**
  * The suites above run with a throttle limit too high to notice. This one
  * has an app of its own with a limit of three, to see the routes that check
@@ -1602,26 +1622,21 @@ describe('password guesses with a low throttle limit', () => {
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(APP_CONFIG)
-      .useValue({ ...loadConfig(), authThrottleLimit: 3, publicThrottleLimit: 5 })
-      .overrideProvider(MAIL_TRANSPORT)
-      .useValue(fakeTransport)
-      .compile();
-    limited = moduleRef.createNestApplication();
-    // One proxy is trusted, so that a test can come from several addresses by sending X-Forwarded-For.
-    setupApp(limited, { trustProxy: 1 });
-    await limited.init();
+    limited = await startApp({ authThrottleLimit: 3, publicThrottleLimit: 5 });
   });
 
   afterAll(async () => {
     await limited.close();
   });
 
+  const from = (address: string) => ({ 'X-Forwarded-For': address });
+  let accounts = 0;
+  /** Signs up from an address of its own: one address gets three sign-ups a minute here. */
   const account = async (name: string) => {
     const response = await request(limited.getHttpServer())
       .post('/api/auth/register')
-      .send({ email: `${name}-${Date.now()}@example.com`, name, password: 'password123' })
+      .set(from(`192.0.2.${100 + ++accounts}`))
+      .send({ email: `${name}-${Date.now()}-${accounts}@example.com`, name, password: 'password123' })
       .expect(201);
     return bearer(response.body.token);
   };
@@ -1635,42 +1650,78 @@ describe('password guesses with a low throttle limit', () => {
     await request(server).get('/api/health').expect(200);
   });
 
-  it('lets a client read a handful of shared notes a minute, and counts password attempts per link and per client', async () => {
+  const shareWithPassword = async (owner: { Authorization: string }, title: string) => {
+    const server = limited.getHttpServer();
+    const note = await request(server).post('/api/notes').set(owner).send({ title }).expect(201);
+    const link = await request(server)
+      .post(`/api/notes/${note.body.id}/share`)
+      .set(owner)
+      .send({ password: 'open sesame' })
+      .expect(200);
+    return `/api/public/notes/${link.body.token as string}`;
+  };
+
+  it('lets a client read a handful of shared notes a minute, with the roomy allowance and not the strict one', async () => {
+    const server = limited.getHttpServer();
+    const link = await shareWithPassword(await account('sharer'), 'First');
+
+    for (let i = 0; i < 5; i++) {
+      await request(server).get(link).set(from('203.0.113.1')).expect(403);
+    }
+    const refused = await request(server).get(link).set(from('203.0.113.1')).expect(429);
+    expect(refused.headers['retry-after']).toBeDefined();
+    // Not to be kept either, although no handler ran.
+    expect(refused.headers['cache-control']).toBe('no-store');
+    await request(server).get(link).set(from('203.0.113.2')).expect(403);
+  });
+
+  it('takes three wrong passwords a minute for a link, whoever sends them, and never holds the owner back', async () => {
     const server = limited.getHttpServer();
     const owner = await account('sharer');
-    const share = async (title: string) => {
-      const note = await request(server).post('/api/notes').set(owner).send({ title }).expect(201);
-      const link = await request(server)
-        .post(`/api/notes/${note.body.id}/share`)
-        .set(owner)
-        .send({ password: 'open sesame' })
-        .expect(200);
-      return `/api/public/notes/${link.body.token as string}`;
-    };
-    const first = await share('First');
-    const second = await share('Second');
-    const from = (address: string) => ({ 'X-Forwarded-For': address });
+    const first = await shareWithPassword(owner, 'First');
+    const second = await shareWithPassword(owner, 'Second');
+    const guess = (link: string, address: string, password: string) =>
+      request(server).post(link).set(from(address)).send({ password });
 
-    // Reading: five a minute for one address, with the roomy allowance and not the strict one.
-    for (let i = 0; i < 5; i++) {
-      await request(server).get(first).set(from('203.0.113.1')).expect(403);
-    }
-    await request(server).get(first).set(from('203.0.113.1')).expect(429);
-    await request(server).get(first).set(from('203.0.113.2')).expect(403);
-
-    // Guessing from a new address every time: the link itself runs out of attempts after three.
-    await request(server).post(first).set(from('198.51.100.1')).send({ password: 'guess-1' }).expect(403);
-    await request(server).post(first).set(from('198.51.100.2')).send({ password: 'guess-2' }).expect(403);
-    await request(server).post(first).set(from('198.51.100.3')).send({ password: 'guess-3' }).expect(403);
-    await request(server).post(first).set(from('198.51.100.4')).send({ password: 'guess-4' }).expect(429);
+    // Guessing from a new address every time: the link itself stops taking passwords after three wrong ones.
+    await guess(first, '198.51.100.1', 'guess-1').expect(403);
+    await guess(first, '198.51.100.2', 'guess-2').expect(403);
+    await guess(first, '198.51.100.3', 'guess-3').expect(403);
+    const refused = await guess(first, '198.51.100.4', 'guess-4').expect(429);
+    expect(refused.body.message).toBe('Too many wrong passwords for this link. Try again in a minute.');
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+    expect(refused.headers['cache-control']).toBe('no-store');
     // The right password does not get through either until the minute is over.
-    await request(server).post(first).set(from('198.51.100.5')).send({ password: 'open sesame' }).expect(429);
+    await guess(first, '198.51.100.5', 'open sesame').expect(429);
 
-    // Another link is not affected, until one address has used up its own three attempts on it.
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'guess-1' }).expect(403);
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'guess-2' }).expect(403);
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'open sesame' }).expect(200);
-    await request(server).post(second).set(from('198.51.100.9')).send({ password: 'open sesame' }).expect(429);
+    // The owner, signed in, is not held back by what others did to the link.
+    await guess(first, '198.51.100.6', 'open sesame').set(owner).expect(200);
+    await guess(first, '198.51.100.6', 'mistyped').set(owner).expect(403);
+
+    // Another link is not affected.
+    await guess(second, '198.51.100.7', 'open sesame').expect(200);
+  });
+
+  it('does not count right passwords against a link, only against the client that sends them', async () => {
+    const server = limited.getHttpServer();
+    const link = await shareWithPassword(await account('sharer'), 'Popular');
+    const open = (address: string, password = 'open sesame') =>
+      request(server).post(link).set(from(address)).send({ password });
+
+    // More readers in a minute than the link takes wrong passwords.
+    for (let reader = 1; reader <= 5; reader++) {
+      await open(`192.0.2.${reader}`).expect(200);
+    }
+    // Two wrong ones leave room for a third attempt.
+    await open('192.0.2.10', 'guess-1').expect(403);
+    await open('192.0.2.11', 'guess-2').expect(403);
+    await open('192.0.2.12').expect(200);
+
+    // One address still has only its own three requests a minute on the route.
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(200);
+    await open('192.0.2.20').expect(429);
   });
 
   it('caps the guesses against one account across the routes that check the password', async () => {
@@ -1709,5 +1760,64 @@ describe('password guesses with a low throttle limit', () => {
     // Another account, from the same address, still has its own guesses.
     await guessOnPassword(other).expect(403);
     await guessOnToken(other).expect(403);
+  });
+});
+
+/**
+ * AUTH_THROTTLE_LIMIT and PUBLIC_THROTTLE_LIMIT each rule their own routes.
+ * The suite above has the strict limit below the roomy one. Here it is the
+ * other way round and far apart: if reading shared notes were counted on
+ * the password routes as well, they would close after two requests.
+ */
+describe('throttle limits far apart', () => {
+  let nest: INestApplication<App>;
+
+  beforeAll(async () => {
+    nest = await startApp({ authThrottleLimit: 8, publicThrottleLimit: 2 });
+  });
+
+  afterAll(async () => {
+    await nest.close();
+  });
+
+  it('gives every route the allowance that is meant for it', async () => {
+    const server = nest.getHttpServer();
+    const email = `far-apart-${Date.now()}@example.com`;
+    const signedUp = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Far', password: 'password123' })
+      .expect(201);
+    const auth = { Authorization: `Bearer ${signedUp.body.token as string}` };
+    const note = await request(server).post('/api/notes').set(auth).send({ title: 'Open' }).expect(201);
+    const link = await request(server).post(`/api/notes/${note.body.id}/share`).set(auth).expect(200);
+    const shared = `/api/public/notes/${link.body.token as string}`;
+
+    /** How many requests in a row are answered with `status` before the first 429. */
+    const allowance = async (send: () => request.Test, status: number): Promise<number> => {
+      for (let count = 0; count < 20; count++) {
+        const response = await send();
+        if (response.status === 429) return count;
+        expect(response.status).toBe(status);
+      }
+      return 20;
+    };
+
+    // Reading shared notes: two.
+    expect(await allowance(() => request(server).get(shared), 200)).toBe(2);
+
+    // Everything that takes a password or sends mail: eight, not two.
+    const login = () => request(server).post('/api/auth/login').send({ email, password: 'guess' });
+    expect(await allowance(login, 401)).toBe(8);
+    const forgot = () => request(server).post('/api/auth/password-reset').send({ email: 'nobody@example.com' });
+    expect(await allowance(forgot, 204)).toBe(8);
+    const change = () =>
+      request(server)
+        .patch('/api/auth/password')
+        .set(auth)
+        .send({ currentPassword: 'guess', newPassword: 'x'.repeat(12) });
+    expect(await allowance(change, 403)).toBe(8);
+    const register = () => request(server).post('/api/auth/register').send({ email: 'not an address' });
+    // One was used to sign up above.
+    expect(await allowance(register, 400)).toBe(7);
   });
 });

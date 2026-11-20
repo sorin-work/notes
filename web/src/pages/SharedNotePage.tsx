@@ -18,6 +18,13 @@ const statusOf = (error: unknown) => (error instanceof ApiError ? error.status :
  */
 export function SharedNotePage() {
   const { token = '', noteId } = useParams();
+  // One instance per link. What was typed for a link, and what it opened,
+  // are gone when the address changes to another link. Moving between the
+  // notes of one shared notebook keeps them.
+  return <SharedLink key={token} token={token} noteId={noteId} />;
+}
+
+function SharedLink({ token, noteId }: { token: string; noteId: string | undefined }) {
   const queryClient = useQueryClient();
   const queryKey = ['shared', token, noteId ?? null];
   // Never retried: asking again does not make a missing link appear, and for a
@@ -91,7 +98,8 @@ export function SharedNotePage() {
           </div>
         </form>
       ) : (
-        shared.error && <ErrorMessage error={shared.error} />
+        // Not once something is shown: the 403 that asked for the password is not news after it.
+        !content && shared.error && <ErrorMessage error={shared.error} />
       )}
       {content?.kind === 'note' && <SharedNoteView note={content} indexPath={noteId ? `/s/${token}` : null} />}
       {content?.kind === 'notebook' && <SharedNotebookView notebook={content} token={token} />}
