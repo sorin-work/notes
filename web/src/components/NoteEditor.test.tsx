@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import type { Note } from '../api/types';
 import { note } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
@@ -152,6 +153,65 @@ describe('NoteEditor', () => {
     renderEditor({ focusEditor: true }, 'preview');
     expect(await screen.findByLabelText('Preview')).toHaveFocus();
     expect(screen.queryByLabelText('Note content')).not.toBeInTheDocument();
+  });
+
+  describe('after a rename', () => {
+    /** Routes for a note that answers with what was last saved, as the API does. */
+    function renameRoutes(count: number) {
+      let saved = note();
+      return baseRoutes({
+        'GET /api/notes/n1': () => ({ body: saved }),
+        'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+          saved = { ...saved, ...(body as object) };
+          return { body: saved };
+        },
+        'GET /api/notes/n1/rename-links': { body: { count } },
+        'POST /api/notes/n1/rename-links': () => ({ body: { updated: count, title: saved.title } }),
+      });
+    }
+
+    async function rename(to: string) {
+      const title = await screen.findByLabelText('Title');
+      await userEvent.clear(title);
+      await userEvent.type(title, to);
+    }
+
+    it('offers to update the links other notes have to the old title', async () => {
+      const calls = mockFetch(renameRoutes(2));
+      renderEditor();
+      await rename('Atlas v2');
+
+      // The offer comes once the new title is saved, and names the title the note was opened with.
+      const update = await screen.findByRole('button', { name: 'Update 2 links' });
+      expect(screen.getByText(/2 notes still link to “Project Atlas”/)).toBeInTheDocument();
+      const asked = calls.filter((call) => call.url.startsWith('/api/notes/n1/rename-links'));
+      expect(asked.at(-1)).toMatchObject({ method: 'GET', url: '/api/notes/n1/rename-links?from=Project+Atlas' });
+      expect(calls.some((call) => call.method === 'POST')).toBe(false);
+
+      await userEvent.click(update);
+      await waitFor(() => expect(screen.queryByText(/still link/)).not.toBeInTheDocument());
+      const posted = calls.findIndex((call) => call.method === 'POST');
+      expect(calls[posted]).toMatchObject({ url: '/api/notes/n1/rename-links', body: { from: 'Project Atlas' } });
+      // The new title was saved before the links were pointed at it.
+      const patched = calls.findIndex((call) => call.method === 'PATCH' && (call.body as Note).title === 'Atlas v2');
+      expect(patched).toBeGreaterThan(-1);
+      expect(patched).toBeLessThan(posted);
+    });
+
+    it('can be told "Not now", and asks again when the title changes once more', async () => {
+      const calls = mockFetch(renameRoutes(1));
+      renderEditor();
+      await rename('Atlas v2');
+
+      expect(await screen.findByText(/1 note still links to “Project Atlas”/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Update 1 link' })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Not now' }));
+      expect(screen.queryByText(/still links/)).not.toBeInTheDocument();
+
+      await userEvent.type(screen.getByLabelText('Title'), '.1');
+      expect(await screen.findByText(/1 note still links to “Project Atlas”/)).toBeInTheDocument();
+      expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    });
   });
 
   it('shows notes in the trash as read-only', async () => {
