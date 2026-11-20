@@ -200,6 +200,19 @@ describe('NotesService', () => {
         expect(tags.setNoteTags).toHaveBeenCalledWith(prisma, USER, 'new', ['mine']);
       });
 
+      it('names the note after the template, without a closing "template"', async () => {
+        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'Weekly review  Template' });
+        await service.create(USER, { templateId: 't1' });
+        expect(prisma.note.create.mock.calls[0][0].data).toMatchObject({
+          title: 'Weekly review',
+          content: '# Weekly review\n\nWritten at {{time}}, see [[Deep Work]]. {{mood}}',
+        });
+
+        prisma.note.findFirst.mockResolvedValue({ ...template, title: 'Template' });
+        await service.create(USER, { templateId: 't1' });
+        expect(prisma.note.create.mock.calls[1][0].data.title).toBe('Template');
+      });
+
       it('404s when the template is not there, is not a template or is someone else’s', async () => {
         prisma.note.findFirst.mockResolvedValue(null);
         await expect(service.create(USER, { templateId: 't9' })).rejects.toThrow('Template not found');

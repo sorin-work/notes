@@ -130,7 +130,10 @@ export class NotesService {
    * of the template, with the placeholders filled in. Its [[links]] come
    * along as text and are stored for the new note like any others. The values
    * for {{date}} and {{time}} come with the request, {{title}} is the title
-   * the new note gets.
+   * the new note gets. Without a title in the request that is the title of
+   * the template, less a closing "template": a note made from "Weekly review
+   * template" is a "Weekly review", and does not share its title with the
+   * template it came from.
    */
   private async fromTemplate(
     userId: string,
@@ -145,7 +148,8 @@ export class NotesService {
       throw new NotFoundException('Template not found');
     }
     const values = { date: dto.placeholders?.date, time: dto.placeholders?.time };
-    const filledTitle = fillPlaceholders(template.title, values).trim().slice(0, MAX_TITLE_LENGTH);
+    const ownTitle = template.title.replace(/\s+template$/i, '');
+    const filledTitle = fillPlaceholders(ownTitle, values).trim().slice(0, MAX_TITLE_LENGTH);
     const title = dto.title || filledTitle || DEFAULT_TITLE;
     const content = fillPlaceholders(template.content, { ...values, title });
     if (content.length > MAX_CONTENT_LENGTH) {

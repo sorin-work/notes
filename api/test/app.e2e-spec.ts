@@ -876,10 +876,11 @@ describe('templates and copies', () => {
     expect(ids(await get(`/api/notes/${target.id}/backlinks`))).toEqual([made.id]);
 
     // Without values the placeholders stay as written: the server does not guess the day.
+    // The note is named after the template, less the closing "template".
     const unfilled = await post('/api/notes', { templateId: template.id });
-    expect(unfilled.title).toBe('Weekly review template');
+    expect(unfilled.title).toBe('Weekly review');
     expect(unfilled.content).toContain('Week ending {{date}}, written at {{ time }}.');
-    expect(unfilled.content).toContain('# Weekly review template');
+    expect(unfilled.content).toContain('# Weekly review\n');
 
     // Only a template of one's own can be used, and only the known placeholders are taken.
     const body = { templateId: template.id };
