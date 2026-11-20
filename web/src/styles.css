@@ -303,6 +303,10 @@ mark {
   padding: 0.9rem 0.8rem 0.6rem;
 }
 
+.new-from-template {
+  width: 100%;
+}
+
 .brand {
   display: flex;
   align-items: center;

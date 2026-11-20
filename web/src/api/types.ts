@@ -50,6 +50,8 @@ export interface Note {
   content: string;
   /** Goes up with every change to the title or the content. A save names the revision it was based on. */
   revision: number;
+  /** A template is kept out of the lists and the search, and new notes are made from it. */
+  isTemplate: boolean;
   notebookId: string | null;
   notebook: { id: string; name: string; parentId: string | null } | null;
   tags: string[];
@@ -71,6 +73,11 @@ export interface NoteChanges {
   revision?: number;
   /** Keep the text this save replaces as a version, whatever the usual interval. */
   keepVersion?: boolean;
+  isTemplate?: boolean;
+  /** For a new note: the template to make it from. */
+  templateId?: string;
+  /** For a new note from a template: what {{date}} and {{time}} are filled with. */
+  placeholders?: { date?: string; time?: string };
   notebookId?: string | null;
   tags?: string[];
   pinned?: boolean;

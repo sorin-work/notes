@@ -8,6 +8,8 @@ export interface NoteFilters {
   tag?: string;
   pinned?: boolean;
   favorite?: boolean;
+  /** The templates, which no other list shows. */
+  templates?: boolean;
   sort?: NoteSort;
   page?: number;
   pageSize?: number;
@@ -32,6 +34,9 @@ export function staleNote(error: unknown): Note | null {
 }
 
 export const trashNote = (id: string) => api<void>(`/notes/${id}`, { method: 'DELETE' });
+
+/** A copy of the note with its text, tags and notebook, and nothing else of it. */
+export const duplicateNote = (id: string) => api<Note>(`/notes/${id}/duplicate`, { method: 'POST' });
 
 export const backlinks = (id: string) => api<Backlink[]>(`/notes/${id}/backlinks`);
 

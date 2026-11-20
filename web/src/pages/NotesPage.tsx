@@ -36,7 +36,11 @@ export function NotesPage() {
   } else if (view === 'favorites') {
     filters.favorite = true;
     names.push('Favourites');
+  } else if (view === 'templates') {
+    filters.templates = true;
+    names.push('Templates');
   }
+  const [one, many] = view === 'templates' ? ['template', 'templates'] : ['note', 'notes'];
   if (notebook) {
     filters.notebookId = notebook;
     names.push(
@@ -84,7 +88,7 @@ export function NotesPage() {
         <header className="list-header">
           <div>
             <h1>{heading}</h1>
-            <span className="muted">{notes.isSuccess && `${total} ${total === 1 ? 'note' : 'notes'}`}</span>
+            <span className="muted">{notes.isSuccess && `${total} ${total === 1 ? one : many}`}</span>
           </div>
           <select aria-label="Sort notes" value={sort} onChange={(event) => setSort(event.target.value as NoteSort)}>
             <option value="updated">Last edited</option>
@@ -103,9 +107,14 @@ export function NotesPage() {
           {notes.isLoading && <Spinner />}
           {notes.error && <ErrorMessage error={notes.error} onRetry={() => void notes.refetch()} />}
           {notes.isSuccess && items.length === 0 && (
-            <EmptyState title="No notes here yet">
+            <EmptyState title={`No ${many} here yet`}>
+              {view === 'templates' && (
+                <p className="muted">
+                  A template is a note that new notes start from. Any note becomes one with “Template” in its toolbar.
+                </p>
+              )}
               <button type="button" className="button button-primary" onClick={() => newNote.mutate()}>
-                Create a note
+                Create a {one}
               </button>
             </EmptyState>
           )}

@@ -2,12 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { deleteNotebook, listNotebooks } from '../api/notebooks';
-import { createNote } from '../api/notes';
+import { createNote, listNotes } from '../api/notes';
 import { listTags } from '../api/tags';
-import type { Notebook } from '../api/types';
+import type { Notebook, NoteChanges } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
-import { newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
+import { leavingTemplates, newNoteFor, NO_NOTEBOOK, readFilters } from '../lib/filters';
 import { notebookTree, totalNotes } from '../lib/notebooks';
+import { fromTemplate } from '../lib/templates';
 import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
@@ -36,12 +37,21 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { notebook: activeNotebook, tag: activeTag, view } = shown;
   const showsAll = onNotes && !activeNotebook && !activeTag && !view;
 
+  // Under the 'notes' key, so that whatever refreshes the lists refreshes this one too.
+  const templates = useQuery({
+    queryKey: ['notes', 'templates'],
+    queryFn: () => listNotes({ templates: true, sort: 'title', pageSize: 100 }),
+  });
+
   const newNote = useMutation({
-    mutationFn: () => createNote(newNoteFor(shown)),
+    mutationFn: (start: NoteChanges | void) => createNote(start ?? newNoteFor(shown)),
     onSuccess: (note) => {
       void queryClient.invalidateQueries({ queryKey: ['notes'] });
       void queryClient.invalidateQueries({ queryKey: ['notebooks'] });
-      navigate({ pathname: `/notes/${note.id}`, search: onNotes ? location.search : '' });
+      void queryClient.invalidateQueries({ queryKey: ['tags'] });
+      // A note is not shown in the list of templates, so that view is left behind.
+      const search = onNotes && !note.isTemplate ? leavingTemplates(location.search) : onNotes ? location.search : '';
+      navigate({ pathname: `/notes/${note.id}`, search });
       onNavigate?.();
     },
   });
@@ -94,6 +104,25 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         >
           + New note
         </button>
+        {templates.data && templates.data.items.length > 0 && (
+          <select
+            className="new-from-template"
+            aria-label="New from template"
+            value=""
+            disabled={newNote.isPending}
+            onChange={(event) => {
+              // The new note goes into the notebook that is being looked at. Its tags come from the template.
+              if (event.target.value) newNote.mutate(fromTemplate(event.target.value, newNoteFor(shown).notebookId));
+            }}
+          >
+            <option value="">New from template…</option>
+            {templates.data.items.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.title}
+              </option>
+            ))}
+          </select>
+        )}
         <form role="search" onSubmit={submitSearch}>
           <input
             type="search"
@@ -113,6 +142,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           {filterLink('?view=pinned', view === 'pinned', 'Pinned')}
           {filterLink('?view=favorites', view === 'favorites', 'Favourites')}
           {filterLink(`?notebook=${NO_NOTEBOOK}`, activeNotebook === NO_NOTEBOOK, 'Not in a notebook')}
+          {filterLink('?view=templates', view === 'templates', 'Templates')}
         </div>
 
         <div className="nav-section">

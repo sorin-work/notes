@@ -8,7 +8,8 @@ export interface ListFilters {
   /** A notebook id, or NO_NOTEBOOK. */
   notebook: string | null;
   tag: string | null;
-  view: 'pinned' | 'favorites' | null;
+  /** "templates" is a list of its own: templates are in no other. */
+  view: 'pinned' | 'favorites' | 'templates' | null;
 }
 
 export function readFilters(params: URLSearchParams): ListFilters {
@@ -17,7 +18,7 @@ export function readFilters(params: URLSearchParams): ListFilters {
     // "?view=unfiled" is the older address of "?notebook=none" and still works.
     notebook: params.get('notebook') || (view === 'unfiled' ? NO_NOTEBOOK : null),
     tag: params.get('tag') || null,
-    view: view === 'pinned' || view === 'favorites' ? view : null,
+    view: view === 'pinned' || view === 'favorites' || view === 'templates' ? view : null,
   };
 }
 
@@ -45,5 +46,16 @@ export function newNoteFor(filters: ListFilters): NoteChanges {
     tags: filters.tag ? [filters.tag] : undefined,
     pinned: filters.view === 'pinned' || undefined,
     favorite: filters.view === 'favorites' || undefined,
+    isTemplate: filters.view === 'templates' || undefined,
   };
+}
+
+/**
+ * The address of the list for a note that was just made from a template. It
+ * is an ordinary note, so the list of templates is not the place to show it in.
+ */
+export function leavingTemplates(search: string): string {
+  const params = new URLSearchParams(search);
+  if (params.get('view') === 'templates') params.delete('view');
+  return params.toString();
 }
