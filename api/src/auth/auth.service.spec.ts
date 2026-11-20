@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { AuthService } from './auth.service';
@@ -93,6 +93,52 @@ describe('AuthService', () => {
     });
   });
 
+  describe('updateProfile', () => {
+    it('changes the name without asking for the password', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.user.update.mockResolvedValue({ ...user, name: 'Ada L.' });
+      const result = await service.updateProfile(user.id, { name: 'Ada L.', email: user.email });
+      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: user.id }, data: { name: 'Ada L.' } });
+      expect(result.name).toBe('Ada L.');
+    });
+
+    it('needs the current password to change the email', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      await expect(service.updateProfile(user.id, { email: 'new@example.com' })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(
+        service.updateProfile(user.id, { email: 'new@example.com', currentPassword: 'wrong-one' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('changes the email when the password matches', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce(user).mockResolvedValueOnce(null);
+      prisma.user.update.mockResolvedValue({ ...user, email: 'new@example.com' });
+      const result = await service.updateProfile(user.id, {
+        email: 'new@example.com',
+        currentPassword: 'correct-horse',
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: user.id }, data: { email: 'new@example.com' } });
+      expect(result.email).toBe('new@example.com');
+    });
+
+    it('refuses an email that belongs to another account', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce(user).mockResolvedValueOnce({ ...user, id: 'someone-else' });
+      await expect(
+        service.updateProfile(user.id, { email: 'taken@example.com', currentPassword: 'correct-horse' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing when nothing changed', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      await service.updateProfile(user.id, { name: user.name, email: user.email });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('changePassword', () => {
     it('stores a new hash, bumps the token version and returns a token for it', async () => {
       prisma.user.findUnique.mockResolvedValue(user);
@@ -124,6 +170,22 @@ describe('AuthService', () => {
         where: { id: user.id },
         data: { tokenVersion: { increment: 1 } },
       });
+    });
+  });
+
+  describe('deleteAccount', () => {
+    it('deletes the user when the password matches', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      await service.deleteAccount(user.id, { password: 'correct-horse' });
+      expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: user.id } });
+    });
+
+    it('refuses when the password is wrong', async () => {
+      prisma.user.findUnique.mockResolvedValue(user);
+      await expect(service.deleteAccount(user.id, { password: 'wrong-one' })).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.user.delete).not.toHaveBeenCalled();
     });
   });
 });

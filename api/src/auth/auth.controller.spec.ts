@@ -9,6 +9,8 @@ describe('AuthController', () => {
     register: jest.fn(),
     login: jest.fn(),
     me: jest.fn(),
+    updateProfile: jest.fn(),
+    deleteAccount: jest.fn(),
     changePassword: jest.fn(),
     logoutEverywhere: jest.fn(),
   };
@@ -52,8 +54,13 @@ describe('AuthController', () => {
     expect(auth.changePassword).toHaveBeenCalledWith('1', dto);
   });
 
-  it('signs the current user out everywhere', async () => {
-    await controller.logoutEverywhere({ id: '1', email: 'ada@example.com' });
+  it('updates, signs out and deletes the current user', async () => {
+    const current = { id: '1', email: 'ada@example.com' };
+    await controller.updateProfile(current, { name: 'Ada L.' });
+    expect(auth.updateProfile).toHaveBeenCalledWith('1', { name: 'Ada L.' });
+    await controller.logoutEverywhere(current);
     expect(auth.logoutEverywhere).toHaveBeenCalledWith('1');
+    await controller.deleteAccount(current, { password: 'pw' });
+    expect(auth.deleteAccount).toHaveBeenCalledWith('1', { password: 'pw' });
   });
 });

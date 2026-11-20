@@ -86,6 +86,36 @@ describe('auth', () => {
 describe('account', () => {
   const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
+  it('changes the name freely and the email only with the password', async () => {
+    const server = app.getHttpServer();
+    const { auth } = await signUp();
+    const email = `renamed-${Date.now()}@example.com`;
+
+    const renamed = await request(server).patch('/api/auth/me').set(auth).send({ name: '  Grace  ' }).expect(200);
+    expect(renamed.body.name).toBe('Grace');
+
+    await request(server).patch('/api/auth/me').set(auth).send({ email }).expect(400);
+    // 403, not 401: the web app takes a 401 to mean the session is over.
+    await request(server).patch('/api/auth/me').set(auth).send({ email, currentPassword: 'wrong-one' }).expect(403);
+    const moved = await request(server)
+      .patch('/api/auth/me')
+      .set(auth)
+      .send({ email: email.toUpperCase(), currentPassword: 'password123' })
+      .expect(200);
+    expect(moved.body).toMatchObject({ name: 'Grace', email });
+
+    // The token still works, and the new address is the login name.
+    await request(server).get('/api/auth/me').set(auth).expect(200);
+    await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
+
+    const other = await signUp();
+    await request(server)
+      .patch('/api/auth/me')
+      .set(other.auth)
+      .send({ email, currentPassword: 'password123' })
+      .expect(409);
+  });
+
   it('ends the other sessions when the password changes', async () => {
     const server = app.getHttpServer();
     const email = `sessions-${Date.now()}@example.com`;
@@ -126,6 +156,31 @@ describe('account', () => {
     await request(server).get('/api/auth/me').set(bearer(second.body.token)).expect(401);
     const again = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
     await request(server).get('/api/auth/me').set(bearer(again.body.token)).expect(200);
+  });
+
+  it('deletes the account and everything in it', async () => {
+    const server = app.getHttpServer();
+    const email = `leaving-${Date.now()}@example.com`;
+    const account = await request(server)
+      .post('/api/auth/register')
+      .send({ email, name: 'Ada', password: 'password123' })
+      .expect(201);
+    const auth = bearer(account.body.token);
+    const note = await request(server)
+      .post('/api/notes')
+      .set(auth)
+      .send({ title: 'Going', tags: ['bye'] });
+    const share = await request(server).post(`/api/notes/${note.body.id}/share`).set(auth).expect(200);
+
+    await request(server).delete('/api/auth/me').set(auth).send({}).expect(400);
+    await request(server).delete('/api/auth/me').set(auth).send({ password: 'wrong-one' }).expect(403);
+    await request(server).get(`/api/notes/${note.body.id}`).set(auth).expect(200);
+
+    await request(server).delete('/api/auth/me').set(auth).send({ password: 'password123' }).expect(204);
+
+    await request(server).get('/api/notes').set(auth).expect(401);
+    await request(server).get(`/api/public/notes/${share.body.token}`).expect(404);
+    await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(401);
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -9,8 +10,10 @@ import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { hashPassword, verifyPassword } from './password';
 
 export interface PublicUser {
@@ -69,6 +72,29 @@ export class AuthService {
     return toPublicUser(await this.find(userId));
   }
 
+  async updateProfile(userId: string, dto: UpdateProfileDto): Promise<PublicUser> {
+    const user = await this.find(userId);
+    const data: { name?: string; email?: string } = {};
+    if (dto.name !== undefined && dto.name !== user.name) {
+      data.name = dto.name;
+    }
+    if (dto.email !== undefined && dto.email !== user.email) {
+      // The email is the login name, so changing it takes the password.
+      if (!dto.currentPassword) {
+        throw new BadRequestException('currentPassword is required to change the email');
+      }
+      await this.checkPassword(user, dto.currentPassword, 'Current password is incorrect');
+      if (await this.prisma.user.findUnique({ where: { email: dto.email } })) {
+        throw new ConflictException('An account with this email already exists');
+      }
+      data.email = dto.email;
+    }
+    if (Object.keys(data).length === 0) {
+      return toPublicUser(user);
+    }
+    return toPublicUser(await this.prisma.user.update({ where: { id: userId }, data }));
+  }
+
   /**
    * Ends every other session along with the old password. The caller gets a
    * token for the new version, so the session that made the change goes on.
@@ -86,6 +112,13 @@ export class AuthService {
   /** Makes every token issued so far worthless, the caller's included. */
   async logoutEverywhere(userId: string): Promise<void> {
     await this.prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
+  }
+
+  /** Notebooks, notes, tags, versions and share links go with the user (cascades in the schema). */
+  async deleteAccount(userId: string, dto: DeleteAccountDto): Promise<void> {
+    const user = await this.find(userId);
+    await this.checkPassword(user, dto.password, 'Password is incorrect');
+    await this.prisma.user.delete({ where: { id: userId } });
   }
 
   private async find(userId: string): Promise<User> {
