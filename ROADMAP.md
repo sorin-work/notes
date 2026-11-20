@@ -35,7 +35,7 @@ couple of weekends, **L** several weeks of spare time.
 | 14  | Offline mode and installable app       | Shipped | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Shipped | both     | M    | -          |
-| 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
+| 17  | Notebooks shared with other accounts   | Shipped | both     | L    | 8          |
 | 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
 
 ## Next
@@ -64,25 +64,6 @@ more.
   sidebar.
 - Undecided: whether it is worth it at all when tags and links exist. A cap
   of three or four levels would keep the sidebar manageable.
-
-### 17. Notebooks shared with other accounts
-
-Let a second person read or edit a notebook: invite them by email and it
-shows up in their sidebar. Depends on item 8.
-
-- The whole API assumes one owner. Every service looks notes up with
-  `where: { id, userId }`. That has to become one shared access check: the
-  owner, or a member of the note's notebook.
-- `NotebookMember` model with a role (read or edit). Inviting an address that
-  has no account yet needs a mail, which `MailService` can send since the
-  password reset.
-- Tricky: tags belong to a user (`@@unique([userId, name])`) and `[[links]]`
-  resolve by title among one user's notes (`LinksService.resolveKeys`). In a
-  shared notebook, whose tags and whose titles? The simplest rule is that
-  both follow the notebook's owner.
-- Two people in one note need conflict detection at the very least. Live
-  co-editing with cursors and merged keystrokes is a different project and
-  not planned.
 
 ### 18. Graph view and unlinked mentions
 
@@ -460,3 +441,26 @@ and import keep the template flag. Still open: placeholders are also filled
 inside code, a template can still be shared by a link like any note, there
 is no page that lists the daily notes or steps from one day to the next, and
 `{{date}}` does not follow the chosen date format.
+
+### 17. Notebooks shared with other accounts
+
+Built as planned, with tags and link titles following the owner. One access
+check, `AccessService`, sits in front of every route that takes a note or a
+notebook: owner, member of the note's notebook (or the one around it, through
+the same parent and children as `idsWithChildren`), or a `404`. The services
+keep looking notes up by owner and id, with the owner the check hands back,
+so a route that forgot the check fails closed; an end-to-end test walks every
+note route as an outsider and expects `404`. `NotebookMember` has a read or
+edit role. Invitations go by email through the mail setup of the password
+reset, with the same token rules (hashed, once, in the fragment) plus a week
+of life and a tie to the invited address, and are also shown in the app to
+an existing account. Members see nothing of the owner beyond the notebook:
+links, backlinks, titles and search with the notebook filter are kept to
+it, and templates and the trash stay out. Two editors meet the conflict
+question of item 8. Owners change roles and remove members, members leave,
+and a change in a member's outbox for a note they lost is refused and listed.
+Different from the plan: an editor changes text, tags and adds notes, but
+pins, moving, templates, share links, renaming links across the owner's
+notes, duplicating and the trash stay the owner's. Still open: no
+notifications when someone changes a shared note, and the demo seed has no
+second account to share with.

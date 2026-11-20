@@ -75,6 +75,13 @@ Markdown import/export.
   Stopping sharing kills the link; notes in the trash are never served.
   A shared notebook never shows its templates: they are not listed, cannot
   be opened through it, and a link to one reads as its words.
+- **Notebooks shared with other accounts**: "Share with people" on a
+  notebook invites an address to read it, or to edit it. The notebook, and
+  the notebooks inside it, then show in the member's sidebar under "Shared
+  with me". Readers read; editors also change the text and tags of the notes
+  and add notes, which stay the owner's. Members never see the owner's other
+  notebooks, notes, tags or titles, nor the notebook's templates. The owner
+  can change a role or remove someone, and a member can leave.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault or a
@@ -816,6 +823,44 @@ localhost, because Web Locks and `crypto.randomUUID` exist only there. Served
 over plain HTTP from another address, the outbox is off. The offline line says
 so, saving works as before while there is a connection, and text that cannot
 be saved stays in the editor as an unsaved change.
+
+## Notebooks shared with other accounts
+
+Every route that takes a note or a notebook first asks one access check
+(`api/src/access/access.service.ts`): the owner may do everything, a member of
+the notebook the note is in (or of the notebook around that one) may read or
+edit, and anyone else gets a `404`, the same as for a note that does not
+exist. The check hands back the owner's id, and the services go on looking
+notes up by owner and id with it, so a route that forgot to ask would only
+ever find the caller's own notes. An end-to-end test walks every note route
+as an outsider, and as a member on a note outside the shared notebook, and
+expects `404` from each.
+
+A member works on the owner's notes. Tags set by an editor are the owner's
+tags, `[[links]]` resolve among the owner's titles, and new notes in the
+shared notebook belong to the owner. But a member only ever sees what is in
+the shared notebook: links to anything else read as missing, and backlinks,
+link suggestions and search with the notebook as filter stay inside it. Their
+own lists, tags, search and "Go to a note" stay their own. Templates
+and notes in the trash are never shown to members. Two people saving one
+note meet the conflict question of item 8, as two tabs do. An editor changes
+title, text and tags, and restores versions; pinning, stars, moving, templates,
+share links, renaming links across notes, duplicating and the trash stay the
+owner's (`403`).
+
+Invitations go to an address and last a week. An account with that address
+sees them at the top of its sidebar, to accept or decline. When the server
+can send mail, a mail goes out as well, with a link to `/invites`. Like the
+password reset, the link's token is in the fragment, only its hash is
+stored, and it works once. It also works only for an account with the
+invited address, so a forwarded link is no use. The mail says nothing that
+came from the inviting account: not their name, not the notebook's. An
+account can send ten invitations an hour, and a notebook can have twenty
+open. A change waiting in a member's outbox for a note they can no longer
+reach is listed as stuck ("gone, or not shared with you any more").
+
+The routes are under `/api/notebooks/:id/members` and `/api/invites`, closed
+to API tokens.
 
 ## API overview
 
