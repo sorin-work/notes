@@ -100,7 +100,8 @@ export function toView(note: NoteWithRelations): NoteView {
     pinned: note.pinned,
     favorite: note.favorite,
     shared: note.share !== null,
-    sharedThrough: sharedThrough(note.notebook),
+    // A shared notebook does not show its templates to its readers.
+    sharedThrough: note.isTemplate ? null : sharedThrough(note.notebook),
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
     deletedAt: note.deletedAt,

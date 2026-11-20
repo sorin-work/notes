@@ -134,9 +134,10 @@ export class LinksService {
     if (among) {
       const ids = 'notebookIds' in among ? among.notebookIds : among.noteIds;
       if (ids.length === 0) return result;
+      // A shared notebook shows its readers its notes, not its templates.
       within =
         'notebookIds' in among
-          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[])`
+          ? Prisma.sql`AND notebook_id = ANY(${ids}::uuid[]) AND is_template = false`
           : Prisma.sql`AND id = ANY(${ids}::uuid[])`;
     }
     // Titles are matched case-insensitively. Prisma cannot express

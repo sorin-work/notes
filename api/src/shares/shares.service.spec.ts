@@ -437,6 +437,7 @@ describe('SharesService', () => {
         expect(prisma.note.findMany.mock.calls[0][0].where).toEqual({
           userId: OWNER,
           deletedAt: null,
+          isTemplate: false,
           notebookId: { in: ['nb1', 'nb2'] },
         });
       });
@@ -448,6 +449,7 @@ describe('SharesService', () => {
           notebookId: { in: ['nb1', 'nb2'] },
           userId: OWNER,
           deletedAt: null,
+          isTemplate: false,
         });
 
         // Moved out or put in the trash: the same query finds nothing.
