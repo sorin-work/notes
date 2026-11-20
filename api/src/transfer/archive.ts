@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { crc32 } from 'node:zlib';
 
 /** Limits on what one import may unpack, over all its zips together. */
 export interface ArchiveLimits {
@@ -74,7 +75,9 @@ export async function readArchive(
 ): Promise<ArchiveContents> {
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(buffer, { checkCRC32: true });
+    // Only the directory is read here. With checkCRC32 JSZip would unpack every entry
+    // to check it, before any limit applies. The checksum is checked while reading below.
+    zip = await JSZip.loadAsync(buffer);
   } catch {
     throw new ArchiveRefused('Not a valid zip file');
   }
@@ -105,15 +108,17 @@ export async function readArchive(
       contents.skipped.push({ file: original, reason });
       continue;
     }
-    const bytes = await readBounded(entry, Math.min(limits.fileBytes, budget.remaining + 1));
+    const { bytes, unpacked } = await readBounded(entry, Math.min(limits.fileBytes, budget.remaining + 1));
+    // What was unpacked counts, also for a file that turned out too large: entries
+    // can share their packed data, and each of them would unpack it all again.
+    budget.remaining -= unpacked;
+    if (budget.remaining < 0) {
+      throw new ArchiveRefused('The import unpacks to more than it may');
+    }
     if (bytes === null) {
-      if (budget.remaining < limits.fileBytes) {
-        throw new ArchiveRefused('The import unpacks to more than it may');
-      }
       contents.skipped.push({ file: original, reason: 'The file is too large' });
       continue;
     }
-    budget.remaining -= bytes.length;
     contents.files.push({ path: original, text: bytes.toString('utf8'), modified: entry.date });
   }
   return contents;
@@ -130,12 +135,15 @@ interface EntryStream {
 
 /**
  * Unpacks one entry, stopping as soon as it passes `limit` bytes, whatever
- * size the zip claims for it. Null when it does.
+ * size the zip claims for it: `bytes` is null then. `unpacked` says how much
+ * was unpacked either way. The checksum the zip gives is compared at the end.
  */
-function readBounded(entry: JSZip.JSZipObject, limit: number): Promise<Buffer | null> {
+function readBounded(entry: JSZip.JSZipObject, limit: number): Promise<{ bytes: Buffer | null; unpacked: number }> {
+  const expected = (entry as unknown as { _data?: { crc32?: number } })._data?.crc32;
   return new Promise((resolve, reject) => {
     const chunks: Uint8Array[] = [];
     let size = 0;
+    let checksum = 0;
     let settled = false;
     const stream = (entry as unknown as { internalStream(type: 'uint8array'): EntryStream }).internalStream(
       'uint8array',
@@ -147,9 +155,10 @@ function readBounded(entry: JSZip.JSZipObject, limit: number): Promise<Buffer | 
         if (size > limit) {
           settled = true;
           stream.pause();
-          resolve(null);
+          resolve({ bytes: null, unpacked: size });
           return;
         }
+        checksum = crc32(chunk, checksum);
         chunks.push(chunk);
       })
       .on('error', (error: Error) => {
@@ -160,7 +169,11 @@ function readBounded(entry: JSZip.JSZipObject, limit: number): Promise<Buffer | 
       .on('end', () => {
         if (settled) return;
         settled = true;
-        resolve(Buffer.concat(chunks));
+        if (typeof expected === 'number' && expected >>> 0 !== checksum >>> 0) {
+          reject(new ArchiveRefused(`${entry.name} is damaged: its checksum does not match`));
+          return;
+        }
+        resolve({ bytes: Buffer.concat(chunks), unpacked: size });
       })
       .resume();
   });
