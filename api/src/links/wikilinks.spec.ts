@@ -510,6 +510,33 @@ describe('what the parser of the preview reads differently', () => {
   });
 });
 
+describe('what the preview would show differently after the brackets', () => {
+  it('refuses when the brackets would change how emphasis, strong or strikethrough pair up', () => {
+    for (const text of [
+      'これは**Atlas**です',
+      '私は*Atlas*が好き',
+      '新しい~~Atlas~~計画',
+      'x *Atlas*y',
+      'x _Atlas_.y',
+    ]) {
+      expect(linkMention(text, 'Atlas')).toBeNull();
+      expect(findMention(text, 'Atlas')).toBeNull();
+    }
+    // Where the marks still pair up, the mention is linked inside them.
+    expect(linkMention('An *old atlas* here', 'Atlas')).toBe('An *old [[atlas]]* here');
+  });
+
+  it('does not put brackets after a "!", where they would open an image', () => {
+    expect(findMention('Done!Atlas next', 'Atlas')).toBeNull();
+    expect(linkMention('Done! Atlas next', 'Atlas')).toBe('Done! [[Atlas]] next');
+  });
+
+  it('skips table cells beyond the columns of the header, which the preview does not show', () => {
+    expect(findMention('| a |\n|---|\n| x | Atlas |', 'Atlas')).toBeNull();
+    expect(linkMention('| a | b |\n|---|---|\n| x | Atlas |', 'Atlas')).toBe('| a | b |\n|---|---|\n| x | [[Atlas]] |');
+  });
+});
+
 describe('onlyAddsLink', () => {
   const at = (text: string, word: string) => ({ start: text.indexOf(word), end: text.indexOf(word) + word.length });
   const wrap = (text: string, word: string) => text.replace(word, `[[${word}]]`);
