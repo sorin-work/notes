@@ -76,6 +76,25 @@ describe('VersionsService', () => {
     });
   });
 
+  describe('snapshot', () => {
+    const tx = () => asPrismaService(prisma);
+
+    it('saves the note even when a version was saved a moment ago', async () => {
+      const recent = new Date(now.getTime() - 1000);
+      prisma.noteVersion.findFirst.mockResolvedValue({ title: 'Plan', content: 'Older text', createdAt: recent });
+      await expect(service.snapshot(tx(), note, now)).resolves.toBe(true);
+      expect(prisma.noteVersion.create).toHaveBeenCalledWith({
+        data: { noteId: 'n1', title: 'Plan', content: 'Current text', createdAt: now },
+      });
+    });
+
+    it('does not save what the latest version already holds', async () => {
+      prisma.noteVersion.findFirst.mockResolvedValue({ title: 'Plan', content: 'Current text', createdAt: now });
+      await expect(service.snapshot(tx(), note, now)).resolves.toBe(false);
+      expect(prisma.noteVersion.create).not.toHaveBeenCalled();
+    });
+  });
+
   it('lists versions newest first with their size', async () => {
     prisma.note.findFirst.mockResolvedValue(note);
     prisma.noteVersion.findMany.mockResolvedValue([
