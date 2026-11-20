@@ -48,8 +48,9 @@ Markdown import/export.
 - **Trash**: deleted notes can be restored or deleted for good, and are
   purged automatically after 30 days (`TRASH_RETENTION_DAYS`).
 - **Share links**: a read-only public page for a single note at `/s/<token>`,
-  with a view count. Stopping sharing kills the link; notes in the trash are
-  never served.
+  with a view count that leaves out your own visits. A link can be given a
+  date on which it runs out and a password that readers have to type.
+  Stopping sharing kills the link; notes in the trash are never served.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
@@ -165,8 +166,8 @@ reset.
 
 ### Limits per visitor
 
-Logins, sign-ups, password resets and the account changes that ask for the
-password are limited per client address. The API sits behind nginx, so the
+Logins, sign-ups, password resets, the account changes that ask for the
+password, and reading shared notes are limited per client address. The API sits behind nginx, so the
 stack sets `TRUST_PROXY=1`: the API then takes the address nginx reports in
 `X-Forwarded-For` instead of nginx's own, which would be the same for
 everyone and let one visitor use up the allowance of all. Requests made
@@ -292,6 +293,7 @@ npm run dev
 | `TRASH_RETENTION_DAYS`     | `30`       | Days before trashed notes are deleted for good                           |
 | `AUTH_THROTTLE_LIMIT`      | `10`       | Per-minute limit on the routes that take a password                      |
 | `API_TOKEN_THROTTLE_LIMIT` | `120`      | Requests a minute that one API token may make                            |
+| `PUBLIC_THROTTLE_LIMIT`    | `60`       | Shared notes that one client may open in a minute                        |
 | `API_DOCS`                 | `true`     | `false` turns off the page and the document at `/api/docs`               |
 | `SMTP_HOST`                | (none)     | SMTP server. Without it no mail is sent and password reset is off        |
 | `SMTP_PORT`                | `587`      | Its port. `465` is TLS from the start, any other port uses STARTTLS      |
@@ -510,6 +512,29 @@ still work and offers to revoke them all in one click
 (`DELETE /auth/tokens`). A password reset by mail does revoke them all. A
 token also ends when it is revoked by itself or the account is deleted. An
 account can have 20 of them.
+
+A shared note is read with `GET /public/notes/:token`, without a login. Three
+things can come back besides the note:
+
+- `404` for a link that was mistyped, was revoked, has run out, or whose note
+  is in the trash. The answer is the same for all of them, so nobody outside
+  can tell which, or that a link ever existed.
+- `403` with `"passwordRequired": true` for a link with a password. The note
+  then comes from `POST /public/notes/:token` with `{ "password": "..." }`.
+  The password is only ever sent in a body, never in an address, where it
+  would end up in logs and histories. A wrong password gets the same `403`.
+- `429` when a client reads more than `PUBLIC_THROTTLE_LIMIT` shared notes a
+  minute, or when password attempts go past `AUTH_THROTTLE_LIMIT` a minute.
+  Attempts are counted per client and per link, so guessing from many
+  addresses does not get more tries.
+
+Every answer of these two routes carries `Cache-Control: no-store`, so that a
+link that is revoked, runs out or gets a password stops working at once
+everywhere. A request that carries the owner's login is not counted as a
+view. The owner sets the options with `PATCH /notes/:id/share`:
+`{ "expiresAt": "2026-03-01T12:00:00Z", "password": "..." }`, where `null`
+takes either away. The password is stored as a hash, made the same way as
+account passwords.
 
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
