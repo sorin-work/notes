@@ -122,6 +122,8 @@ describe('AuthService', () => {
       });
       expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: user.id }, data: { email: 'new@example.com' } });
       expect(result.email).toBe('new@example.com');
+      // A reset link mailed to the old address must not work any more.
+      expect(prisma.passwordReset.deleteMany).toHaveBeenCalledWith({ where: { userId: user.id } });
     });
 
     it('refuses an email that belongs to another account', async () => {
@@ -151,6 +153,7 @@ describe('AuthService', () => {
       expect(await verifyPassword('battery-staple', passwordHash)).toBe(true);
       expect(tokenVersion).toEqual({ increment: 1 });
       expect(jwt.verify(result.token)).toMatchObject({ sub: user.id, ver: 1 });
+      expect(prisma.passwordReset.deleteMany).toHaveBeenCalledWith({ where: { userId: user.id } });
     });
 
     it('refuses when the current password is wrong', async () => {

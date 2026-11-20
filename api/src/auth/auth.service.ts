@@ -92,7 +92,12 @@ export class AuthService {
     if (Object.keys(data).length === 0) {
       return toPublicUser(user);
     }
-    return toPublicUser(await this.prisma.user.update({ where: { id: userId }, data }));
+    const updated = await this.prisma.user.update({ where: { id: userId }, data });
+    if (data.email) {
+      // A reset link that is still out was mailed to the old address.
+      await this.prisma.passwordReset.deleteMany({ where: { userId } });
+    }
+    return toPublicUser(updated);
   }
 
   /**
@@ -106,6 +111,8 @@ export class AuthService {
       where: { id: userId },
       data: { passwordHash: await hashPassword(dto.newPassword), tokenVersion: { increment: 1 } },
     });
+    // A reset link that is still out has no business working after this.
+    await this.prisma.passwordReset.deleteMany({ where: { userId } });
     return this.issue(updated);
   }
 
