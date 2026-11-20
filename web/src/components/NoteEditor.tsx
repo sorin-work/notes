@@ -376,9 +376,11 @@ function LoadedEditor({ note }: { note: Note }) {
   );
 
   // "Keep mine" and "keep mine, put theirs in the history": save again, on the revision of the conflict.
-  const keepMine = (withTheirsInHistory: boolean) => {
+  // A "keep both" whose copy could not be made (storage full, say) leaves the question open and says why.
+  const [keepError, setKeepError] = useState<unknown>(null);
+  const keepMine = async (withTheirsInHistory: boolean) => {
     if (!theirs) return;
-    setDialog(null);
+    setKeepError(null);
     if (elsewhere && ownerId) {
       // "Keep mine" replaces the other tab's text only if it is still exactly
       // what the question showed: queued with that text as the parent, any
@@ -386,7 +388,7 @@ function LoadedEditor({ note }: { note: Note }) {
       // that text as a note of its own, under an id that stays the same if
       // this is tried again, so a retry makes no second copy.
       const other = elsewhere;
-      void (async () => {
+      try {
         if (withTheirsInHistory) {
           await createOffline(
             ownerId,
@@ -394,14 +396,23 @@ function LoadedEditor({ note }: { note: Note }) {
             keepBothId(other, 'theirs'),
           );
         }
-        parent.current = { title: other.title, content: other.content };
-        await autosave.retry();
-      })();
+      } catch (error) {
+        setKeepError(
+          new Error(
+            `The other tab's text could not be kept as a note of its own, so nothing was changed. ${error instanceof Error ? error.message : ''}`.trim(),
+          ),
+        );
+        return;
+      }
+      setDialog(null);
+      parent.current = { title: other.title, content: other.content };
+      await autosave.retry();
       return;
     }
+    setDialog(null);
     revision.current = theirs.revision;
     keepTheirs.current = withTheirsInHistory;
-    void autosave.retry();
+    await autosave.retry();
   };
 
   // "Take theirs" fetches the note as it is now. The copy that came with the
@@ -608,6 +619,20 @@ function LoadedEditor({ note }: { note: Note }) {
   const attachFiles = async (files: File[]) => {
     if (readOnly || files.length === 0) return;
     setUploadError(null);
+    // A file goes to the server at once; it is never queued. Without a
+    // connection, or for a note that is not on the server yet, nothing is
+    // added to the text, so no link is left pointing at a file that is not there.
+    const waitingCreate = openEntryFor(note.id)?.kind === 'create';
+    if (!navigator.onLine || waitingCreate) {
+      setUploadError(
+        new Error(
+          waitingCreate
+            ? 'Files can be attached once this note has reached the server. Nothing was added to the note.'
+            : 'Files cannot be attached without a connection. Nothing was added to the note.',
+        ),
+      );
+      return;
+    }
     setUploading((count) => count + files.length);
     for (const file of files) {
       try {
@@ -624,7 +649,11 @@ function LoadedEditor({ note }: { note: Note }) {
           requestAnimationFrame(() => textarea.setSelectionRange(position, position));
         }
       } catch (error) {
-        setUploadError(error);
+        setUploadError(
+          cannotReachServer(error)
+            ? new Error('The connection went while the file was being attached. Nothing was added to the note.')
+            : error,
+        );
       } finally {
         setUploading((count) => count - 1);
       }
@@ -1136,11 +1165,11 @@ function LoadedEditor({ note }: { note: Note }) {
       )}
       {dialog === 'conflict' && theirs && (
         <ConflictDialog
-          onKeepBoth={() => keepMine(true)}
-          onKeepMine={() => keepMine(false)}
+          onKeepBoth={() => void keepMine(true)}
+          onKeepMine={() => void keepMine(false)}
           onTakeTheirs={() => takeTheirs.mutate()}
           busy={takeTheirs.isPending}
-          error={takeTheirs.error}
+          error={keepError ?? takeTheirs.error}
           onClose={() => setDialog(null)}
         />
       )}
