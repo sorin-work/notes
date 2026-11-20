@@ -1,9 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { createShare, getShare, revokeShare, shareUrl } from '../api/shares';
-import { formatRelative } from '../lib/dates';
+import { FormEvent, useState } from 'react';
+import { createShare, getShare, revokeShare, shareUrl, updateShare } from '../api/shares';
+import type { Share, ShareOptions } from '../api/types';
+import { formatDateTime, formatRelative } from '../lib/dates';
 import { Modal } from './Modal';
 import { ErrorMessage, Spinner } from './States';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How long from now, for the choices in the dialog. */
+const EXPIRY_CHOICES = [
+  { value: '1', label: 'In a day' },
+  { value: '7', label: 'In a week' },
+  { value: '30', label: 'In 30 days' },
+];
 
 export function ShareDialog({ noteId, onClose }: { noteId: string; onClose(): void }) {
   const queryClient = useQueryClient();
@@ -61,9 +70,10 @@ export function ShareDialog({ noteId, onClose }: { noteId: string; onClose(): vo
             </div>
           </label>
           <p className="muted">
-            Shared {formatRelative(link.createdAt)} · viewed {link.viewCount} {link.viewCount === 1 ? 'time' : 'times'}.
-            Changes you make show up for readers straight away.
+            Shared {formatRelative(link.createdAt)} · viewed {link.viewCount} {link.viewCount === 1 ? 'time' : 'times'},
+            not counting you. Changes you make show up for readers straight away.
           </p>
+          <ShareOptionsForm noteId={noteId} link={link} onChanged={refresh} />
           <div className="form-actions">
             <button
               type="button"
@@ -78,5 +88,93 @@ export function ShareDialog({ noteId, onClose }: { noteId: string; onClose(): vo
       )}
       {(create.error || revoke.error) && <ErrorMessage error={create.error ?? revoke.error} />}
     </Modal>
+  );
+}
+
+/** When the link runs out and whether it asks for a password. The link itself stays the same. */
+function ShareOptionsForm({ noteId, link, onChanged }: { noteId: string; link: Share; onChanged(): void }) {
+  const [password, setPassword] = useState('');
+  const change = useMutation({
+    mutationFn: (options: ShareOptions) => updateShare(noteId, options),
+    onSuccess: () => {
+      setPassword('');
+      onChanged();
+    },
+  });
+
+  const setExpiry = (choice: string) => {
+    if (choice === 'keep') return;
+    change.mutate({
+      expiresAt: choice === 'never' ? null : new Date(Date.now() + Number(choice) * DAY_MS).toISOString(),
+    });
+  };
+  const submitPassword = (event: FormEvent) => {
+    event.preventDefault();
+    change.mutate({ password });
+  };
+
+  return (
+    <div className="share-options">
+      {link.expired && link.expiresAt && (
+        <p className="field-error" role="status">
+          This link ran out on {formatDateTime(link.expiresAt)} and no longer opens the note. Give it more time below to
+          make it work again.
+        </p>
+      )}
+      <label className="field">
+        <span>Link runs out</span>
+        <select
+          value={link.expiresAt ? 'keep' : 'never'}
+          onChange={(event) => setExpiry(event.target.value)}
+          disabled={change.isPending}
+        >
+          <option value="never">Never</option>
+          {link.expiresAt && (
+            <option value="keep">
+              {link.expired ? 'Ran out' : 'On'} {formatDateTime(link.expiresAt)}
+            </option>
+          )}
+          {EXPIRY_CHOICES.map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <form className="field" onSubmit={submitPassword}>
+        <label htmlFor="share-password">
+          <span>{link.hasPassword ? 'Change the password' : 'Ask readers for a password'}</span>
+        </label>
+        <div className="input-row">
+          <input
+            id="share-password"
+            type="password"
+            autoComplete="new-password"
+            minLength={8}
+            placeholder="At least 8 characters"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+          <button type="submit" className="button" disabled={change.isPending}>
+            {link.hasPassword ? 'Change' : 'Set password'}
+          </button>
+        </div>
+      </form>
+      {link.hasPassword && (
+        <p className="muted">
+          Readers are asked for a password. Send it to them some other way than the link.{' '}
+          <button
+            type="button"
+            className="link-button danger"
+            onClick={() => change.mutate({ password: null })}
+            disabled={change.isPending}
+          >
+            Remove password
+          </button>
+        </p>
+      )}
+      {change.error && <ErrorMessage error={change.error} />}
+    </div>
   );
 }

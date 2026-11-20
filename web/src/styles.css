@@ -1015,6 +1015,23 @@ mark {
   margin: 0.5rem 0 0;
 }
 
+.share-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin: 1rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.share-options p {
+  margin: 0;
+}
+
+.shared-locked {
+  max-width: 24rem;
+}
+
 .capture-form {
   max-width: 40rem;
 }

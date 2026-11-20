@@ -129,6 +129,18 @@ export interface Share {
   token: string;
   viewCount: number;
   createdAt: string;
+  /** null when the link does not run out. */
+  expiresAt: string | null;
+  /** The link has run out and answers like one that does not exist. */
+  expired: boolean;
+  /** Readers are asked for a password. The password itself never comes back from the API. */
+  hasPassword: boolean;
+}
+
+/** What can be changed about a link. Left out means "as it is", null means "take it away". */
+export interface ShareOptions {
+  expiresAt?: string | null;
+  password?: string | null;
 }
 
 export interface SharedNote {
