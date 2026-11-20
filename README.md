@@ -23,11 +23,13 @@ Markdown import/export.
 - **Filters**: two selects above the note list narrow it to a notebook, a tag
   or both, on top of the Pinned and Favourites views. The choice is kept in
   the URL (`?notebook=`, `?tag=`, `?view=`), so a filtered list can be
-  bookmarked.
+  bookmarked. The **Orphans** view lists the notes with no links in or out.
 - **Wiki links**: `[[Note title]]` or `[[Note title|link text]]`. Typing `[[`
   suggests titles. Links to notes that do not exist yet are shown dashed;
   clicking one creates the note. Each note lists its **backlinks**, with the
-  paragraph the link is in.
+  paragraph the link is in. Under them are its **unlinked mentions**: notes
+  that write its title without linking to it, each with a Link button that
+  puts `[[ ]]` around the mention.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted. Words in `"double quotes"` are a phrase: they have to follow
@@ -312,6 +314,17 @@ recently edited one wins. Renaming a note therefore leaves links to the old
 title dangling (they show up dashed), and a new note with the old title picks
 them up again. Links inside code blocks and inline code are ignored.
 
+An unlinked mention is a title written out in another note, as whole words,
+ignoring case and extra spaces, outside code, links, images and URLs. Notes
+that already link to the title are left out. Titles shorter than three
+characters get no mentions, and neither do titles that cannot be written as
+a link (with `[`, `]`, `|`, `#` or a backtick in them). The search index
+picks the candidates, so a title made only of very common words ("The Who")
+finds nothing, and only the 200 notes edited last that match are read. The
+Link button changes the other note: its old text is saved as a version first,
+so the change can be undone from its history, and its "last edited" time
+stays as it was.
+
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
 next ten minutes do not. Pinning, favouriting, tags and moving between
@@ -333,18 +346,19 @@ All endpoints are under `/api` and, apart from sign-up, login, the health
 check and shared notes, need an `Authorization: Bearer <token>` header.
 Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
 
-| Method & path                                                  | What it does                              |
-| -------------------------------------------------------------- | ----------------------------------------- |
-| `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
-| `GET /auth/me`, `PATCH /auth/password`                         | Current user, change password             |
-| `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
-| `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
-| `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
-| `GET /notes/:id/backlinks`, `GET /notes/:id/links`             | Backlinks and outgoing links              |
-| `GET /notes/titles?q=`, `GET /notes/resolve?title=`            | Titles for links and the switcher, lookup |
-| `GET /notes/:id/versions[/:versionId]`, `POST .../restore`     | History                                   |
-| `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token` | Share links                               |
-| `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]` | Trash                                     |
-| `GET /search?q=&notebookId=&tag=&page=`                        | Full-text search, `"phrases"` in quotes   |
-| `GET /tags`, `PATCH/DELETE /tags/:id`                          | Tags                                      |
-| `GET /export`, `GET /notes/:id/export`, `POST /import`         | Zip export, single note, import           |
+| Method & path                                                        | What it does                              |
+| -------------------------------------------------------------------- | ----------------------------------------- |
+| `POST /auth/register`, `POST /auth/login`                            | Returns `{ token, user }`                 |
+| `GET /auth/me`, `PATCH /auth/password`                               | Current user, change password             |
+| `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`                 | Notebooks                                 |
+| `GET /notes?notebookId=&tag=&pinned=&favorite=&orphans=&sort=&page=` | Note list (`notebookId=none` for unfiled) |
+| `POST /notes`, `GET/PATCH/DELETE /notes/:id`                         | Notes (`DELETE` moves to the trash)       |
+| `GET /notes/:id/backlinks`, `GET /notes/:id/links`                   | Backlinks and outgoing links              |
+| `GET /notes/:id/mentions`, `POST .../mentions/:sourceId/link`        | Unlinked mentions, link one               |
+| `GET /notes/titles?q=`, `GET /notes/resolve?title=`                  | Titles for links and the switcher, lookup |
+| `GET /notes/:id/versions[/:versionId]`, `POST .../restore`           | History                                   |
+| `GET/POST/DELETE /notes/:id/share`, `GET /public/notes/:token`       | Share links                               |
+| `GET /trash`, `POST /trash/:id/restore`, `DELETE /trash[/:id]`       | Trash                                     |
+| `GET /search?q=&notebookId=&tag=&page=`                              | Full-text search, `"phrases"` in quotes   |
+| `GET /tags`, `PATCH/DELETE /tags/:id`                                | Tags                                      |
+| `GET /export`, `GET /notes/:id/export`, `POST /import`               | Zip export, single note, import           |

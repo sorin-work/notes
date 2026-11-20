@@ -36,7 +36,7 @@ couple of weekends, **L** several weeks of spare time.
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Maybe   | both     | M    | -          |
 | 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
-| 18  | Graph view and unlinked mentions       | Maybe   | both     | M    | -          |
+| 18  | Graph view and unlinked mentions       | Shipped | both     | M    | -          |
 
 ## Next
 
@@ -267,24 +267,6 @@ shows up in their sidebar. Depends on item 8.
   co-editing with cursors and merged keystrokes is a different project and
   not planned.
 
-### 18. Graph view and unlinked mentions
-
-Two ways to get more out of the links that are already stored.
-
-- Graph: a page that draws notes as dots and `[[links]]` as lines, to spot
-  clusters and orphans. All edges are in `note_links`. A `GET /links/graph`
-  endpoint would return nodes and resolved edges in one query, reusing the
-  title matching in `LinksService.resolveKeys`. Drawing it needs a force
-  layout (d3-force or similar), and I doubt it stays readable beyond a few
-  hundred notes.
-- Unlinked mentions: under the backlinks, list notes that mention this note's
-  title without linking to it, each with a "Link" button that wraps the
-  mention in `[[ ]]`. Candidates can come from the full-text index, then be
-  checked against the text with code blocks ignored. Short or common titles
-  ("Ideas") will be noisy.
-- A cheaper first step: an "Orphans" filter for notes with no links in or
-  out.
-
 ## Shipped
 
 ### 1. Clickable task lists in the preview
@@ -396,3 +378,23 @@ restore into a scratch database and a row count of every table. Still open:
 the dumps are not encrypted, they stay on the same machine unless
 `BACKUP_DIR` points elsewhere, and nothing warns when a dump fails apart from
 the service log.
+
+### 18. Graph view and unlinked mentions
+
+The Orphans view and the unlinked mentions are built. The graph is the other
+half and follows in a change of its own. Orphans is a view in the sidebar,
+`GET /notes?orphans=true`, for notes that link nowhere and that no note
+outside the trash links to. It combines with the notebook and tag selects.
+Under the backlinks, `UnlinkedMentions` lists the notes that write the title
+of the open note without linking to it (`GET /notes/:id/mentions`). The
+full-text index names the candidates with a phrase query, and `findMention`
+beside `extractWikiLinks` then reads each one: whole words, the same title key
+as `NoteLink.targetKey`, nothing inside code, links, images or URLs. Titles
+under three characters get no mentions, and neither do titles that cannot be
+written as a link. The list is paged, and only the 200 newest candidates are
+read. "Link" (`POST /notes/:id/mentions/:sourceId/link`) wraps the first
+mention in the other note inside one transaction, saves its old text as a
+version, syncs its links and leaves its `updatedAt` alone. Still open: a title
+of only very common words finds nothing, because the index drops those words.
+Common titles ("Ideas") are as noisy as predicted, and there is no way to
+dismiss a mention. Only the first mention in a note is offered at a time.
