@@ -82,9 +82,9 @@ describe('QuickSwitcher', () => {
   });
 
   it('does not act on a list kept from last time until it has been refreshed', async () => {
-    let fresh: (() => void) | null = null;
+    let refresh = () => {};
     const refreshed = new Promise<void>((resolve) => {
-      fresh = resolve;
+      refresh = resolve;
     });
     let opened = 0;
     mockFetch({
@@ -106,7 +106,7 @@ describe('QuickSwitcher', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/^\/notes$/);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-    fresh?.();
+    refresh();
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n2$/));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
