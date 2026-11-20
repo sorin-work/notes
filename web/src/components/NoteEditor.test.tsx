@@ -18,14 +18,14 @@ function baseRoutes(overrides = {}) {
   };
 }
 
-function renderEditor() {
-  localStorage.setItem('notes.editorMode', 'split');
+function renderEditor(state?: unknown, mode = 'split') {
+  localStorage.setItem('notes.editorMode', mode);
   return renderWithProviders(
     <Routes>
       <Route path="/notes/:noteId" element={<NoteEditor noteId="n1" />} />
       <Route path="/notes/:noteId" element={<div />} />
     </Routes>,
-    { route: '/notes/n1' },
+    { route: { pathname: '/notes/n1', state } },
   );
 }
 
@@ -119,6 +119,19 @@ describe('NoteEditor', () => {
       { title: 'Project Atlas', content: ticked },
     ]);
     expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([4, 14]);
+  });
+
+  it('puts the cursor in the text when the quick switcher opened the note', async () => {
+    mockFetch(baseRoutes());
+    renderEditor({ focusEditor: true });
+    expect(await screen.findByLabelText('Note content')).toHaveFocus();
+  });
+
+  it('gives the preview the focus instead when the text is not showing', async () => {
+    mockFetch(baseRoutes());
+    renderEditor({ focusEditor: true }, 'preview');
+    expect(await screen.findByLabelText('Preview')).toHaveFocus();
+    expect(screen.queryByLabelText('Note content')).not.toBeInTheDocument();
   });
 
   it('shows notes in the trash as read-only', async () => {

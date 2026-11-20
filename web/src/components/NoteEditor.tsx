@@ -15,6 +15,7 @@ import {
 } from '../api/notes';
 import { listTags } from '../api/tags';
 import type { Note, NoteChanges } from '../api/types';
+import { useActiveOption } from '../hooks/useActiveOption';
 import { useAutosave } from '../hooks/useAutosave';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useStoredState } from '../hooks/useStoredState';
@@ -64,13 +65,13 @@ function LoadedEditor({ note }: { note: Note }) {
   const navigate = useNavigate();
   const location = useLocation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
 
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
-  const [activeSuggestion, setActiveSuggestion] = useState(0);
   const readOnly = note.deletedAt !== null;
 
   const refreshLists = useCallback(() => {
@@ -98,6 +99,13 @@ function LoadedEditor({ note }: { note: Note }) {
     if (next.content !== undefined) setContent(next.content);
     autosave.schedule(draft);
   };
+
+  // The quick switcher is used from the keyboard, so it asks for the cursor to land in the text.
+  // In preview mode there is no text field, and the preview takes the focus so the keys scroll it.
+  const focusText = (location.state as { focusEditor?: boolean } | null)?.focusEditor === true;
+  useEffect(() => {
+    if (focusText) (textareaRef.current ?? previewRef.current)?.focus();
+  }, [focusText]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -151,6 +159,11 @@ function LoadedEditor({ note }: { note: Note }) {
     enabled: linkQuery !== null,
   });
   const titleOptions = (suggestions.data ?? []).filter((item) => item.id !== note.id);
+  const {
+    activeIndex: activeSuggestion,
+    setActiveIndex: setActiveSuggestion,
+    onArrowKey,
+  } = useActiveOption(link ? suggestionCount(titleOptions, link.query) : 0);
 
   const openWikiLink = useCallback(
     async (target: string) => {
@@ -210,18 +223,11 @@ function LoadedEditor({ note }: { note: Note }) {
 
   const onContentKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!link) return;
-    const count = suggestionCount(titleOptions, link.query);
     if (event.key === 'Escape') {
       event.preventDefault();
       setLink(null);
-    } else if (count === 0) {
+    } else if (onArrowKey(event)) {
       return;
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActiveSuggestion((index) => (index + 1) % count);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActiveSuggestion((index) => (index - 1 + count) % count);
     } else if (event.key === 'Enter' || event.key === 'Tab') {
       const target = suggestionAt(titleOptions, link.query, activeSuggestion);
       if (target) {
@@ -378,7 +384,7 @@ function LoadedEditor({ note }: { note: Note }) {
           </div>
         )}
         {mode !== 'edit' && (
-          <div className="editor-preview" aria-label="Preview">
+          <div className="editor-preview" aria-label="Preview" ref={previewRef} tabIndex={-1}>
             <MarkdownPreview
               content={content}
               onWikiLink={openWikiLink}
