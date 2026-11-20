@@ -16,6 +16,12 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
  * as "who am I", the one route marked for it, and no further: it cannot
  * change the name, email or password, delete the account or sign out
  * everywhere.
+ *
+ * The three routes that check the password (profile, delete, password) are
+ * throttled like login, so that a stolen session is not a way to guess it
+ * without limit. Twice over: per client address on each route, and per
+ * account across the three of them, so one account gets AUTH_THROTTLE_LIMIT
+ * guesses a minute however they are spread.
  */
 @Controller('auth')
 export class AuthController {
@@ -45,11 +51,6 @@ export class AuthController {
     return this.auth.me(user.id);
   }
 
-  // The three routes below check the password, so they are throttled like
-  // login: a stolen session must not be a way to guess it without limit.
-  // Twice over: per client address on each route, and per account across
-  // the three of them, so one account gets AUTH_THROTTLE_LIMIT guesses a
-  // minute however they are spread.
   /** Changes the name or the email. A new email needs `currentPassword`. */
   @UseGuards(ThrottlerGuard, AccountThrottlerGuard)
   @Patch('me')
