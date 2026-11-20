@@ -56,6 +56,9 @@ Markdown import/export.
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
   that have SMTP settings.
+- **Capture**: `/capture?title=...&url=...` opens a new note with a page's
+  title and a link to it, ready to save. A bookmarklet makes that one click
+  on any page, see [Saving a page from the browser](#saving-a-page-from-the-browser).
 - **API tokens** for scripts: made and revoked in Settings, shown once, and
   read-only if you want. A token stands in for a login on everything except
   the account itself.
@@ -71,6 +74,21 @@ Markdown import/export.
 | `Ctrl+K` / `Cmd+K` | Go to a note by its title         |
 | `Ctrl+S` / `Cmd+S` | Save now                          |
 | `Ctrl+E` / `Cmd+E` | Switch between edit/split/preview |
+
+### Saving a page from the browser
+
+Make a bookmark and give it this as its address, with the address of your
+own notes in place of `http://localhost:5181`:
+
+```
+javascript:(()=>{window.open('http://localhost:5181/capture?title='+encodeURIComponent(document.title)+'&url='+encodeURIComponent(location.href))})()
+```
+
+Clicking it on any page opens the notes app in a new tab, with a note that
+has the page's title and a link to the page as its first line. Nothing is
+saved until you press "Save note", and if you are not signed in you are
+asked to sign in first. It needs no API token and no CORS setting, because
+the note is made by the web app itself.
 
 Ideas for what could come next are in [ROADMAP.md](ROADMAP.md).
 
