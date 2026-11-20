@@ -8,7 +8,7 @@ import { QuickSwitcher } from './QuickSwitcher';
 
 function Where() {
   const location = useLocation();
-  return <output>{location.pathname + location.search}</output>;
+  return <output aria-label="Location">{location.pathname + location.search}</output>;
 }
 
 function renderSwitcher(route = '/notes') {
@@ -61,7 +61,7 @@ describe('QuickSwitcher', () => {
     expect(input).toHaveAttribute('aria-activedescendant', groceries.id);
 
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByRole('status')).toHaveTextContent('/notes/n3?notebook=w');
+    expect(screen.getByLabelText('Location')).toHaveTextContent('/notes/n3?notebook=w');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -77,7 +77,7 @@ describe('QuickSwitcher', () => {
     await userEvent.type(screen.getByRole('combobox'), 'gro{ArrowDown}{Enter}');
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n3$/);
+    expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes\/n3$/);
     expect(calls.some((call) => call.url === '/api/notes/titles?q=gro&limit=10')).toBe(true);
   });
 
@@ -103,11 +103,11 @@ describe('QuickSwitcher', () => {
     expect(screen.getByRole('option', { name: 'Project Atlas' })).toHaveAttribute('aria-selected', 'true');
 
     await userEvent.keyboard('{Enter}');
-    expect(screen.getByRole('status')).toHaveTextContent(/^\/notes$/);
+    expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes$/);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
     refresh();
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/^\/notes\/n2$/));
+    await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent(/^\/notes\/n2$/));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
@@ -119,6 +119,6 @@ describe('QuickSwitcher', () => {
     expect(await screen.findByText('No note has “zzz” in its title.')).toBeInTheDocument();
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole('status')).toHaveTextContent('/notes');
+    expect(screen.getByLabelText('Location')).toHaveTextContent('/notes');
   });
 });
