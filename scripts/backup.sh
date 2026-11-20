@@ -239,11 +239,13 @@ SQL
 }
 
 # Who is connected to a database, by the name each client gave: "notes-api (3), notes-backup (1)".
+# Only clients count. The server's own workers, such as autovacuum, show up
+# in pg_stat_activity too, have no name and go away by themselves.
 connected_to() {
   psql -AtXq -d postgres -v name="$1" <<'SQL' 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g'
 select coalesce(nullif(application_name, ''), 'a client without a name') || ' (' || count(*) || ')'
 from pg_stat_activity
-where datname = :'name' and pid <> pg_backend_pid()
+where datname = :'name' and backend_type = 'client backend' and pid <> pg_backend_pid()
 group by application_name
 order by application_name
 SQL

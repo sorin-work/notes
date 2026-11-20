@@ -113,7 +113,7 @@ echo "== a database somebody is connected to is not replaced, and the message na
 PGAPPNAME=someone-else psql -qX -d "$scratch" -c "select pg_sleep(20)" >/dev/null 2>&1 &
 holder=$!
 tries=0
-until [ "$(sql postgres "select count(*) from pg_stat_activity where datname = '$scratch' and application_name = 'someone-else'")" = 1 ]; do
+until [ "$(sql postgres "select count(*) from pg_stat_activity where datname = '$scratch' and backend_type = 'client backend' and application_name = 'someone-else'")" = 1 ]; do
   tries=$((tries + 1))
   [ "$tries" -lt 50 ] || fail "the second client did not connect"
   sleep 0.1
@@ -121,7 +121,9 @@ done
 if PGDATABASE="$scratch" sh "$here/backup.sh" restore "$newest" >"$work/busy.log" 2>&1; then
   fail "the database was replaced under a connected client"
 fi
-grep -q "Connected now: someone-else (1)\." "$work/busy.log" || fail "the message does not name the client: $(cat "$work/busy.log")"
+# Exactly that one client: not this check's own session, and not a worker of
+# the server such as autovacuum, which may be in the database at that moment.
+grep -q "Connected now: someone-else (1)\.$" "$work/busy.log" || fail "the message does not name the client, and only it: $(cat "$work/busy.log")"
 [ "$(sql "$scratch" "select id from marker")" = 7 ] || fail "the database was changed although a client was connected"
 kill "$holder" 2>/dev/null || true
 wait "$holder" 2>/dev/null || true

@@ -202,11 +202,18 @@ export class LinksService {
     return { nodes: row?.nodes ?? [], edges: row?.edges ?? [], total: Number(row?.total ?? 0) };
   }
 
-  /** The links written in a note, with the note each one currently resolves to. */
+  /**
+   * The links written in a note, with the note each one currently resolves
+   * to, ordered by title key. Links are stored without their place in the
+   * note, so without an order the database would give them in whatever
+   * order it finds them.
+   */
   async outgoing(userId: string, noteId: string): Promise<OutgoingLink[]> {
     const note = await this.prisma.note.findFirst({
       where: { id: noteId, userId },
-      select: { outgoingLinks: { select: { targetTitle: true, targetKey: true } } },
+      select: {
+        outgoingLinks: { select: { targetTitle: true, targetKey: true }, orderBy: [{ targetKey: 'asc' }] },
+      },
     });
     if (!note) {
       throw new NotFoundException('Note not found');
