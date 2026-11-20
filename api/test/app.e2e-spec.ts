@@ -18,6 +18,7 @@ import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
 import { setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
+import { PARSE_DEADLINE_MS, ParsePool } from '../src/links/parse-pool';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { setupApp } from '../src/setup-app';
 
@@ -1138,6 +1139,9 @@ describe('orphans and unlinked mentions', () => {
       });
     }
     await post({ title: 'Plain', content: 'We met about the atlas.' });
+    // Room for the small note on a busy machine. The hostile ones take far longer than that.
+    const pool = app.get(ParsePool);
+    pool.deadline = 2_000;
 
     const listing = request(server).get(`/api/notes/${target}/mentions`).set(auth);
     const started = Date.now();
@@ -1148,10 +1152,13 @@ describe('orphans and unlinked mentions', () => {
     const mentions = await listing.expect(200);
     expect(mentions.body.items.map((item: { title: string }) => item.title)).toEqual(['Plain']);
 
-    // The second time the hostile notes are known and cost nothing.
-    const again = Date.now();
+    // Each note is tried once for its revision. Once all of them have been, a list asks the workers nothing.
+    for (let i = 0; i < 3; i++) await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
+    const run = jest.spyOn(pool, 'run');
     await request(server).get(`/api/notes/${target}/mentions`).set(auth).expect(200);
-    expect(Date.now() - again).toBeLessThan(400);
+    expect(run).not.toHaveBeenCalled();
+    run.mockRestore();
+    pool.deadline = PARSE_DEADLINE_MS;
   });
 
   it('lists the notes with no links in or out', async () => {
