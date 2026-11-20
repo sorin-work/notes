@@ -364,13 +364,18 @@ Two ways to get more out of the links that are already stored.
 
 Clicking a task box in the editor's preview flips `[ ]` and `[x]` on that
 line of the note. The change goes through the normal autosave, so versions
-behave as they do for typing. Built as planned: `MarkdownPreview` takes
-`onToggleTask(line)`, and boxes stay disabled on shared pages, in version
-history and for notes in the trash. Added on top: each box is named after its
-item for screen readers, it keeps keyboard focus after a click, and the caret
-in the source stays where it was. Still open: clicking does nothing in two
-rare layouts, a box on a different line from its list marker and a task on
-the first line of a footnote definition.
+behave as they do for typing. Boxes stay disabled on shared pages, in version
+history and for notes in the trash. Different from the plan: `onToggleTask`
+gets the line and the state the box showed, and the text only changes when
+that line holds a box in that state, with a space or the end of the line
+after it. Line numbers did not always match the source: `linkifyWikiLinks`
+dropped a lone `\r` inside a link, which the parser counts as a line ending.
+It now keeps every line ending, and boxes go read-only should the preview and
+the source ever differ in their number of lines. Added on top: each box is
+named after its item for screen readers, it keeps keyboard focus after a
+click, and the caret in the source stays where it was. Still open: clicking
+does nothing in two rare layouts, a box on a different line from its list
+marker and a task on the first line of a footnote definition.
 
 ### 3. Quick switcher
 
