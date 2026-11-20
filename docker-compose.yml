@@ -20,7 +20,8 @@ services:
   api:
     build: ./api
     environment:
-      DATABASE_URL: postgresql://notes:notes@db:5432/notes
+      # The name is what a restore lists when it finds the database busy.
+      DATABASE_URL: postgresql://notes:notes@db:5432/notes?application_name=notes-api
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me-0123456789}
       PORT: 4401
       LOG_LEVEL: ${LOG_LEVEL:-info}
