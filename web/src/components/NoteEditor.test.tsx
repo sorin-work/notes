@@ -8,6 +8,7 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
@@ -689,6 +690,19 @@ describe('NoteEditor', () => {
         { route: '/notes/n1' },
       );
     }
+
+    it('puts the draft aside when the tab has to reload into a new version without saving it', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': { status: 500, body: { message: 'Down' } },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed before the reload.' } });
+      putUnsavedWorkAside();
+      expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed before the reload.', revision: 3 });
+    });
 
     it('keeps the draft in the tab, says so, and offers it when the note is opened again', async () => {
       let online = false;

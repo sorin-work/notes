@@ -1,5 +1,6 @@
 import { hydrate, type Query, type QueryClient } from '@tanstack/react-query';
 import { type PersistedClient, persistQueryClientSave } from '@tanstack/react-query-persist-client';
+import { ApiError, getToken } from '../api/client';
 import type { User } from '../api/types';
 
 /**
@@ -42,9 +43,13 @@ export function isKept(query: Pick<Query, 'queryKey' | 'state'>): boolean {
   const [first, second] = query.queryKey;
   // Search results sit under 'notes' so that they refresh with the lists, but stay online only.
   if (first === 'notes' && second === 'search') return false;
-  return (
-    typeof first === 'string' && (KEPT_QUERIES as readonly string[]).includes(first) && query.state.status === 'success'
-  );
+  if (typeof first !== 'string' || !(KEPT_QUERIES as readonly string[]).includes(first)) return false;
+  if (query.state.data === undefined) return false;
+  // A refetch that failed keeps what was there: a flaky connection must not
+  // take away what the user reads offline. Only the server saying that the
+  // note is gone, or not theirs, does.
+  const { error } = query.state;
+  return !(error instanceof ApiError && (error.status === 404 || error.status === 403));
 }
 
 /** The user id in a login token, read without checking it: it only picks which copy to open. */
@@ -135,12 +140,35 @@ export async function offlineCacheUsers(): Promise<string[]> {
 
 // Keeping the query cache ----------------------------------------------------
 
-/** Leaves out the queries used longest ago until what is kept fits in `maxBytes`. */
-export function withinSize(client: PersistedClient, maxBytes = MAX_BYTES): PersistedClient {
-  const queries = [...client.clientState.queries].sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt);
-  const size = (list: typeof queries) => new Blob([JSON.stringify(list)]).size;
-  while (queries.length > 0 && size(queries) > maxBytes) queries.pop();
-  return { ...client, clientState: { ...client.clientState, queries, mutations: [] } };
+type KeptQuery = PersistedClient['clientState']['queries'][number];
+
+/** Whether the data of a query was fetched within the age limit. The limit runs from each fetch, not from the last write. */
+const fresh = (query: KeptQuery, now: number) => now - query.state.dataUpdatedAt <= MAX_AGE_MS;
+
+/**
+ * What goes on disk: queries whose data is not past the age limit, as plain
+ * successful data (a failed refetch is kept as the data it had), the newest
+ * first, leaving out the ones loaded longest ago once `maxBytes` is reached.
+ * Each query is measured once.
+ */
+export function forDisk(client: PersistedClient, maxBytes = MAX_BYTES, now = Date.now()): PersistedClient {
+  const encoder = new TextEncoder();
+  const kept: KeptQuery[] = [];
+  let total = 2;
+  const newestFirst = client.clientState.queries
+    .filter((query) => fresh(query, now))
+    .sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt);
+  for (const query of newestFirst) {
+    const clean: KeptQuery = {
+      ...query,
+      state: { ...query.state, status: 'success', error: null, fetchFailureReason: null, fetchStatus: 'idle' },
+    };
+    const size = encoder.encode(JSON.stringify(clean)).length + 1;
+    if (total + size > maxBytes) break;
+    total += size;
+    kept.push(clean);
+  }
+  return { ...client, clientState: { ...client.clientState, queries: kept, mutations: [] } };
 }
 
 export interface OfflineCache {
@@ -166,8 +194,9 @@ export async function keepOffline(
 
   const persister = {
     persistClient: async (client: PersistedClient) => {
-      if (stopped) return;
-      await writeRecord({ userId: user.id, user, client: withinSize(client) });
+      // Never under the wrong name: another tab may have signed in as someone else meanwhile.
+      if (stopped || tokenUserId(getToken()) !== user.id) return;
+      await writeRecord({ userId: user.id, user, client: forDisk(client) });
     },
     restoreClient: async () => (await readRecord(user.id))?.client,
     removeClient: () => dropOfflineCache(user.id),
@@ -182,9 +211,11 @@ export async function keepOffline(
 
   const record = await readRecord(user.id);
   if (record) {
-    const { timestamp, buster, clientState } = record.client;
-    if (Date.now() - timestamp > MAX_AGE_MS || buster !== BUSTER) await dropOfflineCache(user.id);
-    else if (wanted()) hydrate(queryClient, clientState);
+    const { buster, clientState } = record.client;
+    const now = Date.now();
+    const queries = clientState.queries.filter((query) => fresh(query, now));
+    if (buster !== BUSTER || queries.length === 0) await dropOfflineCache(user.id);
+    else if (wanted()) hydrate(queryClient, { ...clientState, queries });
   }
 
   const save = () => {

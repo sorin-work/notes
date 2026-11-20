@@ -32,7 +32,7 @@ couple of weekends, **L** several weeks of spare time.
 | 11  | Account settings and sessions          | Shipped | both     | M    | -          |
 | 12  | More import sources and export formats | Later   | both     | M    | -          |
 | 13  | Personal API tokens                    | Shipped | both     | M    | -          |
-| 14  | Offline mode and installable app       | Shipped | both     | L    | 8          |
+| 14  | Offline mode and installable app       | Later   | both     | L    | 8          |
 | 15  | Deeper notebook nesting                | Maybe   | both     | M    | -          |
 | 16  | Templates and daily notes              | Shipped | both     | M    | -          |
 | 17  | Notebooks shared with other accounts   | Maybe   | both     | L    | 8          |
@@ -89,6 +89,33 @@ That covers Obsidian and this app, and not much else.
   `@media print` rules) gives PDF through the browser. A full JSON backup
   that includes the trash and version history would cover what the zip
   leaves out.
+
+### 14. Offline mode and installable app
+
+The layout works on a phone, but the app cannot be installed and needs a
+connection for everything. Depends on item 8.
+
+- Installable: a web manifest, icons (`web/public` only has `favicon.svg`)
+  and a service worker that caches the app shell, for example with
+  `vite-plugin-pwa`. `nginx.conf` then has to serve `index.html` and the
+  worker file with `no-cache`. Only `/assets/` sets cache headers now.
+- Read offline: the TanStack Query cache is memory-only (`queryClient.ts`).
+  Persisting it to IndexedDB makes the notes that were already opened
+  readable.
+- Write offline: `request()` in `api/client.ts` throws `ApiError(0, ...)` when
+  the server cannot be reached and `useAutosave` keeps the pending draft, but
+  only until the tab closes. Needs an outbox that survives a reload and is
+  replayed on reconnect, which is where conflict detection comes in.
+- Tricky: creating notes offline needs ids made in the browser.
+  `CreateNoteDto` has no `id` and the validation pipe rejects unknown fields.
+- Search, backlinks and history stay online-only. Signing out has to clear
+  the stored notes as well as the in-memory cache.
+
+Built so far, in three parts that ship together: the app can be installed
+(manifest, icons, a service worker that caches the files of the build and
+never anything under `/api/`, an offer to reload into a new version), and
+notes already opened can be read offline from a copy of the query cache kept
+in IndexedDB per user. Writing offline follows.
 
 ## Maybe
 
@@ -404,27 +431,6 @@ click. Any site can send a visitor there, so it saves nothing by itself, the
 title stays out of the note's text, and only a plain web address is taken.
 `API_DOCS=false` turns the document off. Still open: the document describes
 requests but not answers.
-
-### 14. Offline mode and installable app
-
-Comes in three parts, and the first is built: the app can be installed.
-`web/public/manifest.webmanifest` and icons drawn from the favicon, and a
-service worker that caches the files of the build and answers the pages of
-the app with the cached `index.html`. I wrote the worker and the small build
-step that lists its files myself instead of using `vite-plugin-pwa`, to keep
-the rule that matters in one short file: nothing under `/api/` is ever
-cached. A new build waits until the user takes the "new version, reload"
-offer, which saves the open note first. `nginx.conf` serves `index.html`, the
-worker and the manifest with `no-cache`. There is no lazy route on `main` yet;
-since every file of the build is cached, a lazy chunk like that of the graph
-view will load offline too. Second part: the TanStack Query cache is kept in
-IndexedDB, one record per user, so notes already opened can be read offline
-after a reload. Only notes, lists, notebooks, tags and links are written,
-never search results, settings or the token. It is limited to 5 MB and seven
-days, and deleted on sign-out, a 401, a sign-out seen from another tab,
-account deletion and when another user signs in here. Without a connection the
-user comes from the token and that user's copy. Search, backlinks and history
-stay online only and say so. Still to come: writing offline through an outbox.
 
 ### 16. Templates and daily notes
 

@@ -162,5 +162,16 @@ export function useAutosave<T>(
     };
   }, [leave]);
 
-  return { status, conflict, schedule, flush, retry, discard, leave, hasPending: () => pending.current !== null };
+  return {
+    status,
+    conflict,
+    schedule,
+    flush,
+    retry,
+    discard,
+    leave,
+    hasPending: () => pending.current !== null,
+    /** The value that is not saved yet, if there is one. */
+    pendingValue: () => pending.current?.value ?? null,
+  };
 }

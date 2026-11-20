@@ -171,9 +171,9 @@ database.
 | db      | `localhost:5441`      | Postgres 17, user/password/database `notes` |
 | mailpit | http://localhost:8041 | Shows the mail the API sends, delivers none |
 
-nginx serves `index.html`, `sw.js` and `manifest.webmanifest` with
-`Cache-Control: no-cache`, so the browser asks for them every time and finds
-a new version as soon as it is deployed. The fingerprinted files under
+nginx serves `index.html`, `sw.js`, `version.json` and
+`manifest.webmanifest` with `Cache-Control: no-cache`, so the browser asks for
+them every time and finds a new version as soon as it is deployed. The fingerprinted files under
 `/assets/` are cached for a year.
 
 The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
@@ -570,24 +570,39 @@ The service worker (`web/src/sw/worker.ts`, built into `/sw.js` by
 `web/build/service-worker.ts`) keeps the files of one build: the scripts,
 the styles, `index.html`, the icons and the manifest. Those are the same for
 everyone. It never stores anything under `/api/`, so no note, token or other
-private data sits in its cache. Every page of the app is answered with the
-cached `index.html`, and requests to the API, `/api/docs` and `/healthz` go to
-the network as if there were no worker.
+private data sits in its cache. A page of the app is asked from the network
+first, and the cached `index.html` is used only when the network has not
+answered within three seconds, so the app starts without a connection but
+always sees a new `index.html` when there is one. Requests to the API,
+`/api/docs`, `/healthz` and `/version.json` go to the network as if there were
+no worker.
 
-A new build is found when the tab comes back into view and once an hour. It
-installs next to the one in use and waits, with its own cache, so the open
-tab keeps every file it may still load. "Reload" in the offer at the bottom
-saves the open note, lets the new worker take over and reloads. If the note
-cannot be saved, it says so and does not reload.
+A new build is found when the tab comes back into view and once an hour, by
+the worker and by comparing the build id in `/version.json` (served with
+`no-cache`) with the one the tab was built with. It installs next to the one
+in use and waits. "Reload" in the offer at the bottom saves the open note and
+lets the new worker take over. Every open tab then reloads, after saving its
+own open note, because the old files are gone with the old cache. A tab that
+cannot save puts the draft aside in the tab, where the note offers it again,
+and asks to be reloaded instead of running on with the old version.
+
+If the worker ever has to go, `web/sw-retire/sw.js` takes it out of use:
+deploy it in place of the built `/sw.js` (copy it over `dist/sw.js` before the
+image is built). Browsers that had the old worker pick it up at their next
+visit. It deletes the caches of the app, unregisters itself and reloads the
+open tabs, which then run straight from the network.
 
 What can be read offline is kept apart from the worker, in IndexedDB
 (`web/src/lib/offlineCache.ts`): the TanStack Query cache, written at most once
 a second, one record per user under the user's id. Only notes, note lists,
 notebooks, tags and the links of a note are written. Search results,
 backlinks, history, the settings pages, share links and the login token never
-are. The token stays in `localStorage`, where it always was. A copy older than
-seven days is thrown away rather than shown, and past 5 MB the queries loaded
-longest ago are left out.
+are. The token stays in `localStorage`, where it always was. Each note or
+list carries the time it was fetched, and one fetched more than seven days ago
+is left out, however often the copy is written since. Past 5 MB the queries
+loaded longest ago are left out too. A refetch that fails because there is no
+connection, or because the server has a problem, keeps what was there. Only a
+404 or a 403 for a note takes it out.
 
 Started without a connection, the app reads the user id from the token and
 opens that user's copy, with no request to the server. If there is none, it
@@ -597,8 +612,11 @@ server who is signed in, as usual.
 The copy is deleted when you sign out, when the server answers 401 (the
 session ended, the password changed, or "Sign out everywhere" was used on
 another device), when another tab of this browser signs out, when the account
-is deleted, and when a different user signs in on the same browser. A device
-that never comes back online keeps its copy until then, up to its seven days.
+is deleted, and when a different user signs in on the same browser. A tab
+that sees another user signed in from another tab puts its open draft aside,
+lets go of what it holds and starts again as that user. A copy is only ever
+written while the token names its user. A device that never comes back online
+keeps its copy until then, up to seven days per note.
 
 ## API overview
 
