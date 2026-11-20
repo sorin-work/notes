@@ -5,6 +5,7 @@ import { templateNotes, WORKING_NOTE } from '../notes/note-scope';
 import { notebookShareSelect, sharedThrough, SharedThrough } from '../notes/note-view';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotebookDto, UpdateNotebookDto } from './dto/notebook.dto';
+import { MAX_NOTEBOOK_DEPTH, subtreeOf } from './subtree';
 
 export interface NotebookView {
   id: string;
@@ -33,8 +34,7 @@ export interface NotebookView {
   updatedAt: Date;
 }
 
-/** How deep notebooks nest. A notebook at the top is level 1, so this allows three levels inside it. */
-export const MAX_NOTEBOOK_DEPTH = 4;
+export { MAX_NOTEBOOK_DEPTH };
 const TOO_DEEP = `Notebooks can be nested ${MAX_NOTEBOOK_DEPTH} levels deep at most`;
 
 /** Every notebook of one user with its parent: the shape of the tree. */
@@ -232,22 +232,11 @@ export class NotebooksService {
     id: string,
     db: Pick<Prisma.TransactionClient, '$queryRaw'> = this.prisma,
   ): Promise<string[]> {
-    // The level stops the walk if the data should ever hold a loop.
-    const rows = await db.$queryRaw<{ id: string }[]>`
-      WITH RECURSIVE tree AS (
-        SELECT id, 1 AS level
-        FROM notebooks
-        WHERE id = ${id}::uuid AND user_id = ${userId}::uuid
-        UNION ALL
-        SELECT child.id, tree.level + 1
-        FROM notebooks child JOIN tree ON child.parent_id = tree.id
-        WHERE child.user_id = ${userId}::uuid AND tree.level < ${MAX_NOTEBOOK_DEPTH * 4}
-      )
-      SELECT id FROM tree GROUP BY id ORDER BY min(level), id`;
+    const rows = await subtreeOf(db, userId, id);
     if (rows.length === 0) {
       throw new NotFoundException('Notebook not found');
     }
-    return rows.map((row) => row.id);
+    return rows;
   }
 
   /**

@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { MemberRole, Prisma } from '@prisma/client';
+import { subtreeOf } from '../notebooks/subtree';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -18,6 +19,12 @@ import { PrismaService } from '../prisma/prisma.service';
 export type Access = 'owner' | MemberRole;
 /** What a route needs: to read, to change text and tags, or to be the owner. */
 export type Need = 'read' | 'edit' | 'owner';
+
+/**
+ * The access check again, as the first thing inside the transaction that
+ * writes: see AccessService.inWrite.
+ */
+export type WriteGuard = (tx: Prisma.TransactionClient) => Promise<void>;
 
 export interface Granted {
   ownerId: string;
@@ -46,8 +53,10 @@ export class AccessService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * The notebooks shared with a user, by id, with the notebooks inside them.
-   * A notebook shared both by itself and through its parent takes the wider role.
+   * The notebooks shared with a user, by id: each shared notebook and every
+   * notebook below it, at any depth, the same set the owner's note list and
+   * search mean by "this notebook" (subtreeOf). A notebook shared both by
+   * itself and through one above it takes the wider role.
    */
   async sharedNotebooks(
     userId: string,
@@ -55,7 +64,7 @@ export class AccessService {
   ): Promise<Map<string, SharedNotebook>> {
     const memberships = await db.notebookMember.findMany({
       where: { userId },
-      include: { notebook: { select: { id: true, userId: true, children: { select: { id: true } } } } },
+      include: { notebook: { select: { id: true, userId: true } } },
     });
     const shared = new Map<string, SharedNotebook>();
     const add = (id: string, entry: SharedNotebook) => {
@@ -64,8 +73,7 @@ export class AccessService {
     };
     for (const { notebook, role } of memberships) {
       const entry = { ownerId: notebook.userId, role, rootId: notebook.id };
-      add(notebook.id, entry);
-      for (const child of notebook.children) add(child.id, entry);
+      for (const id of await subtreeOf(db, notebook.userId, notebook.id)) add(id, entry);
     }
     return shared;
   }
@@ -96,12 +104,41 @@ export class AccessService {
     return { ownerId: note.userId, access: shared.role };
   }
 
+  /**
+   * The check to run again inside the transaction that writes to a note.
+   * The note's row is locked first, and the user's memberships are read with
+   * a share lock: a move of the note, or the removal of the member, either
+   * waits for the write or is seen by the check. The check before the
+   * transaction only decides whose note to load; this one decides the write.
+   */
+  noteWriteGuard(userId: string, noteId: string, need: Need): WriteGuard {
+    return async (tx) => {
+      await tx.$queryRaw`SELECT id FROM notes WHERE id = ${noteId}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT notebook_id FROM notebook_members WHERE user_id = ${userId}::uuid FOR SHARE`;
+      await this.note(userId, noteId, need, tx);
+    };
+  }
+
+  /** The same for adding a note to a notebook: its row and the memberships locked, then the check. */
+  notebookWriteGuard(userId: string, notebookId: string, need: Need): WriteGuard {
+    return async (tx) => {
+      await tx.$queryRaw`SELECT id FROM notebooks WHERE id = ${notebookId}::uuid FOR SHARE`;
+      await tx.$queryRaw`SELECT notebook_id FROM notebook_members WHERE user_id = ${userId}::uuid FOR SHARE`;
+      await this.notebook(userId, notebookId, need, tx);
+    };
+  }
+
   /** Whether `userId` may do `need` with a notebook, in the same way. */
-  async notebook(userId: string, notebookId: string, need: Need): Promise<Granted> {
-    const notebook = await this.prisma.notebook.findUnique({ where: { id: notebookId }, select: { userId: true } });
+  async notebook(
+    userId: string,
+    notebookId: string,
+    need: Need,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Granted> {
+    const notebook = await db.notebook.findUnique({ where: { id: notebookId }, select: { userId: true } });
     if (!notebook) throw new NotFoundException('Notebook not found');
     if (notebook.userId === userId) return { ownerId: userId, access: 'owner' };
-    const shared = (await this.sharedNotebooks(userId)).get(notebookId);
+    const shared = (await this.sharedNotebooks(userId, db)).get(notebookId);
     if (!shared || shared.ownerId !== notebook.userId) throw new NotFoundException('Notebook not found');
     check(shared.role, need);
     return { ownerId: notebook.userId, access: shared.role };
