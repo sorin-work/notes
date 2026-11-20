@@ -28,8 +28,10 @@ Markdown import/export.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted. Words in `"double quotes"` are a phrase: they have to follow
-  each other and are not prefixes. The same two selects narrow a search to a
-  notebook and a tag, and results load 30 at a time.
+  each other and are not prefixes. A phrase can also match where a title ends
+  and the text begins, because both are indexed as one run of words. The same
+  two selects narrow a search to a notebook and a tag, and results load 30 at
+  a time.
 - **Quick switcher**: `Ctrl+K` (`Cmd+K` on a Mac) opens a small dialog with
   the notes edited last. Type part of a title, press Enter, and you are in
   that note with the cursor in its text, or on the preview when only the
