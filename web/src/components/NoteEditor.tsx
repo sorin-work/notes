@@ -96,6 +96,19 @@ function LoadedEditor({ note }: { note: Note }) {
   const [content, setContent] = useState(queuedAtOpen?.content ?? note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
+  // In "Edit" there is no preview on the page, and printing is about the preview. One is put
+  // in for as long as the browser prints, and only then, so typing does not render it twice.
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    const before = () => flushSync(() => setPrinting(true));
+    const after = () => setPrinting(false);
+    window.addEventListener('beforeprint', before);
+    window.addEventListener('afterprint', after);
+    return () => {
+      window.removeEventListener('beforeprint', before);
+      window.removeEventListener('afterprint', after);
+    };
+  }, []);
   // A move into a shared notebook waits for a yes: it makes the note public.
   const [publicMove, setPublicMove] = useState<{ notebookId: string; through: SharedThrough } | null>(null);
   const [link, setLink] = useState<{ start: number; query: string } | null>(null);
@@ -887,6 +900,11 @@ function LoadedEditor({ note }: { note: Note }) {
                 onPick={insertLink}
               />
             )}
+          </div>
+        )}
+        {mode === 'edit' && printing && (
+          <div className="editor-preview print-only">
+            <MarkdownPreview content={content} missingTitles={missingTitles} />
           </div>
         )}
         {mode !== 'edit' && (
