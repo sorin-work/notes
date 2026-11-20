@@ -12,7 +12,7 @@ async function bootstrap(): Promise<void> {
   // Notes can be long; the default 100kb body limit is too small.
   app.useBodyParser('json', { limit: '5mb' });
   app.disable('x-powered-by');
-  setupApp(app, config.corsOrigins);
+  setupApp(app, { corsOrigins: config.corsOrigins, trustProxy: config.trustProxy });
   await app.listen(config.port);
   Logger.log(`API listening on :${config.port}`, 'Bootstrap');
 }

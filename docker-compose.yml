@@ -42,6 +42,9 @@ services:
       SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-${SMTP_HOST-false}}
       # Where the links in those mails point.
       APP_URL: ${APP_URL:-http://localhost:${WEB_PORT:-5181}}
+      # nginx in the web service is the one proxy in front of the API. With
+      # this the throttles count per client, not once for everybody.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
     depends_on:
       db:
         condition: service_healthy

@@ -31,6 +31,12 @@ export interface AppConfig {
   mail: MailConfig | null;
   /** Where people reach the web app, for the links in mails. No trailing slash. */
   appUrl: string;
+  /**
+   * How many reverse proxies stand between the clients and the API. With 0
+   * the address of the connection counts as the client, which behind a proxy
+   * is the proxy for everyone. With 1 it is the address the proxy reports.
+   */
+  trustProxy: number;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -134,5 +140,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     authThrottleLimit: toInt('AUTH_THROTTLE_LIMIT', env.AUTH_THROTTLE_LIMIT, 10, 1),
     mail,
     appUrl: appUrlFrom(env.APP_URL, mail !== null),
+    trustProxy: toInt('TRUST_PROXY', env.TRUST_PROXY, 0, 0),
   };
 }

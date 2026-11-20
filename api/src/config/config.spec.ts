@@ -17,6 +17,7 @@ describe('loadConfig', () => {
       authThrottleLimit: 10,
       mail: null,
       appUrl: 'http://localhost:5181',
+      trustProxy: 0,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
   });
@@ -84,6 +85,17 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...base, SMTP_HOST: 'smtp.example.com', SMTP_FROM: 'a@b.c' })).toThrow(
       'APP_URL is required when SMTP_HOST is set',
     );
+  });
+
+  it('counts no proxy as trusted unless TRUST_PROXY gives a number of hops', () => {
+    expect(loadConfig({ ...base, TRUST_PROXY: '1' }).trustProxy).toBe(1);
+    expect(() => loadConfig({ ...base, TRUST_PROXY: 'true' })).toThrow('TRUST_PROXY');
+    expect(() => loadConfig({ ...base, TRUST_PROXY: '-1' })).toThrow('TRUST_PROXY');
+  });
+
+  it('rejects an APP_URL that is not an http address', () => {
+    expect(() => loadConfig({ ...base, APP_URL: 'notes.example.com' })).toThrow('APP_URL');
+    expect(() => loadConfig({ ...base, APP_URL: 'ftp://notes.example.com' })).toThrow('APP_URL');
   });
 
   it('requires DATABASE_URL', () => {
