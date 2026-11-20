@@ -215,7 +215,10 @@ export class BackupService {
           /** Attachments by their id in the file: the stored file and the note it belongs to, also by its id in the file. */
           const files = new Map<string, { stored: StoredFile; noteId: string }>();
           let fileBytes = 0;
-          const newFileId = (old: string) => files.get(old)?.stored.id;
+          const newFileId = (old: string) => {
+          const id = files.get(old)?.stored.id;
+          return id && `attachment:${id}`;
+        };
 
           const flush = async () => {
             if (pending.length === 0) return;
