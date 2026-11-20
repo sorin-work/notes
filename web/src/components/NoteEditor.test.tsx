@@ -8,9 +8,10 @@ import { setToken } from '../api/client';
 import type { Note, NoteChanges } from '../api/types';
 import { AuthProvider, useAuth } from '../auth/AuthContext';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { openEntryFor, outboxEntryFor, outboxSnapshot, queueText } from '../lib/outbox';
 import { putUnsavedWorkAside } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
-import { note, notebook, user } from '../test/fixtures';
+import { note, notebook, user, userToken } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { NoteEditor } from './NoteEditor';
 import { Notices } from './Notices';
@@ -106,6 +107,20 @@ describe('NoteEditor', () => {
     expect(screen.getByRole('heading', { name: 'Printed heading' })).toBeInTheDocument();
     fireEvent(window, new Event('afterprint'));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Printed heading' })).not.toBeInTheDocument());
+  });
+
+  it('adds no link for a file pasted without a connection, and says why', async () => {
+    const calls = mockFetch(baseRoutes({ 'GET /api/notes/n1/attachments': { body: [] } }));
+    renderEditor();
+    const textarea = await screen.findByLabelText('Note content');
+    fireEvent.change(textarea, { target: { value: 'Before' } });
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const file = new File(['png'], 'shot.png', { type: 'image/png' });
+    fireEvent.paste(textarea, { clipboardData: { files: [file], types: ['Files'] } });
+    expect(await screen.findByText(/Files cannot be attached without a connection/)).toBeInTheDocument();
+    expect(textarea).toHaveValue('Before');
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    online.mockRestore();
   });
 
   it('uploads a pasted image, puts its link where the cursor is, and lists it to remove', async () => {
@@ -749,7 +764,7 @@ describe('NoteEditor', () => {
 
     /** The editor for a signed-in user, with somewhere else to go and the notices beside it, as in the app. */
     function renderSignedIn() {
-      setToken('tok');
+      setToken(userToken);
       localStorage.setItem('notes.editorMode', 'split');
       return renderWithProviders(
         <AuthProvider>
@@ -768,19 +783,25 @@ describe('NoteEditor', () => {
     }
 
     it('puts the draft aside when the tab has to reload into a new version without saving it', async () => {
+      let failing = true;
       mockFetch(
         baseRoutes({
           'GET /api/auth/me': { body: user },
-          'PATCH /api/notes/n1': { status: 500, body: { message: 'Down' } },
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) =>
+            failing ? { status: 500, body: { message: 'Down' } } : { body: { ...note(), ...(body as object) } },
         }),
       );
-      renderSignedIn();
+      const { unmount } = renderSignedIn();
       fireEvent.change(await screen.findByLabelText('Note content'), { target: { value: 'Typed before the reload.' } });
       putUnsavedWorkAside();
       expect(readStash(user.id, 'n1')).toMatchObject({ content: 'Typed before the reload.', revision: 3 });
+      // Left behind, the editor still saves on its way out. Let that go through, so nothing outlives the test.
+      failing = false;
+      unmount();
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull());
     });
 
-    it('keeps the draft in the tab, says so, and offers it when the note is opened again', async () => {
+    it('keeps text the server could not take on the device, and sends it once it can be reached', async () => {
       let online = false;
       let saved = note();
       const calls = mockFetch(
@@ -789,6 +810,172 @@ describe('NoteEditor', () => {
           'GET /api/notes/n1': () => ({ body: saved }),
           'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
             if (!online) throw new TypeError('Failed to fetch');
+            saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
+            return { body: saved };
+          },
+        }),
+      );
+      renderSignedIn();
+      fireEvent.change(await screen.findByLabelText('Note content'), {
+        target: { value: 'Typed with no connection.' },
+      });
+      await userEvent.click(screen.getByRole('link', { name: 'Leave' }));
+
+      // In the outbox, and then no longer in the tab's stash, where it waited only until the outbox had it.
+      await waitFor(
+        () => expect(outboxEntryFor('n1')).toMatchObject({ content: 'Typed with no connection.', baseRevision: 3 }),
+        { timeout: 1500 },
+      );
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull(), { timeout: 1500 });
+      expect(screen.queryByText(/could not be saved/)).not.toBeInTheDocument();
+
+      // Opened again before it is sent: the text from the device, not the older one of the server.
+      await userEvent.click(screen.getByRole('link', { name: 'Back' }));
+      expect(await screen.findByLabelText('Note content')).toHaveValue('Typed with no connection.');
+
+      online = true;
+      fireEvent(window, new Event('online'));
+      await waitFor(() => expect(saved.content).toBe('Typed with no connection.'), { timeout: 4500 });
+      expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 3 });
+      await waitFor(() => expect(outboxEntryFor('n1')).toBeNull());
+    });
+
+    it('asks, and loses nothing, when another tab queued text of the note that this editor never saw', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')),
+          'POST /api/notes': () => Promise.reject(new TypeError('Failed to fetch')),
+        }),
+      );
+      renderSignedIn();
+      const textarea = await screen.findByLabelText('Note content');
+      // Another tab of this browser, offline too, queues its text of the same note.
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'From the other tab' }, 3, [], {
+        title: 'Project Atlas',
+        content: 'Links to [[Atlas data model]].',
+      });
+      fireEvent.change(textarea, { target: { value: 'Typed in this tab' } });
+
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      expect(outboxEntryFor('n1')?.content).toBe('From the other tab');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+      await waitFor(() => expect(openEntryFor('n1')?.content).toBe('Typed in this tab'));
+      // The other tab's text is kept too, as a note of its own.
+      await waitFor(() =>
+        expect(
+          outboxSnapshot().some((entry) => entry.kind === 'create' && entry.content === 'From the other tab'),
+        ).toBe(true),
+      );
+    });
+
+    it('keeps the question open and says why when the other tab’s text cannot be kept as a note', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')),
+        }),
+      );
+      renderSignedIn();
+      const textarea = await screen.findByLabelText('Note content');
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'From the other tab' }, 3, [], {
+        title: 'Project Atlas',
+        content: 'Links to [[Atlas data model]].',
+      });
+      fireEvent.change(textarea, { target: { value: 'Typed in this tab' } });
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      // Making the copy fails: here because offline writing is switched off, as with a full storage.
+      const locks = Object.getOwnPropertyDescriptor(navigator, 'locks');
+      Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
+      try {
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+        expect(
+          await within(dialog).findByText(/could not be kept as a note of its own, so nothing was changed/),
+        ).toBeInTheDocument();
+      } finally {
+        if (locks) Object.defineProperty(navigator, 'locks', locks);
+      }
+      expect(openEntryFor('n1')?.content).toBe('From the other tab');
+      // Settled before the test ends, so that nothing of it is still running in the next one.
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine' }));
+      await waitFor(() => expect(openEntryFor('n1')?.content).toBe('Typed in this tab'));
+    });
+
+    it('keeps both texts when the note is left with that question open, and the other tab’s untouched', async () => {
+      mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')),
+          'POST /api/notes': () => Promise.reject(new TypeError('Failed to fetch')),
+        }),
+      );
+      renderSignedIn();
+      const textarea = await screen.findByLabelText('Note content');
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'From the other tab' }, 3, [], {
+        title: 'Project Atlas',
+        content: 'Links to [[Atlas data model]].',
+      });
+      fireEvent.change(textarea, { target: { value: 'Typed in this tab' } });
+      await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+
+      await userEvent.click(screen.getByRole('link', { name: 'Leave' }));
+      expect(
+        await screen.findByText(/yours is in a new note, “Project Atlas \(kept when leaving\)”/),
+      ).toBeInTheDocument();
+      // The other tab's text is exactly as it was.
+      expect(openEntryFor('n1')).toMatchObject({ content: 'From the other tab' });
+      expect(
+        outboxSnapshot()
+          .filter((entry) => entry.kind === 'create')
+          .map((entry) => [entry.title, entry.content]),
+      ).toEqual([['Project Atlas (kept when leaving)', 'Typed in this tab']]);
+      // Saved that way, the draft is not kept in the tab as well.
+      await waitFor(() => expect(readStash(user.id, 'n1')).toBeNull());
+    });
+
+    it('asks the usual question when offline changes meet a newer note, and sends them only as told', async () => {
+      let saved = note({ content: 'Changed on the phone', revision: 4 });
+      const calls = mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'GET /api/notes/n1': () => ({ body: saved }),
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            const sent = body as { content: string; revision: number };
+            if (sent.revision !== saved.revision) {
+              return {
+                status: 409,
+                body: { statusCode: 409, error: 'Conflict', message: 'changed', code: 'stale_revision', note: saved },
+              };
+            }
+            saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
+            return { body: saved };
+          },
+        }),
+      );
+      // Typed on the train, on revision 3, before the phone saved revision 4.
+      await queueText(user.id, 'n1', { title: 'Project Atlas', content: 'Typed on the train' }, 3);
+      renderSignedIn();
+
+      const dialog = await screen.findByRole('dialog', { name: 'This note was changed somewhere else' });
+      // The editor shows what was typed offline, and nothing was overwritten.
+      expect(screen.getByLabelText('Note content')).toHaveValue('Typed on the train');
+      expect(saved.content).toBe('Changed on the phone');
+
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Keep mine, put theirs in the history' }));
+      await waitFor(() => expect(saved.content).toBe('Typed on the train'));
+      expect(calls.findLast((call) => call.method === 'PATCH')?.body).toMatchObject({ revision: 4, keepVersion: true });
+      await waitFor(() => expect(outboxEntryFor('n1')).toBeNull());
+    });
+
+    it('keeps a draft the server refused in the tab, says so, and offers it when the note is opened again', async () => {
+      let online = false;
+      let saved = note();
+      const calls = mockFetch(
+        baseRoutes({
+          'GET /api/auth/me': { body: user },
+          'GET /api/notes/n1': () => ({ body: saved }),
+          'PATCH /api/notes/n1': ({ body }: { body: unknown }) => {
+            if (!online) return { status: 503, body: { message: 'Down for a moment' } };
             saved = { ...saved, ...(body as object), revision: saved.revision + 1 };
             return { body: saved };
           },

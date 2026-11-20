@@ -4,6 +4,7 @@ import * as authApi from '../api/auth';
 import { ApiError, getToken, onTokenChangedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
 import type { AuthResult, User } from '../api/types';
 import { clearNotices } from '../lib/notices';
+import { dropOtherOutboxes, startOutbox, stopOutbox, unsentOfOthers } from '../lib/outbox';
 import { discardUnsavedWork, putUnsavedWorkAside } from '../lib/unsavedWork';
 import {
   dropOfflineCache,
@@ -23,8 +24,13 @@ type Status = 'loading' | 'signed-in' | 'signed-out' | 'offline';
 interface AuthContextValue {
   status: Status;
   user: User | null;
-  login(email: string, password: string): Promise<void>;
-  register(name: string, email: string, password: string): Promise<void>;
+  /**
+   * Signs in. When this browser holds changes another account made offline
+   * and never sent, signing in as someone else deletes them, so `confirm` is
+   * asked first; a no leaves everything as it was and resolves to false.
+   */
+  login(email: string, password: string, confirm?: ConfirmDiscard): Promise<boolean>;
+  register(name: string, email: string, password: string, confirm?: ConfirmDiscard): Promise<boolean>;
   logout(): void;
   /** Shows a changed name or email without asking the API again. */
   updateUser(user: User): void;
@@ -32,7 +38,15 @@ interface AuthContextValue {
   renewSession(result: AuthResult): void;
 }
 
+/** Asked with how many unsent changes of other accounts signing in would delete. */
+export type ConfirmDiscard = (count: number) => Promise<boolean>;
+
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+async function mayDropOthers(userId: string, confirm?: ConfirmDiscard): Promise<boolean> {
+  const others = await unsentOfOthers(userId);
+  return others === 0 || !confirm || confirm(others);
+}
 
 /** A page load for a fresh start. Apart, so that tests can watch for it. */
 export const page = { reload: () => window.location.reload() };
@@ -53,6 +67,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const stopKeeping = useCallback(() => {
     const current = kept.current;
     kept.current = null;
+    // What is waiting to be sent stays on disk, for this user's next sign-in. See lib/outbox.ts.
+    stopOutbox();
     void current?.cache.then((cache) => cache.stop());
     return current?.userId ?? null;
   }, []);
@@ -63,9 +79,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (kept.current?.userId === who.id) return;
       stopKeeping();
       const entry = { userId: who.id } as { userId: string; cache: Promise<OfflineCache> };
-      entry.cache = dropOtherOfflineCaches(who.id).then(() =>
-        keepOffline(queryClient, who, () => kept.current === entry),
-      );
+      entry.cache = dropOtherOfflineCaches(who.id)
+        .then(() => keepOffline(queryClient, who, () => kept.current === entry))
+        .then(async (cache) => {
+          // Changes another user left unsent on this browser are not this user's to send or to see.
+          await dropOtherOutboxes(who.id);
+          if (kept.current === entry) await startOutbox(who.id, queryClient);
+          return cache;
+        });
       kept.current = entry;
       const cache = entry.cache;
       await cache;
@@ -188,8 +209,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       user,
-      login: async (email, password) => signedIn(await authApi.login(email, password)),
-      register: async (name, email, password) => signedIn(await authApi.register(name, email, password)),
+      login: async (email, password, confirm) => {
+        const result = await authApi.login(email, password);
+        if (!(await mayDropOthers(result.user.id, confirm))) return false;
+        await signedIn(result);
+        return true;
+      },
+      register: async (name, email, password, confirm) => {
+        const result = await authApi.register(name, email, password);
+        if (!(await mayDropOthers(result.user.id, confirm))) return false;
+        await signedIn(result);
+        return true;
+      },
       logout,
       updateUser: setUser,
       renewSession: (result) => void signedIn(result),

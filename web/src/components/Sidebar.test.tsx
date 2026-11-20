@@ -1,23 +1,38 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Route, Routes } from 'react-router';
+import { Route, Routes, useLocation } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import { getToken, setToken } from '../api/client';
 import { AuthProvider } from '../auth/AuthContext';
 import { localDay } from '../lib/days';
 import { readStash, stashDraft } from '../lib/draftStash';
+import { outboxEntryFor, queueText, unsentAfterTrying } from '../lib/outbox';
 import { registerUnsavedWork } from '../lib/unsavedWork';
 import { expectNoAxeViolations } from '../test/axe';
 import { note, notebook, summary, user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
 import { Sidebar } from './Sidebar';
 
+/** Where the sidebar navigated to. */
+function Where() {
+  const location = useLocation();
+  return <p data-testid="location">{location.pathname + location.search}</p>;
+}
+
 function renderSidebar(route = '/notes') {
   setToken('tok');
   return renderWithProviders(
     <AuthProvider>
       <Routes>
-        <Route path="*" element={<Sidebar />} />
+        <Route
+          path="*"
+          element={
+            <>
+              <Sidebar />
+              <Where />
+            </>
+          }
+        />
       </Routes>
     </AuthProvider>,
     { route },
@@ -370,5 +385,41 @@ describe('Sidebar', () => {
       expect(readStash('someone-else', 'n1')).not.toBeNull();
       unregister();
     });
+
+    it('tries to send changes made offline first, and asks before throwing them away', async () => {
+      mockFetch({ ...routes, 'PATCH /api/notes/n1': () => Promise.reject(new TypeError('Failed to fetch')) });
+      renderSidebar();
+      // Signed in, so the outbox is this user's.
+      await screen.findByText(user.name);
+      await queueText(user.id, 'n1', { title: 'Plan', content: 'Typed on the train.' }, 3);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Sign out without saving?' });
+      expect(dialog).toHaveTextContent('1 change made without a connection has not reached the server yet.');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      expect(getToken()).toBe('tok');
+      expect(outboxEntryFor('n1')).not.toBeNull();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Sign out and discard' }));
+      await waitFor(() => expect(getToken()).toBeNull());
+      expect(await unsentAfterTrying(user.id)).toBe(0);
+    });
+  });
+
+  it('makes a note without a connection, under an id made here, and keeps it to be sent', async () => {
+    mockFetch({
+      'GET /api/auth/me': { body: user },
+      'GET /api/notebooks': { body: notebooks },
+      'GET /api/tags': { body: [] },
+      'POST /api/notes': () => Promise.reject(new TypeError('Failed to fetch')),
+    });
+    renderSidebar('/notes?notebook=m');
+    await screen.findByRole('link', { name: /Work/ });
+    await screen.findByText(user.name);
+    await userEvent.click(screen.getByRole('button', { name: '+ New note' }));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/notes\/[0-9a-f-]{36}/));
+    const id = screen.getByTestId('location').textContent!.split('/')[2]!.split('?')[0]!;
+    expect(outboxEntryFor(id)).toMatchObject({ kind: 'create', notebookId: 'm', state: 'waiting' });
   });
 });

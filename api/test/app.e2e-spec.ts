@@ -8,6 +8,7 @@ import { INestApplication, RequestMethod, Type } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { DiscoveryModule, DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import JSZip from 'jszip';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1781,6 +1782,38 @@ describe('nested notebooks', () => {
     expect(Math.max(...[...parents.keys()].map(depth))).toBeLessThanOrEqual(4);
     const notes = await request(server).get('/api/notes?pageSize=50').set(auth).expect(200);
     expect(notes.body.items).toHaveLength(12);
+  });
+});
+
+describe('notes made offline', () => {
+  it('takes an id made by the client once, and answers the same to anyone who sends it again', async () => {
+    const { auth } = await signUp();
+    const other = await signUp();
+    const server = app.getHttpServer();
+    const id = randomUUID();
+
+    const made = await request(server).post('/api/notes').set(auth).send({ id, title: 'On the train', content: 'x' });
+    expect(made.status).toBe(201);
+    expect(made.body).toMatchObject({ id, title: 'On the train', revision: 0 });
+
+    // The same create sent again, say after a lost answer: one note, and a 409 that says why.
+    const again = await request(server).post('/api/notes').set(auth).send({ id, title: 'On the train' }).expect(409);
+    expect(again.body).toEqual({
+      statusCode: 409,
+      error: 'Conflict',
+      message: 'A note with this id already exists.',
+      code: 'note_exists',
+    });
+    // Someone else gets exactly the same answer, and learns nothing about the note.
+    const theirs = await request(server).post('/api/notes').set(other.auth).send({ id, title: 'Mine?' }).expect(409);
+    expect(theirs.body).toEqual(again.body);
+    await request(server).get(`/api/notes/${id}`).set(other.auth).expect(404);
+    expect((await request(server).get(`/api/notes/${id}`).set(auth).expect(200)).body.title).toBe('On the train');
+    expect((await request(server).get('/api/notes').set(auth).expect(200)).body.total).toBe(1);
+
+    // Only a random UUID will do.
+    await request(server).post('/api/notes').set(auth).send({ id: 'nope' }).expect(400);
+    await request(server).post('/api/notes').set(auth).send({ id: 'a8098c1a-f86e-11da-bd1a-00112444be1e' }).expect(400);
   });
 });
 

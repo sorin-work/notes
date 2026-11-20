@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useRef, useState } from 'react';
 import { changePassword, deleteAccount, logoutEverywhere, updatePreferences, updateProfile } from '../api/auth';
+import { dropOutbox } from '../lib/outbox';
 import { listNotebooks } from '../api/notebooks';
 import { listNotes } from '../api/notes';
 import { deleteTag, listTags, renameTag } from '../api/tags';
@@ -190,6 +191,10 @@ function SessionsSection() {
         A login lasts a week. If you left one open somewhere, this signs you out in every browser and on every device,
         this one included. API tokens are not signed out: revoke those under API tokens.
       </p>
+      <p className="muted">
+        Changes made without a connection that have not been sent yet stay in the browser they were made in, until you
+        sign in there again and they are sent, or someone else signs in there and they are deleted.
+      </p>
       {signOut.error && <ErrorMessage error={signOut.error} />}
       <div className="form-actions start">
         <button type="button" className="button" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
@@ -220,7 +225,14 @@ function DeleteAccountDialog({ user, onClose }: { user: User; onClose(): void })
   const { logout } = useAuth();
   const [password, setPassword] = useState('');
   const download = useMutation({ mutationFn: exportAll });
-  const remove = useMutation({ mutationFn: () => deleteAccount(password), onSuccess: logout });
+  const remove = useMutation({
+    mutationFn: () => deleteAccount(password),
+    onSuccess: () => {
+      // The account is gone, and so is anything it still had waiting to be sent.
+      void dropOutbox(user.id);
+      logout();
+    },
+  });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();

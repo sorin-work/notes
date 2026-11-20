@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { useDiscardOthersQuestion } from '../components/DiscardOthersQuestion';
 import { ErrorMessage } from '../components/States';
 
 export function RegisterPage() {
@@ -12,13 +13,17 @@ export function RegisterPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDiscard, discardQuestion] = useDiscardOthersQuestion();
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await register(name, email, password);
+      if (!(await register(name, email, password, confirmDiscard))) {
+        setBusy(false);
+        return;
+      }
       navigate('/notes', { replace: true });
     } catch (err) {
       setError(err);
@@ -83,6 +88,7 @@ export function RegisterPage() {
           Already have an account? <Link to="/login">Sign in</Link>
         </p>
       </form>
+      {discardQuestion}
     </main>
   );
 }

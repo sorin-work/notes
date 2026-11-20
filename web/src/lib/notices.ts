@@ -39,6 +39,9 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** The notices as they are now, outside React. */
+export const currentNotices = (): Notice[] => notices;
+
 export function useNotices(): Notice[] {
   return useSyncExternalStore(subscribe, () => notices);
 }

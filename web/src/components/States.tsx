@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
 import { ApiError } from '../api/client';
+import { offlineWritingAvailable } from '../lib/outbox';
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
   return (
@@ -65,6 +66,8 @@ export function OfflineBanner() {
     <div className="offline-banner" role="status">
       You are offline. Notes you have opened on this device can still be read, but what you see may be out of date.
       Search, backlinks and history need a connection.
+      {!offlineWritingAvailable() &&
+        ' Changes cannot be kept on this device here: that needs a secure (HTTPS) address, so they are saved only once there is a connection.'}
     </div>
   );
 }

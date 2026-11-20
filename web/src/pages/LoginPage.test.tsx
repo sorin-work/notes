@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { AuthProvider } from '../auth/AuthContext';
 import { GuestOnly } from '../auth/guards';
 import { user } from '../test/fixtures';
 import { mockFetch, renderWithProviders } from '../test/render';
+import { queueText, unsentOfOthers } from '../lib/outbox';
 import { LoginPage } from './LoginPage';
 import { RegisterPage } from './RegisterPage';
 
@@ -32,6 +33,26 @@ function renderAuth(route: string) {
 }
 
 describe('LoginPage', () => {
+  it('asks before signing in deletes the unsent offline changes of another account', async () => {
+    mockFetch({ 'POST /api/auth/login': { body: { token: 'tok-1', user } } });
+    await queueText('someone-else', 'n9', { title: 'Theirs', content: 'Typed on the train.' }, 1);
+    renderAuth('/login');
+    await userEvent.type(screen.getByLabelText('Email'), 'demo@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'demo-password');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete another account’s unsent changes?' });
+    expect(dialog).toHaveTextContent('1 change that another account made without a connection');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(getToken()).toBeNull();
+    expect(await unsentOfOthers(user.id)).toBe(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in and delete them' }));
+    expect(await screen.findByText('Your notes')).toBeInTheDocument();
+    await waitFor(async () => expect(await unsentOfOthers(user.id)).toBe(0));
+  });
+
   it('signs in and opens the notes', async () => {
     const calls = mockFetch({ 'POST /api/auth/login': { body: { token: 'tok-1', user } } });
     renderAuth('/login');
