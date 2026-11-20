@@ -14,6 +14,7 @@ import { discardUnsavedWork, saveUnsavedWork } from '../lib/unsavedWork';
 import { PencilIcon, TrashIcon } from './Icons';
 import { ConfirmDialog } from './Modal';
 import { NotebookDialog } from './NotebookDialog';
+import { TreeToggle } from './TreeToggle';
 
 type NotebookAction =
   | { kind: 'create'; parentId: string | null }
@@ -90,16 +91,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       <li key={node.id}>
         <div className="nav-row">
           {node.children.length > 0 ? (
-            <button
-              type="button"
-              className="icon-button small tree-toggle"
-              aria-expanded={open}
-              aria-controls={insideId}
-              aria-label={open ? `Fold ${node.name}` : `Unfold ${node.name}`}
-              onClick={() => toggleClosed(node.id)}
-            >
-              {open ? '▾' : '▸'}
-            </button>
+            <TreeToggle name={node.name} open={open} controls={insideId} onToggle={() => toggleClosed(node.id)} />
           ) : (
             <span className="tree-toggle" aria-hidden="true" />
           )}
