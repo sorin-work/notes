@@ -35,6 +35,8 @@ Markdown import/export.
 - **Import/export**: export everything as a zip of Markdown files (notebooks
   become folders, tags and dates go in YAML front matter) or a single note as
   `.md`. Import `.md`/`.txt` files or zips, such as an Obsidian vault.
+- **Account**: change your name, email and password in Settings, sign out
+  everywhere at once, or delete the account with everything in it.
 - **Backups**: with Docker, an optional service dumps the whole database once
   a day and keeps the last seven dumps. See
   [Backup and restore](#backup-and-restore).
@@ -189,7 +191,7 @@ npm run dev
 | `LOG_LEVEL`            | `info`     | `debug`, `info`, `warn` or `error`                         |
 | `SEED_DEMO`            | `false`    | Create the demo account on start-up                        |
 | `TRASH_RETENTION_DAYS` | `30`       | Days before trashed notes are deleted for good             |
-| `AUTH_THROTTLE_LIMIT`  | `10`       | Sign-up and login attempts per minute per client           |
+| `AUTH_THROTTLE_LIMIT`  | `10`       | Per-minute limit per client on routes that take a password |
 
 ## Tests and checks
 
@@ -231,7 +233,7 @@ docker compose --profile backup run --rm --entrypoint sh backup /scripts/check-b
 api/
   prisma/               schema and migrations
   src/
-    auth/               sign-up, login, JWT guard, password changes
+    auth/               sign-up, login, JWT guard, account changes
     notebooks/          notebooks and their one level of nesting
     notes/              notes, filters and sorting, note export
     tags/               tag names, renaming and merging
@@ -277,10 +279,19 @@ All endpoints are under `/api` and, apart from sign-up, login, the health
 check and shared notes, need an `Authorization: Bearer <token>` header.
 Errors use Nest's shape: `{"statusCode": 400, "message": [...], "error": "Bad Request"}`.
 
+A login token lasts seven days (`JWT_EXPIRES_IN`), or until the password
+changes or `POST /auth/logout-all` is called. Each token carries the
+account's token version, and the API compares it with the database on every
+request, so those two end all sessions at once. `PATCH /auth/password`
+answers with a new token for the browser that made the change. Changing the
+email and deleting the account ask for the password again; a wrong one is a
+`403`, not a `401`, because the session itself is still good.
+
 | Method & path                                                  | What it does                              |
 | -------------------------------------------------------------- | ----------------------------------------- |
 | `POST /auth/register`, `POST /auth/login`                      | Returns `{ token, user }`                 |
-| `GET /auth/me`, `PATCH /auth/password`                         | Current user, change password             |
+| `GET/PATCH/DELETE /auth/me`                                    | Read, change or delete the current user   |
+| `PATCH /auth/password`, `POST /auth/logout-all`                | Change password, sign out everywhere      |
 | `GET/POST /notebooks`, `PATCH/DELETE /notebooks/:id`           | Notebooks                                 |
 | `GET /notes?notebookId=&tag=&pinned=&favorite=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
 | `POST /notes`, `GET/PATCH/DELETE /notes/:id`                   | Notes (`DELETE` moves to the trash)       |
