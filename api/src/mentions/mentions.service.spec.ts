@@ -56,24 +56,6 @@ describe('MentionsService', () => {
   afterEach(() => jest.restoreAllMocks());
 
   describe('list', () => {
-    it('counts lookups against who asked, so a member cannot use up the owner’s slots', async () => {
-      let release: () => void = () => undefined;
-      const held = new Promise<never[]>((resolve) => {
-        release = () => resolve([]);
-      });
-      prisma.$queryRaw.mockReturnValueOnce(held).mockReturnValueOnce(held).mockResolvedValue([]);
-      prisma.note.findMany.mockResolvedValue([]);
-      // A member asks twice for mentions among the owner's notes, and both wait.
-      const first = service.list(USER, 'target', page(), ['nb'], 'member');
-      const second = service.list(USER, 'target', page(), ['nb'], 'member');
-      await new Promise((resolve) => setImmediate(resolve));
-      await expect(service.list(USER, 'target', page(), ['nb'], 'member')).rejects.toMatchObject({ status: 429 });
-      // The owner still gets theirs.
-      await expect(service.list(USER, 'target', page())).resolves.toMatchObject({ items: [] });
-      release();
-      await Promise.all([first, second]);
-    });
-
     it('keeps the candidates that really mention the title, in the order the index gave them', async () => {
       const notes = [
         source('a', 'We talked about project atlas.\n\nAnd other things.'),
@@ -478,5 +460,24 @@ describe('lineAround', () => {
     expect(after).toMatch(/^( more)+…$/);
     expect(before.length).toBeLessThanOrEqual(81);
     expect(after.length).toBeLessThanOrEqual(81);
+  });
+  describe('lookups at once', () => {
+    it('counts lookups against who asked, so a member cannot use up the owner’s slots', async () => {
+      let release: () => void = () => undefined;
+      const held = new Promise<never[]>((resolve) => {
+        release = () => resolve([]);
+      });
+      prisma.$queryRaw.mockReturnValueOnce(held).mockReturnValueOnce(held).mockResolvedValue([]);
+      prisma.note.findMany.mockResolvedValue([]);
+      // A member asks twice for mentions among the owner's notes, and both wait.
+      const first = service.list(USER, 'target', page(), ['nb'], 'member');
+      const second = service.list(USER, 'target', page(), ['nb'], 'member');
+      await new Promise((resolve) => setImmediate(resolve));
+      await expect(service.list(USER, 'target', page(), ['nb'], 'member')).rejects.toMatchObject({ status: 429 });
+      // The owner still gets theirs.
+      await expect(service.list(USER, 'target', page())).resolves.toMatchObject({ items: [] });
+      release();
+      await Promise.all([first, second]);
+    });
   });
 });
