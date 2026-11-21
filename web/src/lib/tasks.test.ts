@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countLines, toggleTask } from './tasks';
+import { countLines, dueDay, toggleTask } from './tasks';
 
 describe('toggleTask', () => {
   it('ticks and unticks the box on the given line only', () => {
@@ -58,5 +58,15 @@ describe('countLines', () => {
     expect(countLines('')).toBe(1);
     expect(countLines('a\r\nb\rc\nd')).toBe(4);
     expect(countLines('a\n\r\n\r')).toBe(4);
+  });
+});
+
+describe('dueDay', () => {
+  it('reads due: and a real day written after a task', () => {
+    expect(dueDay('Send the report due:2026-11-30')).toBe('2026-11-30');
+    expect(dueDay('due:2026-01-05 call Dana')).toBe('2026-01-05');
+    expect(dueDay('Send it overdue:2026-11-30')).toBeNull();
+    expect(dueDay('Send it due:2026-02-30')).toBeNull();
+    expect(dueDay('Send it due:2026-11-3')).toBeNull();
   });
 });

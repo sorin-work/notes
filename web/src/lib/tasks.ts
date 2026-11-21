@@ -32,3 +32,18 @@ export function toggleTask(markdown: string, line: number, checked: boolean): st
   );
   return parts.join('');
 }
+
+/** `due:` and a day, written after a task: `- [ ] Send the report due:2026-11-30`. */
+const DUE = /(?:^|\s)due:(\d{4}-\d{2}-\d{2})(?=\s|$)/;
+
+/**
+ * The day a task is due, by the convention above, or null. Only a real day
+ * counts: `due:2026-02-30` is none.
+ */
+export function dueDay(text: string): string | null {
+  const day = DUE.exec(text)?.[1];
+  if (!day) return null;
+  const [year, month, date] = day.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, date ?? 1));
+  return parsed.toISOString().slice(0, 10) === day ? day : null;
+}
