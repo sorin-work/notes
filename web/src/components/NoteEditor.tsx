@@ -816,15 +816,15 @@ function LoadedEditor({ note }: { note: Note }) {
    * cursor on its line in the text, where the text is on screen. Without a
    * preview the text takes the focus, and taking it scrolls to the cursor.
    */
-  const showHeading = useEffectEvent((heading: NoteHeading) => {
+  const showSpot = useEffectEvent((spot: { line: number; element: () => HTMLElement | null }) => {
     if (mode !== 'edit') {
-      const element = document.getElementById(headingId(heading.slug));
+      const element = spot.element();
       element?.scrollIntoView?.({ block: 'start' });
       element?.focus({ preventScroll: true });
     }
     const textarea = textareaRef.current;
     if (!textarea || mode === 'preview') return;
-    const at = lineOffset(content, heading.line);
+    const at = lineOffset(content, spot.line);
     if (mode === 'edit') textarea.blur();
     textarea.setSelectionRange(at, at);
     if (mode === 'edit') textarea.focus();
@@ -845,8 +845,20 @@ function LoadedEditor({ note }: { note: Note }) {
     setArrival({ key: location.key, heading, wanted });
   }
   useEffect(() => {
-    if (arrival?.heading) showHeading(arrival.heading);
+    const heading = arrival?.heading;
+    if (heading) showSpot({ line: heading.line, element: () => document.getElementById(headingId(heading.slug)) });
   }, [arrival]);
+  // The Tasks page opens a note at the line of a task. In the preview, the task's item has that line.
+  const taskLine = (location.state as { line?: number } | null)?.line;
+  const [lineArrival, setLineArrival] = useState<{ key: string; line: number } | null>(null);
+  if (typeof taskLine === 'number' && lineArrival?.key !== location.key) {
+    setLineArrival({ key: location.key, line: taskLine });
+  }
+  useEffect(() => {
+    const line = lineArrival?.line;
+    if (line === undefined) return;
+    showSpot({ line, element: () => previewRef.current?.querySelector<HTMLElement>(`[data-line="${line}"]`) ?? null });
+  }, [lineArrival]);
   const missingHeading =
     addressSlug !== null && arrival && !arrival.heading && !arrival.dismissed ? arrival.wanted : null;
 

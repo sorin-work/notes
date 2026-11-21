@@ -263,6 +263,20 @@ describe('NoteEditor', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
+  it('opens at the line of a task the Tasks page links to', async () => {
+    const content = '# Plan\n\n- [ ] one\n- [ ] two';
+    mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ content }) } }));
+    const { unmount } = renderEditor({ line: 4 }, 'edit');
+    const textarea = await screen.findByLabelText<HTMLTextAreaElement>('Note content');
+    await waitFor(() => expect(textarea).toHaveFocus());
+    expect(textarea.selectionStart).toBe(content.indexOf('- [ ] two'));
+    unmount();
+
+    renderEditor({ line: 4 }, 'preview');
+    const box = await screen.findByRole('checkbox', { name: 'two' });
+    await waitFor(() => expect(box.closest('li')).toHaveFocus());
+  });
+
   it('puts the cursor in the title of a note made from a template', async () => {
     mockFetch(baseRoutes({ 'GET /api/notes/n1': { body: note({ title: 'Untitled' }) } }));
     renderEditor({ focusTitle: true });

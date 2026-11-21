@@ -85,8 +85,9 @@ function ListItem({ node, children, ...props }: ComponentProps<'li'> & ExtraProp
   const line = node?.position?.start.line;
   const task =
     node && line !== undefined && props.className?.includes('task-list-item') ? { line, label: itemText(node) } : null;
+  // The line lets the editor find a task the Tasks page opened the note at.
   return (
-    <li {...props}>
+    <li {...props} data-line={task?.line} tabIndex={task ? -1 : undefined}>
       <TaskItemContext value={task}>{children}</TaskItemContext>
     </li>
   );
