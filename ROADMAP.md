@@ -392,7 +392,70 @@ parts most likely to break quietly are tested in pieces or not at all.
 
 ## Maybe
 
-Empty for now: everything that was in this group has shipped.
+### 31. Embedding one note in another
+
+`![[Note]]` would show another note's text inside this one, and
+`![[Note#Heading]]` only that section. Depends on item 21 for the second
+form.
+
+- `linkifyWikiLinks` and `MarkdownPreview` learn the `!` form and draw the
+  other note read-only in a frame with a link to open it.
+- The API counts an embed as a link: `extractWikiLinks` stores it in
+  `NoteLink` and `renameLinks` keeps the `!`, so backlinks, orphans and the
+  graph see it.
+- Tricky: loops (A embeds B, B embeds A) and depth, so a cap of a few levels
+  with a plain link past it. A member must not see an embed of the owner's
+  note from outside the shared notebook, and a shared page only embeds what
+  its links may already open (item 10's rules); anything else stays words.
+- Tricky: ten embeds are ten fetches unless there is a request for several
+  titles at once. Task boxes inside an embed stay read-only, and the search
+  does not find a note by the text it embeds.
+- Undecided: what the zip export and print do with an embed, keep the
+  syntax or write out the text.
+
+### 32. A graph that copes with more notes
+
+Improves item 18. The layout runs on the main thread, about a third of a
+second at 300 notes, above 300 only the filters show the rest, links have no
+arrowheads, dots cannot be moved and two fingers do not zoom.
+
+- `layoutGraph` is already a plain function, so `useGraphLayout` can hand it
+  to a Web Worker and show the list under the picture while it runs. The
+  worker is part of the build, so the service worker keeps it too.
+- A local graph: the notes around the open note, two links deep, from
+  `neighbours` in `web/src/lib/graph.ts`. That is what stays readable at any
+  size.
+- Arrowheads sized in screen pixels like the dots, zoom with two fingers
+  through pointer events, and dragging a dot.
+- Tricky: the picture depends only on the notes and links, which makes it
+  stable. A dragged dot breaks that unless its place is remembered, in the
+  browser or not at all.
+- Undecided: whether the 300 cap in `GET /links/graph` goes up, and whether
+  a canvas takes over from SVG above some number of notes.
+
+### 33. Thumbnails, object storage and Evernote attachments
+
+Improves items 9 and 12, which left all three open.
+
+- Thumbnails: a photo from a phone is shown and downloaded at full size.
+  Scaling it down in the browser before the upload needs nothing new on the
+  server, and drawing it again on a canvas also drops the location the camera
+  wrote into it. Keeping the original as well is undecided.
+- Object storage: `AttachmentStorage` (`write`, `exists`, `remove`, `sweep`)
+  becomes an interface with a second, optional implementation for
+  S3-compatible storage that can be self-hosted (MinIO, Garage), set through
+  `ATTACHMENTS_S3_*`. Files still go out through the API's signed addresses.
+- Evernote: in an `.enex` each `<resource>` holds the file in base64 with
+  its type and an MD5 hash that `<en-media hash="...">` in the note points
+  at. `enex.ts` reads as a stream and the resources come after the text, so
+  a note is held until its resources are read. They go through `sniff.ts`
+  and the account limits like any upload.
+- Tricky: with object storage, `scripts/backup.sh` can no longer archive the
+  files beside each dump, so the bucket needs a backup of its own and the
+  README has to say so. The export and the JSON backup read through the
+  interface and keep working.
+- Undecided: whether object storage is worth it at all for a self-hosted
+  notes app, where one volume is simpler.
 
 ## Shipped
 
