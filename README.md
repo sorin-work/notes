@@ -33,8 +33,10 @@ Markdown import/export.
   keyboard Space selects the note with the focus and Shift with the arrow
   keys selects while it moves. The bar above the list moves the selected notes
   to a notebook, adds or removes a tag, pins or unpins them, or moves them to
-  the trash, in one request, and says what it left out. A move can be undone
-  from its notice for 15 seconds. "Select the loaded" takes the notes the list
+  the trash, in one request, and says what it left out. A move that changes
+  who can read the notes (a notebook shared with a link, or with other
+  accounts, on either side) asks first and says who. A move can be undone
+  from its notice for 15 seconds, except for notes moved again since. "Select the loaded" takes the notes the list
   has loaded so far, not every page. A click on a note still opens it.
 - **Templates**: "Template" in a note's toolbar turns it into a template.
   Templates have a list of their own and stay out of the other lists, the
@@ -1240,7 +1242,13 @@ out in part. The answer lists the notes that `changed`, those that were
 `unchanged` because they were so already, and those `skipped` with a
 `reason`: `not_found` (also for a note the caller may not see),
 `not_allowed`, `in_trash` or `too_many_tags`. A move also returns the
-`previous` notebook of each note it moved. A member's editor role covers the
+`previous` notebook of each note it moved. `moveBack` undoes one: with
+`back`, the `previous` of the move, and `expectedNotebookId`, where the move
+put the notes, it moves each note back unless it was moved again since
+(`moved_since`) or its old notebook is gone (`notebook_gone`). A move into a
+notebook that is gone is a `404`. The notes are locked in the order of their
+ids, as rewriting links after a rename locks them, so the two never wait on
+each other in a circle. A member's editor role covers the
 tag actions only, as for a single note. None of these touch the title or the
 text, so the revision of a note stays as it was.
 
