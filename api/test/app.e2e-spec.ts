@@ -3036,6 +3036,107 @@ describe('links between shared notes', () => {
   });
 });
 
+describe('notes in bulk', () => {
+  type Auth = { Authorization: string };
+  const server = () => app.getHttpServer();
+  const post = async (auth: Auth, path: string, body: object = {}) =>
+    (await request(server()).post(path).set(auth).send(body).expect(201)).body;
+  const bulk = (auth: Auth, body: object) => request(server()).post('/api/notes/bulk').set(auth).send(body);
+
+  it('moves, tags, pins and trashes many notes in one request, and says what it left out', async () => {
+    const { auth } = await signUp();
+    const work = await post(auth, '/api/notebooks', { name: 'Work' });
+    const a = await post(auth, '/api/notes', { title: 'A', content: 'one', tags: ['old'] });
+    const b = await post(auth, '/api/notes', { title: 'B', content: 'two' });
+    const c = await post(auth, '/api/notes', { title: 'C', notebookId: work.id });
+    const missing = randomUUID();
+
+    const moved = await bulk(auth, { ids: [a.id, b.id, c.id, missing], action: 'move', notebookId: work.id }).expect(
+      200,
+    );
+    expect(moved.body).toEqual({
+      changed: [a.id, b.id],
+      unchanged: [c.id],
+      skipped: [{ id: missing, reason: 'not_found' }],
+      previous: { [a.id]: null, [b.id]: null },
+    });
+    const listed = await request(server()).get(`/api/notes?notebookId=${work.id}`).set(auth).expect(200);
+    expect(listed.body.items.map((note: { title: string }) => note.title).sort()).toEqual(['A', 'B', 'C']);
+    // Moving back out, as Undo does.
+    await bulk(auth, { ids: [a.id], action: 'move', notebookId: null }).expect(200);
+    expect((await request(server()).get(`/api/notes/${a.id}`).set(auth).expect(200)).body.notebookId).toBeNull();
+
+    const tagged = await bulk(auth, { ids: [a.id, b.id], action: 'addTag', tag: '#Old' }).expect(200);
+    expect(tagged.body).toMatchObject({ changed: [b.id], unchanged: [a.id] });
+    const untagged = await bulk(auth, { ids: [a.id, b.id, c.id], action: 'removeTag', tag: 'old' }).expect(200);
+    expect(untagged.body).toMatchObject({ changed: [a.id, b.id], unchanged: [c.id] });
+
+    const before = (await request(server()).get(`/api/notes/${b.id}`).set(auth).expect(200)).body;
+    await bulk(auth, { ids: [b.id], action: 'pin' }).expect(200);
+    const pinned = (await request(server()).get(`/api/notes/${b.id}`).set(auth).expect(200)).body;
+    // Pinning is no edit, and nothing here touches the text: the revision stays.
+    expect(pinned).toMatchObject({ pinned: true, updatedAt: before.updatedAt, revision: before.revision });
+
+    await bulk(auth, { ids: [a.id, b.id], action: 'trash' }).expect(200);
+    const again = await bulk(auth, { ids: [a.id], action: 'pin' }).expect(200);
+    expect(again.body.skipped).toEqual([{ id: a.id, reason: 'in_trash' }]);
+  });
+
+  it('refuses requests it cannot carry out at all', async () => {
+    const { auth } = await signUp();
+    const note = await post(auth, '/api/notes', { title: 'A' });
+    const ids = Array.from({ length: 501 }, () => randomUUID());
+    await bulk(auth, { ids, action: 'pin' }).expect(400);
+    await bulk(auth, { ids: [], action: 'pin' }).expect(400);
+    await bulk(auth, { ids: [note.id], action: 'rename' }).expect(400);
+    await bulk(auth, { ids: [note.id], action: 'addTag' }).expect(400);
+    await bulk(auth, { ids: [note.id], action: 'addTag', tag: '###' }).expect(400);
+    // Into another account's notebook: as if it did not exist.
+    const other = await signUp();
+    const theirs = await post(other.auth, '/api/notebooks', { name: 'Theirs' });
+    await bulk(auth, { ids: [note.id], action: 'move', notebookId: theirs.id }).expect(404);
+  });
+
+  it('lets an editor of a shared notebook tag its notes, and nothing more', async () => {
+    const owner = await signUp();
+    const kitchen = await post(owner.auth, '/api/notebooks', { name: 'Kitchen' });
+    const soup = await post(owner.auth, '/api/notes', { title: 'Soup', notebookId: kitchen.id });
+    const plan = await post(owner.auth, '/api/notes', { title: 'Private plan' });
+    const join = async (role: 'read' | 'edit') => {
+      const email = `bulk-${Date.now()}-${++counter}@example.com`;
+      const registered = await request(server())
+        .post('/api/auth/register')
+        .send({ email, name: 'Member', password: 'password123' })
+        .expect(201);
+      const auth = { Authorization: `Bearer ${registered.body.token}` };
+      await request(server())
+        .post(`/api/notebooks/${kitchen.id}/members/invites`)
+        .set(owner.auth)
+        .send({ email, role })
+        .expect(201);
+      const token = /#token=([\w-]+)/.exec((await mailTo(email)).text)?.[1] ?? '';
+      await request(server()).post('/api/invites/accept').set(auth).send({ token }).expect(200);
+      return auth;
+    };
+
+    const editor = await join('edit');
+    const tagged = await bulk(editor, { ids: [soup.id, plan.id], action: 'addTag', tag: 'winter' }).expect(200);
+    expect(tagged.body).toEqual({
+      changed: [soup.id],
+      unchanged: [],
+      skipped: [{ id: plan.id, reason: 'not_found' }],
+    });
+    const soupNow = (await request(server()).get(`/api/notes/${soup.id}`).set(owner.auth).expect(200)).body;
+    expect(soupNow.tags).toEqual(['winter']);
+    const moved = await bulk(editor, { ids: [soup.id], action: 'trash' }).expect(200);
+    expect(moved.body.skipped).toEqual([{ id: soup.id, reason: 'not_allowed' }]);
+
+    const reader = await join('read');
+    const read = await bulk(reader, { ids: [soup.id], action: 'removeTag', tag: 'winter' }).expect(200);
+    expect(read.body.skipped).toEqual([{ id: soup.id, reason: 'not_allowed' }]);
+  });
+});
+
 describe('tasks across notes', () => {
   type Auth = { Authorization: string };
   const server = () => app.getHttpServer();
