@@ -2661,7 +2661,7 @@ describe('notebooks shared with other accounts', () => {
     const book = await post(owner.auth, '/api/notebooks', { name: 'Many' });
     const invites = `/api/notebooks/${book.id}/members/invites`;
     const target = `flood-${Date.now()}@example.com`;
-    // Three a day to one address, whoever sends them, renewed or withdrawn.
+    // Three a day from one account to one address, renewed or withdrawn.
     for (let i = 0; i < 3; i++) {
       const sent = await request(server())
         .post(invites)
@@ -2671,13 +2671,14 @@ describe('notebooks shared with other accounts', () => {
       await request(server()).delete(`${invites}/${sent.body.id}`).set(owner.auth).expect(204);
     }
     await request(server()).post(invites).set(owner.auth).send({ email: target, role: 'read' }).expect(429);
+    // That account used up its own allowance, not the address's: someone else can still invite it.
     const other = await account();
     const otherBook = await post(other.auth, '/api/notebooks', { name: 'Theirs' });
     await request(server())
       .post(`/api/notebooks/${otherBook.id}/members/invites`)
       .set(other.auth)
       .send({ email: target, role: 'read' })
-      .expect(429);
+      .expect(201);
     // Ten an hour from one account, to anyone.
     for (let i = 0; i < 7; i++) {
       await request(server())
