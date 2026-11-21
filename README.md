@@ -66,7 +66,8 @@ Markdown import/export.
   version at most every ten minutes (the last 50 are kept). Any version can be
   previewed and restored; restoring saves the current text first. The Changes
   view shows line by line what differs between a version and the note as it
-  is now, with a changed title above it.
+  is now, or another version, with a changed title above it. Inside a line
+  that changed, the words that differ are marked.
 - **Edit conflicts**: with a note open in two tabs or on two devices, a save
   that would overwrite the other one is held back, and the editor asks what
   to keep: your text, theirs, or yours with theirs saved in the history.
@@ -904,6 +905,22 @@ matter, only how much changed: up to 2,000 added and removed lines are worked
 out, and past that the view says so and shows no diff. A single block that
 was only added or only removed is shown whatever its size. The view lists
 2,000 rows at most and then says how many more lines changed.
+
+"Compare with" above the changes picks what the version is compared with:
+the note now, or another version. Two versions are always compared from the
+older to the newer, whichever was selected first. Where a block of removed
+lines faces a block of added lines, the first removed line is paired with the
+first added one, the second with the second, and so on, and the words that
+differ are marked in each (struck through on the removed line, underlined on
+the added one, and read out as "removed" and "added" by a screen reader).
+Lines left over when the blocks are not the same length stay whole, and so do
+pairs with less than a third of their text in common, where marks would cover
+almost everything. A pair with more than 200 words and spaces changed, or
+more than 2,000 between the first and the last change, or more than 100,000
+characters in all, is shown whole too. One view does a fixed amount of work
+on words, about a million steps counting the pairs it gave up on, and shows
+the rest of the lines whole after that. A folded
+stretch has a "Show" button that puts back its lines, 500 at a time.
 
 Every note has a revision, a number that goes up by one whenever its title or
 text changes: a save, a restored version, links rewritten after a rename.

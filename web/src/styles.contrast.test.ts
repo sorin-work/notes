@@ -49,6 +49,9 @@ const TEXT: [text: string, background: string][] = [
   ['muted', 'success-soft'],
   ['text', 'danger-soft'],
   ['muted', 'danger-soft'],
+  // The words that differ inside a changed line.
+  ['text', 'success-mark'],
+  ['text', 'danger-mark'],
 ];
 
 /** Shapes that carry meaning without text: WCAG AA asks for 3:1. */

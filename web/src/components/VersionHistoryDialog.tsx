@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { Note } from '../api/types';
+import type { Note, Version } from '../api/types';
 import { getVersion, listVersions, restoreVersion } from '../api/versions';
 import { formatDateTime, formatRelative } from '../lib/dates';
 import { MarkdownPreview } from './MarkdownPreview';
@@ -31,6 +31,14 @@ export function VersionHistoryDialog({ noteId, current, beforeRestore, onClose, 
     queryKey: ['version', noteId, selectedId],
     queryFn: () => getVersion(noteId, selectedId as string),
     enabled: selectedId !== null,
+  });
+  // What the changes are shown against: the note now, or another version.
+  const [compareWith, setCompareWith] = useState<string | null>(null);
+  const otherId = compareWith !== null && compareWith !== selectedId ? compareWith : null;
+  const other = useQuery({
+    queryKey: ['version', noteId, otherId],
+    queryFn: () => getVersion(noteId, otherId as string),
+    enabled: otherId !== null,
   });
 
   const restore = useMutation({
@@ -112,7 +120,32 @@ export function VersionHistoryDialog({ noteId, current, beforeRestore, onClose, 
                 {view === 'preview' ? (
                   <MarkdownPreview content={version.data.content} />
                 ) : (
-                  <VersionChanges version={version.data} current={current} />
+                  <>
+                    <label className="field compare-with">
+                      <span>Compare with</span>
+                      <select value={otherId ?? ''} onChange={(event) => setCompareWith(event.target.value || null)}>
+                        <option value="">The note now</option>
+                        {versions.data
+                          .filter((item) => item.id !== selectedId)
+                          .map((item) => (
+                            <option key={item.id} value={item.id}>
+                              The version of {formatDateTime(item.createdAt)}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    {otherId === null ? (
+                      <VersionChanges key={version.data.id} from={version.data} to={current} />
+                    ) : other.isPending && other.fetchStatus === 'paused' ? (
+                      <NeedsConnection>This version is not available offline.</NeedsConnection>
+                    ) : other.isLoading ? (
+                      <Spinner />
+                    ) : other.error ? (
+                      <ErrorMessage error={other.error} />
+                    ) : (
+                      other.data && <BetweenVersions a={version.data} b={other.data} />
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -120,5 +153,18 @@ export function VersionHistoryDialog({ noteId, current, beforeRestore, onClose, 
         </div>
       )}
     </Modal>
+  );
+}
+
+/** The changes between two versions, always from the older one to the newer, whichever was picked first. */
+function BetweenVersions({ a, b }: { a: Version; b: Version }) {
+  const [older, newer] = Date.parse(a.createdAt) <= Date.parse(b.createdAt) ? [a, b] : [b, a];
+  return (
+    <VersionChanges
+      key={`${older.id}:${newer.id}`}
+      from={older}
+      to={newer}
+      labels={{ from: formatDateTime(older.createdAt), to: formatDateTime(newer.createdAt) }}
+    />
   );
 }
