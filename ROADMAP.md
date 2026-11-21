@@ -213,7 +213,182 @@ tree without folding.
 
 ## Later
 
-Empty for now: everything that was in this group has shipped.
+### 24. Tasks across notes
+
+Task boxes can be ticked in the preview (item 1), but open tasks spread over
+twenty meeting notes have no list of their own.
+
+- A Tasks page with every unticked `- [ ]` in the notes, grouped by note,
+  newest note first, with the notebook and tag selects of `FilterSelects`.
+  A click on the text opens the note at that line.
+- Where they come from: a `NoteTask` table kept in step on every save the
+  way `LinksService.sync` keeps `NoteLink`, with note, line, text and done.
+  The server parser (`parseNote` in `api/src/links/prose.ts`, micromark with
+  GFM) already knows task items, so they are read in the parse pool with its
+  limits. A migration or a start-up step fills in the notes that exist.
+- Ticking a box on the page: `POST /notes/:id/tasks` with the line, the
+  state the box showed and the note's revision, written through
+  `writeNoteText` the way the mention "Link" is, and only when that line
+  still holds a box in that state (the rule of `toggleTask` in
+  `web/src/lib/tasks.ts`). A note that changed meanwhile is a conflict, not
+  an overwrite.
+- Members of a shared notebook see its tasks only, through `AccessService`.
+  Editors tick, readers do not.
+- Tricky: templates (`workingNotes`), the trash and notes past the parser's
+  limits stay out, and the page says when some notes could not be read.
+  Line numbers move when a note changes, which the revision check covers.
+- Undecided: due dates. A plain convention such as `due:2026-11-30` after a
+  task would let the page sort and show what is late. A reminder by mail
+  would need a scheduler and SMTP and is a step further; I would leave it
+  out.
+
+### 25. Search syntax, several tags and saved searches
+
+Improves item 4, which left open `tag:foo` and `notebook:Work` typed into the
+box, filtering on more than one tag, and sidebar links that replace the
+filters instead of adding to them.
+
+- `parseSearch` in `api/src/search/search-query.ts` learns `tag:` and
+  `notebook:`, with double quotes for names with spaces
+  (`notebook:"Reading list"`), and `-word` to leave a word out. What it reads
+  goes into the same bound parameters as the selects.
+- Several tags: `tag` on `SearchQuery` and `ListNotesQuery` becomes a list
+  that must all match, `?tag=a&tag=b` in the URL, through `readFilters` and
+  `withFilters` in `web/src/lib/filters.ts`.
+- Saved searches: name a search with its filters and find it in the
+  sidebar. A short list in `preferences` on `User`, validated in
+  `api/src/auth/preferences.ts`, so it follows the account to every device.
+- Tricky: the selects and the typed words can both name a notebook. The
+  request has to merge them, and the page has to show which filter came from
+  where. Notebook names repeat at different levels ("Meetings" in Work and in
+  Home), so `notebook:Meetings` either means all of them or needs a path
+  (`notebook:Work/Meetings`). For a member, only the shared notebook's names
+  count.
+- Undecided: whether a sidebar link adds to the filters or replaces them.
+  Adding is what item 4 wanted, but it surprises when the old filter is out
+  of sight.
+
+### 26. Code highlighting, math and diagrams in the preview
+
+Fenced code shows as plain monospace text, and there is no way to write a
+formula or a small diagram. All three are common in notes about programming,
+study or planning.
+
+- Highlighting: a fenced block that names its language gets colours, through
+  `rehype-highlight` with a set of common languages, loaded on demand like
+  the graph page (`lazyPage`) so the main bundle does not grow.
+- Math: `$...$` and `$$...$$` through `remark-math` and `rehype-katex`, with
+  KaTeX's styles and fonts in the build, nothing from a CDN.
+- Diagrams: a ` ```mermaid ` block drawn by mermaid, loaded only when
+  a note has one, with `securityLevel: 'strict'`.
+- Tricky: `$` in ordinary notes ("costs $5 or $10") turns into math. Single
+  dollars can be switched off in `remark-math`, at the price of the most
+  common way to write inline math.
+- Tricky: mermaid is large and writes SVG with inline `<style>`, which a
+  strict style policy from item 19 refuses. The parser in the API
+  (`prose.ts`) has to agree on what is not plain text, so mentions do not
+  match inside a formula, and `extractWikiLinks` may have to skip math as it
+  skips code.
+- The colours of the highlighting need both themes in `styles.css` and the
+  pairs in `styles.contrast.test.ts`. Shared pages and print render the same.
+- Undecided: whether diagrams are worth mermaid's weight, or come later.
+
+### 27. Two-step sign-in and verified email changes
+
+Improves item 11. A password is the only thing between the internet and every
+note, a new email address is taken without checking that it works, and a
+mail that could not be sent shows only in the API log.
+
+- One-time codes from an authenticator app (TOTP, RFC 6238), built on
+  `node:crypto`. Settings shows a QR code and the secret, the first code
+  turns it on, and ten recovery codes are shown once and kept as hashes.
+- `POST /auth/login` answers with a short-lived ticket instead of a token
+  when codes are on, and `POST /auth/login/code` takes the ticket and a code.
+  Throttled per account as well as per address (`AccountThrottlerGuard`), so
+  the million codes cannot be tried.
+- A new email address: `PATCH /auth/me` keeps it pending and mails a link to
+  it, under the password reset's rules (hashed, once, an hour). The old
+  address gets a notice. Without SMTP the change goes through as today.
+- Tricky: a password reset by mail must still ask for the code afterwards,
+  or the reset becomes the way around it. Turning codes off takes the
+  password and a code. A code is accepted once, with one step of clock drift
+  either side.
+- Tricky: the secret is stored encrypted with a key from the environment,
+  stays out of the JSON backup, and a restore of the database dump keeps it.
+  API tokens keep working, but making one should ask for a code too.
+- Undecided: WebAuthn passkeys instead of or beside TOTP. They need no
+  shared secret but are more work in the browser and in tests.
+
+### 28. Select several notes at once
+
+Moving twenty imported notes into a notebook, tagging a batch, or sending a
+batch to the trash is one note at a time today.
+
+- `NoteList` gets a selection: a box per row, Shift with a click for a range,
+  and a bar with Move to, Add tag, Remove tag, Pin and Move to trash.
+- `POST /notes/bulk` with the ids and one action, in one transaction, up to
+  500 ids, answering which notes changed and which were skipped. Each note
+  goes through `AccessService`, and a member's editor role only covers tags
+  (item 17), so a mixed selection is refused in part, and the answer says
+  which.
+- None of these touch title or content, so none can conflict (item 8). They
+  need a connection, like pins and tags offline (item 14), and say so.
+- Tricky: the list loads in pages (`useInfiniteQuery`), so "select all" can
+  only mean the loaded rows unless the action takes the filters instead of
+  ids. A move cannot be undone the way the trash can, so the bar wants an
+  "Undo" notice for a while.
+- Tricky: Space and Shift with the arrow keys should select from the
+  keyboard, which goes with the roving Tab stop of item 23. A screen reader
+  has to hear how many are selected.
+- Undecided: whether selecting replaces opening a note on click, or needs a
+  "Select" button first.
+
+### 29. Live change notices in open notes
+
+Improves items 8 and 17. A tab that only has a note open is not told that it
+changed elsewhere until it saves, and a member of a shared notebook learns of
+someone else's change only by opening the note.
+
+- A stream of server-sent events at `GET /events` that says "note X is now
+  at revision N" for the notes the account can see. An open note with
+  nothing unsaved quietly loads the new text. One with unsaved text shows a
+  line that it changed elsewhere and offers the conflict question before more
+  is typed.
+- The sidebar marks the notes of a shared notebook that someone else changed
+  since I last opened them.
+- Tricky: `EventSource` cannot send an `Authorization` header, and the token
+  is in `localStorage`. Either `fetch` with a streamed body and its own
+  reconnect, or a one-time ticket in the address like `DownloadTickets`,
+  which then shows up in logs. nginx needs `proxy_buffering off` and a long
+  timeout for that path.
+- Tricky: a member who is removed, a "sign out everywhere" and a password
+  change have to end the stream at once, not at the next reconnect. One API
+  process can fan out from memory. With more than one, the revision trigger
+  of item 8 could `pg_notify` and every process `LISTEN`.
+- Undecided: one stream per tab, or one shared between tabs through a
+  `BroadcastChannel`. And where "last opened" is kept for the marks. Live
+  co-editing stays out, as item 17 said.
+
+### 30. Tests in a real browser
+
+Improves the tests of items 6, 9 and 14. jsdom has no service worker, no
+real IndexedDB across a reload, no paste of a file and no colours, so the
+parts most likely to break quietly are tested in pieces or not at all.
+
+- Playwright in a folder of its own (`e2e/` at the root, with its own
+  `package.json`), run against the Docker stack built from the branch, in a
+  CI job after the image build. Chromium first.
+- A handful of flows: sign up, write a note and find it after a reload;
+  go offline (`context.setOffline`), write, reload, come back and see it
+  saved; paste an image and see it in the preview; two pages on one note
+  meet the conflict question; axe with `color-contrast` turned on.
+- Tricky: the service worker only exists in a build, so the tests run the
+  built stack, never `npm run dev`. Each test signs up its own account, as
+  the API's end-to-end tests do. Waits go on state and requests, never on
+  fixed times, or the job turns flaky and gets ignored.
+- Undecided: whether the job blocks a merge from the start, and whether it
+  runs on every pull request or only on those that touch `web/` or the
+  compose files.
 
 ## Maybe
 
