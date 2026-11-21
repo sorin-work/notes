@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -203,5 +203,28 @@ describe('MarkdownPreview', () => {
   it('shows a hint for empty notes', () => {
     render(<MarkdownPreview content="   " />);
     expect(screen.getByText('Nothing to preview yet.')).toBeInTheDocument();
+  });
+
+  it('colours a block that names its language, and leaves a plain one plain', async () => {
+    const { container } = render(<MarkdownPreview content={'```js\nconst a = 1; // one\n```\n\n```\nplain\n```'} />);
+    expect(await screen.findByText('const')).toHaveClass('hljs-keyword');
+    expect(screen.getByText('// one')).toHaveClass('hljs-comment');
+    expect(container.querySelectorAll('code.hljs')).toHaveLength(1);
+  });
+
+  it('draws $$ math with KaTeX, and leaves single dollars as text', async () => {
+    const { container } = render(
+      <MarkdownPreview content={'Area $$\\pi r^2$$ costs $5 or $10.\n\n$$\n\\frac{a}{b}\n$$'} />,
+    );
+    await waitFor(() => expect(container.querySelectorAll('.katex')).toHaveLength(2));
+    expect(container.querySelector('.katex-display')).not.toBeNull();
+    expect(screen.getByText(/costs \$5 or \$10\./)).toBeInTheDocument();
+    // Nothing is written as a <style> element, which the security policy would refuse.
+    expect(container.querySelector('style')).toBeNull();
+  });
+
+  it('shows a formula with a mistake as its source instead of failing', async () => {
+    const { container } = render(<MarkdownPreview content={'$$\\frac{a$$'} />);
+    await waitFor(() => expect(container.querySelector('.katex-error')).not.toBeNull());
   });
 });

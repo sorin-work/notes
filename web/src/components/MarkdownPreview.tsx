@@ -2,6 +2,7 @@ import { ComponentProps, createContext, memo, MouseEvent, useContext } from 'rea
 import ReactMarkdown, { defaultUrlTransform, ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Pluggable } from 'unified';
+import { useRichMarkdown } from '../hooks/useRichMarkdown';
 import { headingId, remarkHeadingIds, slugify } from '../lib/headings';
 import { countLines } from '../lib/tasks';
 import { linkifyWikiLinks, normalizeTitle, WIKI_PROTOCOL, wikiTarget } from '../lib/wikilinks';
@@ -119,6 +120,8 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   attachmentUrls,
   headingIds = false,
 }: MarkdownPreviewProps) {
+  // Colours for code and formulas, for a note that has either, once they have loaded.
+  const rich = useRichMarkdown(content);
   if (!content.trim()) {
     return <p className="preview-empty">Nothing to preview yet.</p>;
   }
@@ -128,12 +131,17 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   const sameLines = onToggleTask !== undefined && countLines(linkified) === countLines(content);
   // Filled by the plugin while the text is parsed, which is done before any link below is rendered.
   const slugs = new Set<string>();
-  const remarkPlugins = headingIds ? [remarkGfm, [remarkHeadingIds, { slugs }] satisfies Pluggable] : [remarkGfm];
+  const remarkPlugins: Pluggable[] = [
+    remarkGfm,
+    ...(rich?.remarkPlugins ?? []),
+    ...(headingIds ? [[remarkHeadingIds, { slugs }] satisfies Pluggable] : []),
+  ];
   return (
     <div className="markdown">
       <ToggleTaskContext value={sameLines ? onToggleTask : undefined}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
+          rehypePlugins={rich?.rehypePlugins}
           urlTransform={urlTransformFor(attachmentUrls)}
           components={{
             a({ href, children }) {
