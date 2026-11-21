@@ -231,6 +231,28 @@ describe('SharedNotePage', () => {
     ]);
   });
 
+  it('follows links to headings, in the same note and in another', async () => {
+    mockFetch({
+      'GET /api/public/notes/tok123/n-rye': {
+        body: { ...rye, content: '[[#Plan]], [[soup#Stock]] and [[soup#Gone]]\n\n## Plan' },
+      },
+      'GET /api/public/notes/tok123/n-soup': { body: { ...soup, content: '# Leeks\n\n## Stock' } },
+    });
+    renderShared('/s/tok123/n-rye');
+
+    await userEvent.click(await screen.findByRole('link', { name: 'Plan' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Plan' })).toHaveFocus());
+    await userEvent.click(screen.getByRole('link', { name: 'soup › Stock' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Stock' })).toHaveFocus());
+    expect(screen.getByRole('heading', { name: 'Stock' })).toHaveAttribute('id', 'h-stock');
+  });
+
+  it('says so when a linked heading is not in the shared note', async () => {
+    mockFetch({ 'GET /api/public/notes/tok123/n-soup': { body: { ...soup, content: '# Leeks' } } });
+    renderShared('/s/tok123/n-soup#h-gone');
+    expect(await screen.findByText('There is no heading “gone” in this note. It may have been renamed.')).toBeVisible();
+  });
+
   it('asks once for the password of a shared notebook and reads on with the proof of it', async () => {
     const sentProof = (call: number) =>
       new Headers((vi.mocked(fetch).mock.calls[call]?.[1] as RequestInit).headers).get('X-Share-Access');

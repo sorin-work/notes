@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { ApiError } from '../api/client';
 import { getShared, getSharedAttachments, getSharedNoteIn, unlockShared } from '../api/shares';
 import type { SharedNote, SharedNotebook } from '../api/types';
 import { MarkdownPreview } from '../components/MarkdownPreview';
 import { ErrorMessage, FullPageSpinner } from '../components/States';
 import { formatDateTime, formatRelative } from '../lib/dates';
+import { headingId, noteHeadings, slugFromHash, slugify } from '../lib/headings';
 import { normalizeTitle } from '../lib/wikilinks';
 
 const statusOf = (error: unknown) => (error instanceof ApiError ? error.status : null);
@@ -139,10 +140,28 @@ function SharedNoteView({
   // The API leaves [[links]] in the text only where they lead somewhere this
   // reader may go, and says where. Anything else stays plain text here too.
   const linked = useMemo(() => new Set(Object.keys(note.links)), [note.links]);
-  const follow = (title: string) => {
+  const follow = (title: string, heading: string | null) => {
+    const hash = heading ? `#${headingId(slugify(heading.trim()))}` : '';
+    const state = heading ? { heading } : undefined;
+    if (title === '') {
+      if (hash) navigate({ hash }, { state });
+      return;
+    }
     const path = note.links[normalizeTitle(title)];
-    if (path) navigate(path);
+    if (path) navigate({ pathname: path, hash }, { state });
   };
+  // An address that ends in #h-<slug> scrolls to that heading, or says the note has none.
+  const location = useLocation();
+  const slug = slugFromHash(location.hash);
+  const headings = useMemo(() => (slug === null ? [] : noteHeadings(note.content)), [slug, note.content]);
+  const target = slug === null ? undefined : headings.find((heading) => heading.slug === slug);
+  useEffect(() => {
+    if (!target) return;
+    const element = document.getElementById(headingId(target.slug));
+    element?.scrollIntoView?.({ block: 'start' });
+    element?.focus({ preventScroll: true });
+  }, [location.key, target]);
+  const missing = slug !== null && !target ? ((location.state as { heading?: string } | null)?.heading ?? slug) : null;
   return (
     <article className="shared-note">
       <header>
@@ -158,9 +177,15 @@ function SharedNoteView({
           {note.tags.map((tag) => `#${tag}`).join(' ')}
         </p>
       </header>
+      {missing !== null && (
+        <p className="muted" role="status">
+          There is no heading “{missing}” in this note. It may have been renamed.
+        </p>
+      )}
       <MarkdownPreview
         content={note.content}
         onWikiLink={follow}
+        headingIds
         linkedTitles={linked}
         attachmentUrls={files.data ?? note.attachments}
       />
