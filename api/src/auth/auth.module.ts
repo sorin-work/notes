@@ -9,9 +9,12 @@ import { ApiTokensController } from './api-tokens.controller';
 import { ApiTokensService } from './api-tokens.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailChangeService } from './email-change.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordResetController } from './password-reset.controller';
 import { PasswordResetService } from './password-reset.service';
+import { TwoStepController } from './two-step.controller';
+import { TwoStepService } from './two-step.service';
 
 @Module({
   imports: [
@@ -37,8 +40,15 @@ import { PasswordResetService } from './password-reset.service';
     }),
     MailModule,
   ],
-  controllers: [AuthController, PasswordResetController, ApiTokensController],
-  providers: [AuthService, PasswordResetService, ApiTokensService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
+  controllers: [AuthController, PasswordResetController, ApiTokensController, TwoStepController],
+  providers: [
+    AuthService,
+    PasswordResetService,
+    ApiTokensService,
+    TwoStepService,
+    EmailChangeService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+  ],
   // For routes that are public but still want to know who is asking, such as a shared note read by its owner.
   exports: [AuthService],
 })

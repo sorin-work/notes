@@ -15,6 +15,7 @@ import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { AccountThrottlerGuard } from './account-throttler.guard';
 import { ApiTokensService, ApiTokenView, CreatedApiToken } from './api-tokens.service';
 import { AuthService } from './auth.service';
+import { TwoStepService } from './two-step.service';
 import { CreateApiTokenDto } from './dto/create-api-token.dto';
 
 /**
@@ -26,6 +27,7 @@ export class ApiTokensController {
   constructor(
     private readonly tokens: ApiTokensService,
     private readonly auth: AuthService,
+    private readonly twoStep: TwoStepService,
   ) {}
 
   /** The API tokens of the account, without the tokens themselves. */
@@ -35,7 +37,8 @@ export class ApiTokensController {
   }
 
   /**
-   * Makes a token. Needs `currentPassword`, and the answer is the only place the token itself ever appears.
+   * Makes a token. Needs `currentPassword`, and `code` too with two-step
+   * sign-in on. The answer is the only place the token itself ever appears.
    *
    * Throttled with the other routes that check the password, in the same
    * bucket per account.
@@ -44,6 +47,7 @@ export class ApiTokensController {
   @Post()
   async create(@CurrentUser() user: AuthUser, @Body() dto: CreateApiTokenDto): Promise<CreatedApiToken> {
     await this.auth.assertPassword(user.id, dto.currentPassword);
+    await this.twoStep.assertCode(user.id, dto.code);
     return this.tokens.create(user.id, dto);
   }
 

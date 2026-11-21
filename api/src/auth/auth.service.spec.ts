@@ -1,9 +1,14 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
-import { AuthService } from './auth.service';
+import type { AppConfig } from '../config/config';
+import { AuthResult, AuthService, TwoStepTicket } from './auth.service';
+import { EmailChangeService } from './email-change.service';
 import { hashPassword, verifyPassword } from './password';
 import { DEFAULT_PREFERENCES } from './preferences';
+import { codeAt, stepAt } from './totp';
+import { encryptSecret } from './two-step-crypto';
+import { TwoStepService } from './two-step.service';
 
 const NOTEBOOK = '11111111-1111-4111-8111-111111111111';
 const TEMPLATE = '22222222-2222-4222-8222-222222222222';
@@ -49,6 +54,8 @@ describe('AuthService', () => {
         name: 'Ada',
         createdAt: user.createdAt,
         preferences: DEFAULT_PREFERENCES,
+        twoStep: false,
+        pendingEmail: null,
       });
       expect(result.user).not.toHaveProperty('passwordHash');
       expect(jwt.verify(result.token)).toMatchObject({ sub: user.id, ver: 0 });
@@ -66,14 +73,14 @@ describe('AuthService', () => {
   describe('login', () => {
     it('returns a token for the right password', async () => {
       prisma.user.findUnique.mockResolvedValue(user);
-      const result = await service.login({ email: user.email, password: 'correct-horse' });
+      const result = (await service.login({ email: user.email, password: 'correct-horse' })) as AuthResult;
       expect(result.user.email).toBe(user.email);
       expect(jwt.verify(result.token).sub).toBe(user.id);
     });
 
     it('puts the current token version in the token', async () => {
       prisma.user.findUnique.mockResolvedValue({ ...user, tokenVersion: 4 });
-      const result = await service.login({ email: user.email, password: 'correct-horse' });
+      const result = (await service.login({ email: user.email, password: 'correct-horse' })) as AuthResult;
       expect(jwt.verify(result.token).ver).toBe(4);
     });
 
@@ -86,6 +93,131 @@ describe('AuthService', () => {
     });
   });
 
+  describe('two-step sign-in', () => {
+    const key = Buffer.alloc(32, 9);
+    const secret = Buffer.from('12345678901234567890');
+    const now = new Date('2026-11-21T12:00:00Z');
+    let twoStep: TwoStepService;
+    let withCodes: typeof user & { twoStepSecret: string; twoStepSince: Date; twoStepLastStep: number | null };
+
+    beforeEach(() => {
+      twoStep = new TwoStepService(asPrismaService(prisma), { authThrottleLimit: 10, twoStepKey: key } as AppConfig);
+      jest.spyOn(twoStep, 'warnOwner').mockImplementation(() => {});
+      service = new AuthService(asPrismaService(prisma), jwt, undefined, twoStep);
+      withCodes = {
+        ...user,
+        twoStepSecret: encryptSecret(key, user.id, secret),
+        twoStepSince: new Date('2026-11-01T00:00:00Z'),
+        twoStepLastStep: null,
+      };
+    });
+
+    it('answers a ticket instead of a token, and the ticket is no login', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const result = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      expect(result).toEqual({ twoStep: true, ticket: expect.any(String) });
+      expect(result).not.toHaveProperty('token');
+      prisma.user.findUnique.mockResolvedValue({ email: user.email, tokenVersion: 0 });
+      await expect(service.identify(result.ticket)).resolves.toBeNull();
+    });
+
+    it('signs in with the ticket and the right code, once', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      prisma.user.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+      const code = codeAt(secret, stepAt(now));
+
+      const result = await service.loginWithCode(ticket, code, '203.0.113.7', now);
+      expect(jwt.verify(result.token).sub).toBe(user.id);
+      // Taken only if its step is after the last one taken, in the same statement that moves it.
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: user.id, OR: [{ twoStepLastStep: null }, { twoStepLastStep: { lt: stepAt(now) } }] },
+        data: { twoStepLastStep: stepAt(now) },
+      });
+      // The same code again finds its step taken.
+      await expect(service.loginWithCode(ticket, code, '203.0.113.7', now)).rejects.toThrow('That code is not right');
+    });
+
+    it('takes the codes of one step before and after, and no further', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      for (const offset of [-1, 1]) {
+        await expect(
+          service.loginWithCode(ticket, codeAt(secret, stepAt(now) + offset), '203.0.113.7', now),
+        ).resolves.toHaveProperty('token');
+      }
+      await expect(service.loginWithCode(ticket, codeAt(secret, stepAt(now) + 2), '203.0.113.7', now)).rejects.toThrow(
+        'That code is not right',
+      );
+      expect(twoStep.warnOwner).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a ticket up after five wrong codes, and does not stop another address', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const first = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await expect(service.loginWithCode(first.ticket, '000000', '198.51.100.1', now)).rejects.toThrow(
+          'That code is not right',
+        );
+      }
+      await expect(service.loginWithCode(first.ticket, '000000', '198.51.100.1', now)).rejects.toThrow(
+        'Sign in with your password again',
+      );
+      // The owner, somewhere else, with a ticket of their own.
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+      const own = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      await expect(
+        service.loginWithCode(own.ticket, codeAt(secret, stepAt(now)), '203.0.113.7', now),
+      ).resolves.toHaveProperty('token');
+    });
+
+    it('counts codes per account and address across tickets', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+        await expect(service.loginWithCode(ticket, '000000', '198.51.100.1', now)).rejects.toThrow(
+          'That code is not right',
+        );
+      }
+      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      await expect(service.loginWithCode(ticket, '000000', '198.51.100.1', now)).rejects.toThrow(
+        'Too many codes from here',
+      );
+      await expect(service.loginWithCode(ticket, '000000', '203.0.113.7', now)).rejects.toThrow(
+        'That code is not right',
+      );
+    });
+
+    it('refuses a ticket from before the password changed, and a login token as a ticket', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      prisma.user.findUnique.mockResolvedValue({ ...withCodes, tokenVersion: 1 });
+      await expect(service.loginWithCode(ticket, codeAt(secret, stepAt(now)), '203.0.113.7', now)).rejects.toThrow(
+        'Sign in with your password again',
+      );
+      const token = await jwt.signAsync({ sub: user.id, ver: 1 });
+      await expect(service.loginWithCode(token, codeAt(secret, stepAt(now)), '203.0.113.7', now)).rejects.toThrow(
+        'Sign in with your password again',
+      );
+    });
+
+    it('takes a recovery code once', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      prisma.recoveryCode.deleteMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+      await expect(service.loginWithCode(ticket, 'ABCD-EFGH-JKMN-PQRS', '203.0.113.7', now)).resolves.toHaveProperty(
+        'token',
+      );
+      expect(prisma.recoveryCode.deleteMany).toHaveBeenCalledWith({
+        where: { userId: user.id, codeHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+      });
+      await expect(service.loginWithCode(ticket, 'abcdefghjkmnpqrs', '203.0.113.7', now)).rejects.toThrow(
+        'That code is not right',
+      );
+    });
+  });
+
   describe('me', () => {
     it('returns the user without the password hash', async () => {
       prisma.user.findUnique.mockResolvedValue(user);
@@ -95,6 +227,8 @@ describe('AuthService', () => {
         name: user.name,
         createdAt: user.createdAt,
         preferences: DEFAULT_PREFERENCES,
+        twoStep: false,
+        pendingEmail: null,
       });
     });
 
@@ -184,6 +318,31 @@ describe('AuthService', () => {
       expect(result.email).toBe('new@example.com');
       // A reset link mailed to the old address must not work any more.
       expect(prisma.passwordReset.deleteMany).toHaveBeenCalledWith({ where: { userId: user.id } });
+    });
+
+    it('keeps a new email waiting for its link when mail is set up, and changes the name at once', async () => {
+      const emailChanges = {
+        confirms: true,
+        request: jest.fn(),
+        pending: jest.fn().mockResolvedValue('new@example.com'),
+      };
+      service = new AuthService(
+        asPrismaService(prisma),
+        jwt,
+        undefined,
+        undefined,
+        emailChanges as unknown as EmailChangeService,
+      );
+      prisma.user.findUnique.mockResolvedValueOnce(user).mockResolvedValueOnce(null);
+      prisma.user.update.mockResolvedValue({ ...user, name: 'Ada L.' });
+      const result = await service.updateProfile(user.id, {
+        name: 'Ada L.',
+        email: 'new@example.com',
+        currentPassword: 'correct-horse',
+      });
+      expect(emailChanges.request).toHaveBeenCalledWith(user, 'new@example.com');
+      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: user.id }, data: { name: 'Ada L.' } });
+      expect(result).toMatchObject({ email: user.email, name: 'Ada L.', pendingEmail: 'new@example.com' });
     });
 
     it('refuses an email that belongs to another account', async () => {

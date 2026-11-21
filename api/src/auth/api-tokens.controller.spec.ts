@@ -4,11 +4,13 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { ApiTokensController } from './api-tokens.controller';
 import { ApiTokensService } from './api-tokens.service';
 import { AuthService } from './auth.service';
+import { TwoStepService } from './two-step.service';
 
 describe('ApiTokensController', () => {
   let controller: ApiTokensController;
   const tokens = { list: jest.fn(), create: jest.fn(), revoke: jest.fn(), revokeAll: jest.fn() };
   const auth = { assertPassword: jest.fn() };
+  const twoStep = { assertCode: jest.fn() };
   const user = { id: 'user-1', email: 'ada@example.com' };
 
   beforeEach(async () => {
@@ -19,6 +21,7 @@ describe('ApiTokensController', () => {
       providers: [
         { provide: ApiTokensService, useValue: tokens },
         { provide: AuthService, useValue: auth },
+        { provide: TwoStepService, useValue: twoStep },
       ],
     }).compile();
     controller = moduleRef.get(ApiTokensController);
@@ -41,7 +44,16 @@ describe('ApiTokensController', () => {
     await expect(controller.create(user, dto)).resolves.toEqual({ id: 't1', token: 'nt_secret' });
 
     expect(auth.assertPassword).toHaveBeenCalledWith('user-1', 'correct-horse');
+    expect(twoStep.assertCode).toHaveBeenCalledWith('user-1', undefined);
     expect(tokens.create).toHaveBeenCalledWith('user-1', dto);
+  });
+
+  it('makes no token when two-step sign-in is on and the code is missing or wrong', async () => {
+    twoStep.assertCode.mockRejectedValue(new ForbiddenException('That code is not right'));
+    const dto = { name: 'script', currentPassword: 'correct-horse', code: '000000' };
+    await expect(controller.create(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(twoStep.assertCode).toHaveBeenCalledWith('user-1', '000000');
+    expect(tokens.create).not.toHaveBeenCalled();
   });
 
   it('makes no token when the password is wrong', async () => {

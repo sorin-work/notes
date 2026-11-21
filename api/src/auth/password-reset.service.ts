@@ -143,6 +143,10 @@ export class PasswordResetService {
    * else may have been in: whoever knew the old password could have made a
    * token, and the page this is called from has no login to show a list on.
    * A password change in Settings keeps them and shows them instead.
+   *
+   * Two-step sign-in stays as it was. The reset signs nobody in, and the
+   * next sign-in asks for a code as before, so a reset by mail is no way
+   * around the code.
    */
   async reset(token: string, password: string, now = new Date()): Promise<void> {
     this.assertEnabled();
@@ -163,6 +167,8 @@ export class PasswordResetService {
       // The other links of the account stop working with this one.
       await tx.passwordReset.deleteMany({ where: { userId: link.userId } });
       await tx.apiToken.deleteMany({ where: { userId: link.userId } });
+      // A new address asked for by whoever was in the account does not go through either.
+      await tx.emailChange.deleteMany({ where: { userId: link.userId } });
       await tx.user.update({
         where: { id: link.userId },
         data: { passwordHash, tokenVersion: { increment: 1 } },
