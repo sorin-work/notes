@@ -50,7 +50,7 @@ couple of weekends, **L** several weeks of spare time.
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
 | 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
 | 27  | Two-step sign-in and verified email changes         | Shipped | both     | M    | -          |
-| 28  | Select several notes at once                        | Later   | both     | M    | -          |
+| 28  | Select several notes at once                        | Shipped | both     | M    | -          |
 | 29  | Live change notices in open notes                   | Later   | both     | M    | -          |
 | 30  | Tests in a real browser                             | Later   | infra    | M    | -          |
 | 31  | Embedding one note in another                       | Maybe   | both     | M    | 21         |
@@ -135,30 +135,6 @@ study or planning.
 - The colours of the highlighting need both themes in `styles.css` and the
   pairs in `styles.contrast.test.ts`. Shared pages and print render the same.
 - Undecided: whether diagrams are worth mermaid's weight, or come later.
-
-### 28. Select several notes at once
-
-Moving twenty imported notes into a notebook, tagging a batch, or sending a
-batch to the trash is one note at a time today.
-
-- `NoteList` gets a selection: a box per row, Shift with a click for a range,
-  and a bar with Move to, Add tag, Remove tag, Pin and Move to trash.
-- `POST /notes/bulk` with the ids and one action, in one transaction, up to
-  500 ids, answering which notes changed and which were skipped. Each note
-  goes through `AccessService`, and a member's editor role only covers tags
-  (item 17), so a mixed selection is refused in part, and the answer says
-  which.
-- None of these touch title or content, so none can conflict (item 8). They
-  need a connection, like pins and tags offline (item 14), and say so.
-- Tricky: the list loads in pages (`useInfiniteQuery`), so "select all" can
-  only mean the loaded rows unless the action takes the filters instead of
-  ids. A move cannot be undone the way the trash can, so the bar wants an
-  "Undo" notice for a while.
-- Tricky: Space and Shift with the arrow keys should select from the
-  keyboard, which goes with the roving Tab stop of item 23. A screen reader
-  has to hear how many are selected.
-- Undecided: whether selecting replaces opening a note on click, or needs a
-  "Select" button first.
 
 ### 29. Live change notices in open notes
 
@@ -930,3 +906,25 @@ left out as the bigger piece of work; a way back for someone who lost the
 phone and the recovery codes other than the database; codes for the other
 account changes, which still take the password only; and the mails are
 plain text in English.
+
+### 28. Select several notes at once
+
+"Select" above the note list turns on a box per row, so a click on a note
+still opens it; that settles the open point. Shift with a click selects a
+range, Space selects the note with the focus, and Shift with Up or Down
+selects while it moves, on top of the roving Tab stop of item 23. The count is
+said in a status line, and each note says whether it is selected. The bar
+does Move to, Add tag, Remove tag, Pin, Unpin and Move to trash through
+`POST /notes/bulk`: up to 500 ids, one transaction, the notes locked in id
+order, access decided note by note with `AccessService.notes` (the
+memberships read once), and an answer that lists changed, unchanged and
+skipped notes with a reason. A move answers with where each note was, and its
+notice offers Undo for 15 seconds: one `moveBack` request that leaves a note
+moved again since where it is. A move that changes who can read the notes,
+into or out of a notebook shared with a link or with members, asks first and
+says who gains or loses them. `renameLinks` now locks its notes in id order
+too, so it cannot deadlock with a bulk action. The bar needs a
+connection and says so, and notes made offline that are not on the server
+yet are left out and counted. "Select all" means the loaded rows; the action
+does not take the filters. Still open: favouriting in bulk, and selecting
+every page of a long list.

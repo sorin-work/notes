@@ -2326,3 +2326,45 @@ ul.error-box {
   padding: 0;
   list-style: none;
 }
+
+/* Selecting several notes */
+
+.selection-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.selection-count,
+.selection-actions,
+.selection-tag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.selection-tag input {
+  width: 8rem;
+}
+
+.note-list.selecting li {
+  display: flex;
+  align-items: flex-start;
+}
+
+.note-list.selecting li > a {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-select {
+  margin: 0.9rem 0 0 0.6rem;
+}
+
+.note-list li.selected {
+  background: var(--accent-soft);
+}

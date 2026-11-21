@@ -105,6 +105,50 @@ export class AccessService {
   }
 
   /**
+   * `note` for many notes at once, with the memberships read once: for each
+   * id what the caller may do, or why not. "missing" stands for the 404 of
+   * `note` and "refused" for its 403, so a note the caller may not see looks
+   * the same as one that does not exist. Pass the transaction that writes.
+   */
+  async notes(
+    userId: string,
+    ids: string[],
+    need: Need,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Map<string, Granted | 'missing' | 'refused'>> {
+    const found = await db.note.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, userId: true, notebookId: true, deletedAt: true, isTemplate: true },
+    });
+    const byId = new Map(found.map((note) => [note.id, note]));
+    const shared = found.some((note) => note.userId !== userId) ? await this.sharedNotebooks(userId, db) : new Map();
+    const result = new Map<string, Granted | 'missing' | 'refused'>();
+    for (const id of ids) {
+      const note = byId.get(id);
+      if (!note) {
+        result.set(id, 'missing');
+        continue;
+      }
+      if (note.userId === userId) {
+        result.set(id, { ownerId: userId, access: 'owner' });
+        continue;
+      }
+      const entry = note.notebookId && !note.deletedAt && !note.isTemplate ? shared.get(note.notebookId) : undefined;
+      if (!entry || entry.ownerId !== note.userId) {
+        result.set(id, 'missing');
+        continue;
+      }
+      try {
+        check(entry.role, need);
+        result.set(id, { ownerId: note.userId, access: entry.role });
+      } catch {
+        result.set(id, 'refused');
+      }
+    }
+    return result;
+  }
+
+  /**
    * The check to run again inside the transaction that writes to a note.
    * The note's row is locked first, and the user's memberships are read with
    * a share lock: a move of the note, or the removal of the member, either

@@ -95,3 +95,28 @@ export const renameLinks = (id: string, from: string) =>
   api<RenamedLinks>(`/notes/${id}/rename-links`, json('POST', { from }));
 
 export const exportNote = (id: string, title: string) => download(`/notes/${id}/export`, `${title}.md`);
+
+export type BulkAction = 'move' | 'moveBack' | 'addTag' | 'removeTag' | 'pin' | 'unpin' | 'trash';
+
+/** Why a note was left out of a bulk action. */
+export type BulkSkipReason =
+  'not_found' | 'not_allowed' | 'in_trash' | 'too_many_tags' | 'moved_since' | 'notebook_gone';
+
+export interface BulkResult {
+  changed: string[];
+  unchanged: string[];
+  skipped: { id: string; reason: BulkSkipReason }[];
+  /** For a move: the notebook each changed note was in before. */
+  previous?: Record<string, string | null>;
+}
+
+/** One action for up to 500 notes, in one request. */
+export const bulkNotes = (body: {
+  ids: string[];
+  action: BulkAction;
+  notebookId?: string | null;
+  tag?: string;
+  /** For "moveBack": where each note goes, and where they all are expected to be now. */
+  back?: Record<string, string | null>;
+  expectedNotebookId?: string | null;
+}) => api<BulkResult>('/notes/bulk', json('POST', body));
