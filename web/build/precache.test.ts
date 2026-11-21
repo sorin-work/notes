@@ -11,8 +11,11 @@ describe('precacheList', () => {
         'sw.js',
         'version.json',
         'icons/icon-192.png',
+        'assets/KaTeX_Main-Regular-abc.woff2',
+        'assets/KaTeX_Main-Regular-abc.woff',
+        'assets/KaTeX_Main-Regular-abc.ttf',
       ]),
-    ).toEqual(['/assets/index-abc.js', '/icons/icon-192.png', '/index.html']);
+    ).toEqual(['/assets/KaTeX_Main-Regular-abc.woff2', '/assets/index-abc.js', '/icons/icon-192.png', '/index.html']);
   });
 });
 

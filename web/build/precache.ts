@@ -6,13 +6,22 @@ export const WORKER_FILE = 'sw.js';
 export const VERSION_FILE = 'version.json';
 
 /**
+ * Fonts in the older formats. KaTeX's styles name each of its fonts as
+ * woff2, woff and ttf, and every browser that runs the app takes the woff2,
+ * so the others are built but not cached ahead.
+ */
+const FALLBACK_FONT = /\.(woff|ttf)$/;
+
+/**
  * What the worker caches: every file of the build and of `public/`, but not
- * source maps and not the worker itself. These are the same for everyone,
- * so no private data can end up in the cache.
+ * source maps, fallback fonts and not the worker itself. These are the same
+ * for everyone, so no private data can end up in the cache.
  */
 export function precacheList(files: Iterable<string>): string[] {
   return [...new Set(files)]
-    .filter((file) => !file.endsWith('.map') && file !== WORKER_FILE && file !== VERSION_FILE)
+    .filter(
+      (file) => !file.endsWith('.map') && !FALLBACK_FONT.test(file) && file !== WORKER_FILE && file !== VERSION_FILE,
+    )
     .map((file) => `/${file.split(sep).join('/')}`)
     .sort();
 }
