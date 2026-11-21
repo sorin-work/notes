@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { Notebook } from '../api/types';
 import { useStoredSet } from '../hooks/useStoredSet';
 import { flattenTree, type NotebookNode, notebookLabel, notebookTree } from '../lib/notebooks';
@@ -49,7 +50,10 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
       seen.add(at);
       if (closed.has(at)) toggleClosed(at);
     }
-    setOpen(true);
+    // The focus goes into the list, onto the choice that stands, so that the
+    // arrow keys work at once, as in a select.
+    flushSync(() => setOpen(true));
+    rootRef.current?.querySelector<HTMLElement>('.notebook-option[aria-current="true"]')?.focus();
   };
   const close = () => {
     setOpen(false);

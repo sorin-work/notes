@@ -97,10 +97,10 @@ describe('NotebookSelect', () => {
 
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Notebook: No notebook' })).toHaveFocus();
+    // Opening it puts the focus on the choice that stands.
     await userEvent.keyboard('{Enter}');
-    // Tab goes through the list in the order it is read: no notebook, Personal, the fold button of Work, Work.
-    await userEvent.tab();
     expect(screen.getByRole('button', { name: 'No notebook' })).toHaveFocus();
+    // From there Tab goes through the list in the order it is read: Personal, the fold button of Work, Work.
     await userEvent.tab();
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Fold Work' })).toHaveFocus();
@@ -133,11 +133,14 @@ describe('NotebookSelect', () => {
     const option = (name: string) => screen.getByRole('button', { name });
 
     await userEvent.click(option('Notebook: No notebook'));
-    option('No notebook').focus();
+    // The focus is in the list at once, so the arrows work straight away.
+    expect(option('No notebook')).toHaveFocus();
     await userEvent.keyboard('{ArrowDown}{ArrowDown}');
     expect(option('Work')).toHaveFocus();
     await userEvent.keyboard('{ArrowLeft}');
     expect(option('Unfold Work')).toBeInTheDocument();
+    // The notebook itself says it is folded, so the fold is announced where the focus is.
+    expect(option('Work')).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('button', { name: 'Meetings' })).not.toBeInTheDocument();
     await userEvent.keyboard('{ArrowRight}{ArrowRight}');
     expect(option('Meetings')).toHaveFocus();
