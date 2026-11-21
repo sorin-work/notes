@@ -100,12 +100,7 @@ export type BulkAction = 'move' | 'moveBack' | 'addTag' | 'removeTag' | 'pin' | 
 
 /** Why a note was left out of a bulk action. */
 export type BulkSkipReason =
-  | 'not_found'
-  | 'not_allowed'
-  | 'in_trash'
-  | 'too_many_tags'
-  | 'moved_since'
-  | 'notebook_gone';
+  'not_found' | 'not_allowed' | 'in_trash' | 'too_many_tags' | 'moved_since' | 'notebook_gone';
 
 export interface BulkResult {
   changed: string[];
@@ -124,5 +119,4 @@ export const bulkNotes = (body: {
   /** For "moveBack": where each note goes, and where they all are expected to be now. */
   back?: Record<string, string | null>;
   expectedNotebookId?: string | null;
-}) =>
-  api<BulkResult>('/notes/bulk', json('POST', body));
+}) => api<BulkResult>('/notes/bulk', json('POST', body));
