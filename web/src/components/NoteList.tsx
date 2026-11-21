@@ -7,8 +7,12 @@ import { PinIcon } from './Icons';
 /** While notes are being selected: which are, and what a click on a box or Space does. */
 export interface Selection {
   selected: ReadonlySet<string>;
-  /** Flips one note, or with `range` selects every note from the last one flipped to this one. */
-  onToggle(id: string, range: boolean): void;
+  /**
+   * Flips one note, or with `range` selects every note from where the range
+   * started to this one. `from` is the note the focus moved from, where a
+   * range that has not started yet starts.
+   */
+  onToggle(id: string, range: boolean, from?: string): void;
 }
 
 interface Props {
@@ -41,7 +45,7 @@ function onListKey(event: KeyboardEvent<HTMLUListElement>, selection: Selection 
   event.preventDefault();
   links[target]?.focus();
   const id = idAt(target);
-  if (selection && event.shiftKey && id) selection.onToggle(id, true);
+  if (selection && event.shiftKey && id) selection.onToggle(id, true, idAt(current));
 }
 
 /**

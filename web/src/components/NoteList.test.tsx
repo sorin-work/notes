@@ -113,6 +113,7 @@ describe('NoteList', () => {
     expect(onToggle).toHaveBeenLastCalledWith('First', false);
     await userEvent.keyboard('{Shift>}{ArrowDown}{/Shift}');
     expect(screen.getByRole('link', { name: /Second/ })).toHaveFocus();
-    expect(onToggle).toHaveBeenLastCalledWith('Second', true);
+    // The range starts where the focus came from.
+    expect(onToggle).toHaveBeenLastCalledWith('Second', true, 'First');
   });
 });
