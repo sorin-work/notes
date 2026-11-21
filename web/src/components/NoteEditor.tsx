@@ -770,7 +770,11 @@ function LoadedEditor({ note }: { note: Note }) {
     const wanted = typed.heading.trim().toLowerCase();
     const slug = slugify(wanted);
     return all
-      .filter((heading) => !wanted || heading.text.toLowerCase().includes(wanted) || heading.slug.startsWith(slug))
+      .filter(
+        // A query of only punctuation has an empty slug, which would match every heading.
+        (heading) =>
+          !wanted || heading.text.toLowerCase().includes(wanted) || (slug !== '' && heading.slug.startsWith(slug)),
+      )
       .slice(0, MAX_HEADING_OPTIONS)
       .map((heading) => ({
         label: heading.text || '(empty heading)',

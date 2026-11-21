@@ -1349,6 +1349,13 @@ describe('NoteEditor headings', () => {
     await userEvent.keyboard('{Enter}');
     expect(textarea).toHaveValue('[[Atlas#Plan]]');
 
+    // Punctuation alone slugs to nothing, which matches no heading rather than all of them.
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, '[[[[Atlas#!!');
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+
     await userEvent.clear(textarea);
     await userEvent.type(textarea, '# Mine\n\n[[[[#');
     expect(await screen.findByRole('option', { name: 'Mine' })).toBeInTheDocument();
