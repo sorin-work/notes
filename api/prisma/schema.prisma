@@ -180,6 +180,8 @@ model Note {
   versions      NoteVersion[]
   share         ShareLink?
   attachments   Attachment[]
+  tasks         NoteTask[]
+  tasksRead     NoteTaskRead?
 
   @@unique([userId, dailyDate])
   @@index([userId, deletedAt, updatedAt])
@@ -304,4 +306,33 @@ model InviteSend {
   @@index([invitedById, sentAt])
   @@index([email, sentAt])
   @@map("invite_sends")
+}
+
+/// A task list item of a note, `- [ ]` or `- [x]`, as the parser read it.
+/// Read again whenever the Tasks page finds that the note has moved past
+/// the revision in NoteTaskRead (see tasks/tasks.service.ts).
+model NoteTask {
+  id     String  @id @default(uuid()) @db.Uuid
+  noteId String  @map("note_id") @db.Uuid
+  /// The line of the note the item starts on, counted from 1.
+  line   Int
+  text   String
+  done   Boolean
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@map("note_tasks")
+}
+
+/// Which revision of a note its tasks were read from, and whether the
+/// parser could read it at all. A note without a row has not been read yet.
+model NoteTaskRead {
+  noteId   String  @id @map("note_id") @db.Uuid
+  revision Int
+  readable Boolean
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@map("note_task_reads")
 }
