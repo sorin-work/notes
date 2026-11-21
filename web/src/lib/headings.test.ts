@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { createSlugger, findHeading, headingLinkText, lineOffset, noteHeadings, slugFromHash, slugify } from './headings';
+import {
+  createSlugger,
+  findHeading,
+  headingLinkText,
+  lineOffset,
+  noteHeadings,
+  slugFromHash,
+  slugify,
+} from './headings';
 
 describe('slugify', () => {
   it('makes the slug GitHub makes', () => {
