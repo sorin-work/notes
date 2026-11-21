@@ -2,7 +2,7 @@ import { ConflictException, HttpException, HttpStatus, Injectable, NotFoundExcep
 import { Prisma } from '@prisma/client';
 import type { WriteGuard } from '../access/access.service';
 import { ParsePool } from '../links/parse-pool';
-import { parseable, TaskItem } from '../links/prose';
+import { MAX_PARSED_NOTE_LENGTH, parseable, TaskItem } from '../links/prose';
 import { workingNotes } from '../notes/note-scope';
 import { refusedWrite } from '../notes/note-text';
 import { NoteView } from '../notes/note-view';
@@ -17,7 +17,7 @@ export interface TaskNote {
   title: string;
   updatedAt: Date;
   notebook: { id: string; name: string } | null;
-  /** The revision the tasks were read from, which ticking a box has to name. */
+  /** The revision of the note, which its tasks were read from and ticking a box has to name. */
   revision: number;
   tasks: { line: number; text: string }[];
 }
@@ -39,11 +39,20 @@ export const MAX_TASK_PARSE_LENGTH = 1_000_000;
 export const MAX_TASK_PARSE_MS = 2_000;
 /** How many task requests of one user run at a time. More answer 429. */
 export const MAX_TASK_REQUESTS_PER_USER = 2;
-/** How many notes that need reading are loaded from the database at a time. */
-const BATCH = 50;
+/**
+ * Without a box anywhere in its text, a note has no tasks, and the parser
+ * need not look. As a Postgres regular expression.
+ */
+const BOX_PATTERN = '\\[[ xX]\\]';
 
-/** Without a box anywhere in its text, a note has no tasks, and the parser need not look. */
-const MAY_HAVE_TASK = /\[[ xX]\]/;
+/** A row that points at a note that is gone: as Prisma reports it, and as Postgres does through a raw query. */
+function isForeignKeyError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === 'P2003') return true;
+    return error.code === 'P2010' && (error.meta as { code?: string } | undefined)?.code === '23503';
+  }
+  return false;
+}
 
 /**
  * Tasks across notes. The task list items of a note are kept in `NoteTask`,
@@ -96,83 +105,118 @@ export class TasksService {
     const notes = await this.prisma.note.findMany({
       where,
       orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
-      select: { id: true, revision: true, tasksRead: { select: { revision: true, readable: true } } },
+      select: { id: true, revision: true, tasksRead: { select: { revision: true } } },
     });
-    const stale = notes.filter((note) => note.tasksRead?.revision !== note.revision).map((note) => note.id);
-    const unread = await this.read(stale);
+    await this.read(notes.filter((note) => note.tasksRead?.revision !== note.revision).map((note) => note.id));
 
-    const fresh = new Set<string>();
-    let unreadable = 0;
-    const current = await this.prisma.noteTaskRead.findMany({
-      where: { noteId: { in: notes.map((note) => note.id) } },
-      select: { noteId: true, revision: true, readable: true },
-    });
-    const revisions = new Map(notes.map((note) => [note.id, note.revision]));
-    for (const read of current) {
-      // Tasks read from an older revision have line numbers that may have moved: they are not shown.
-      if (read.revision !== revisions.get(read.noteId)) continue;
-      if (read.readable) fresh.add(read.noteId);
-      else unreadable++;
-    }
-
-    const withTasks = await this.prisma.note.findMany({
-      where: { id: { in: [...fresh] }, tasks: { some: { done: false } } },
-      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
-      take: MAX_TASK_NOTES + 1,
-      select: {
-        id: true,
-        title: true,
-        updatedAt: true,
-        notebook: { select: { id: true, name: true } },
-        tasksRead: { select: { revision: true } },
-        tasks: { where: { done: false }, orderBy: { line: 'asc' }, select: { line: true, text: true } },
+    // One snapshot for the counts, the reads and the tasks: a store that lands
+    // in between cannot pair tasks of one revision with the revision of another,
+    // which a tick would send back.
+    return this.prisma.$transaction(
+      async (tx) => {
+        const now = await tx.note.findMany({
+          where,
+          select: { id: true, revision: true, tasksRead: { select: { revision: true, readable: true } } },
+        });
+        const fresh: string[] = [];
+        let unreadable = 0;
+        let unread = 0;
+        for (const note of now) {
+          // Not read yet, or edited since it was read (also while this request read others): its lines may have moved.
+          if (note.tasksRead?.revision !== note.revision) unread++;
+          else if (note.tasksRead.readable) fresh.push(note.id);
+          else unreadable++;
+        }
+        const withTasks = await tx.note.findMany({
+          where: { id: { in: fresh }, tasks: { some: { done: false } } },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+          take: MAX_TASK_NOTES + 1,
+          select: {
+            id: true,
+            title: true,
+            updatedAt: true,
+            notebook: { select: { id: true, name: true } },
+            revision: true,
+            tasks: { where: { done: false }, orderBy: { line: 'asc' }, select: { line: true, text: true } },
+          },
+        });
+        return {
+          notes: withTasks.slice(0, MAX_TASK_NOTES),
+          unreadable,
+          unread,
+          capped: withTasks.length > MAX_TASK_NOTES,
+        };
       },
-    });
-    return {
-      notes: withTasks.slice(0, MAX_TASK_NOTES).map(({ tasksRead, ...note }) => ({
-        ...note,
-        revision: tasksRead?.revision ?? 0,
-      })),
-      unreadable,
-      unread,
-      capped: withTasks.length > MAX_TASK_NOTES,
-    };
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 
   /**
-   * Reads the tasks of these notes again, newest first, within the budget
-   * of one request. Returns how many were left unread.
+   * Reads the tasks of these notes again, within the budget of one request.
+   * Notes without a box, and notes too long to parse, are told apart in SQL
+   * and written in bulk without their text being loaded. Every other note is
+   * loaded, charged by its length and the time spent against the budget,
+   * and parsed in the pool. What the budget does not reach stays unread.
    */
-  private async read(ids: string[]): Promise<number> {
+  private async read(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.storeInBulk(ids, Prisma.sql`content !~ ${BOX_PATTERN}`, true);
+    await this.storeInBulk(
+      ids,
+      Prisma.sql`content ~ ${BOX_PATTERN} AND length(content) > ${MAX_PARSED_NOTE_LENGTH}`,
+      false,
+    );
+
+    const candidates = await this.prisma.$queryRaw<{ id: string; length: number }[]>`
+      SELECT id, length(content) AS length
+      FROM notes
+      WHERE id = ANY(${ids}::uuid[]) AND content ~ ${BOX_PATTERN} AND length(content) <= ${MAX_PARSED_NOTE_LENGTH}
+      ORDER BY updated_at DESC, id`;
     const started = performance.now();
-    let parsedLength = 0;
-    let done = 0;
-    for (let at = 0; at < ids.length; at += BATCH) {
-      const batch = await this.prisma.note.findMany({
-        where: { id: { in: ids.slice(at, at + BATCH) } },
-        select: { id: true, revision: true, content: true },
-      });
-      for (const note of batch) {
-        let tasks: TaskItem[] | null;
-        if (!MAY_HAVE_TASK.test(note.content)) {
-          tasks = [];
-        } else if (!parseable(note.content)) {
-          tasks = null;
-        } else {
-          if (parsedLength + note.content.length > MAX_TASK_PARSE_LENGTH) return ids.length - done;
-          if (performance.now() - started > MAX_TASK_PARSE_MS) return ids.length - done;
-          parsedLength += note.content.length;
-          const answer = await this.pool.run({ kind: 'tasks', text: note.content, title: '' });
-          // Not the note's fault: it stays unread, and the next request tries again.
-          if (answer === 'busy' || answer === 'unavailable') return ids.length - done;
-          // A note the parser runs out of time on is not tried again until it is edited.
-          tasks = answer === 'timeout' ? null : (answer.tasks ?? null);
-        }
-        await this.store(note.id, note.revision, tasks);
-        done++;
+    let spent = 0;
+    for (const { id, length } of candidates) {
+      if (spent + length > MAX_TASK_PARSE_LENGTH || performance.now() - started > MAX_TASK_PARSE_MS) return;
+      spent += length;
+      const note = await this.prisma.note.findUnique({ where: { id }, select: { revision: true, content: true } });
+      if (!note) continue;
+      if (!parseable(note.content)) {
+        await this.store(id, note.revision, null);
+        continue;
       }
+      const answer = await this.pool.run({ kind: 'tasks', text: note.content, title: '' });
+      // Not the note's fault: it stays unread, and the next request tries again.
+      if (answer === 'busy' || answer === 'unavailable') return;
+      // Out of time on a busy machine says nothing about the note. It stays unread too.
+      if (answer === 'timeout') continue;
+      await this.store(id, note.revision, answer.tasks ?? null);
     }
-    return 0;
+  }
+
+  /**
+   * Writes the notes among `ids` that `condition` picks as read, with no
+   * tasks and `readable` as given, at the revision they have in the same
+   * statement. Rows are taken in the order of their ids, so two requests
+   * doing this at once cannot lock each other out.
+   */
+  private async storeInBulk(ids: string[], condition: Prisma.Sql, readable: boolean): Promise<void> {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const written = await tx.$queryRaw<{ note_id: string }[]>`
+          INSERT INTO note_task_reads (note_id, revision, readable)
+          SELECT id, revision, ${readable}::boolean FROM notes
+          WHERE id = ANY(${ids}::uuid[]) AND ${condition}
+          ORDER BY id
+          ON CONFLICT (note_id) DO UPDATE SET revision = EXCLUDED.revision, readable = EXCLUDED.readable
+          RETURNING note_id`;
+        if (written.length > 0) {
+          await tx.noteTask.deleteMany({ where: { noteId: { in: written.map((row) => row.note_id) } } });
+        }
+      });
+    } catch (error) {
+      // A note deleted for good under the statement: the others stay unread, and the next request writes them.
+      if (isForeignKeyError(error)) return;
+      throw error;
+    }
   }
 
   /**
@@ -197,7 +241,7 @@ export class TasksService {
       });
     } catch (error) {
       // The note was deleted for good while it was read. There is nothing to keep.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') return;
+      if (isForeignKeyError(error)) return;
       throw error;
     }
   }
