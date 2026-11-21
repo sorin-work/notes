@@ -46,6 +46,11 @@ Markdown import/export.
   that write its title without linking to it, each with a Link button that
   puts `[[ ]]` around the mention. After a note is renamed, the editor offers
   to update the links other notes have to its old title.
+- **Links to headings**: `[[Note title#Heading]]` opens the note at that
+  heading, and `[[#Heading]]` goes to a heading of the same note. Typing
+  `[[Note title#` suggests the headings of that note. **Outline** in the
+  editor's toolbar lists the headings of the open note as a list that folds;
+  a click goes to the heading.
 - **Full-text search** over titles and text, using Postgres full-text search.
   Words match as prefixes, titles rank above body text, matches are
   highlighted. Words in `"double quotes"` are a phrase: they have to follow
@@ -683,6 +688,22 @@ that is being saved at that very moment, or that would grow past the size
 limit, is left as it is. The editor then says how many were left and keeps
 the offer. The offer is made in the editor where the rename happened and is
 gone once you leave the note.
+
+A link can name a heading after a `#`: `[[Atlas#Next steps]]`. Each heading
+in the preview gets an id made from its words, the way GitHub makes them
+(lower case, punctuation dropped, spaces as `-`, and `-1`, `-2` for a heading
+whose words come again), with `h-` in front so it cannot clash with the ids
+of the app. The `#` part matches by that slug, so `[[Atlas#next-steps]]` leads
+to the same heading, and `[[Atlas#intro-1]]` to the second "Intro". Headings
+are read with the parser the preview uses, so a `#` line in code is none and a
+line underlined with `===` or `---` is one. Following such a link opens
+`/notes/<id>#h-<slug>`: the preview scrolls to the heading, and in the text
+the cursor goes to its line. Shared pages do the same. Headings are not
+stored: when a heading is renamed, links to it open the top of the note and
+say that the heading is not there. A link within the note, `[[#Heading]]`, is
+shown dashed when the note has no such heading. A rename of the note keeps
+the `#heading` part, and only links to other notes count as links for
+backlinks, the graph and orphans.
 
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the

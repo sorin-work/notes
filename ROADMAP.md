@@ -43,7 +43,7 @@ couple of weekends, **L** several weeks of spare time.
 | 18  | Graph view and unlinked mentions                    | Shipped | both     | M    | -          |
 | 19  | Security headers for the web app                    | Next    | infra    | S    | -          |
 | 20  | Compare two versions with each other                | Next    | frontend | S    | -          |
-| 21  | Links to headings and an outline                    | Next    | both     | M    | -          |
+| 21  | Links to headings and an outline                    | Shipped | both     | M    | -          |
 | 22  | Encrypted, off-site and watched backups             | Next    | infra    | M    | -          |
 | 23  | Keyboard and screen reader follow-ups               | Next    | frontend | M    | -          |
 | 24  | Tasks across notes                                  | Later   | both     | M    | -          |
@@ -120,36 +120,6 @@ folded lines stay folded.
 - Undecided: whether the older version is always on the left, or the one
   picked first. And how to pair lines when the two blocks are not the same
   length.
-
-### 21. Links to headings and an outline
-
-`[[Note#Heading]]` is read by both parsers (`LINK` in
-`web/src/lib/wikilinks.ts`, `extractWikiLinks` in `api/src/links/wikilinks.ts`)
-and a rename keeps the heading part, but nothing uses it: the link opens the
-top of the note. Long notes also have no outline to jump around in.
-
-- Headings in `MarkdownPreview` get ids made from their text, a slug like
-  GitHub's with `-1`, `-2` for repeats. Following `[[Note#Heading]]` opens
-  the note and scrolls the preview to that heading, or puts the cursor on its
-  line in edit mode. `[[#Heading]]` links within the same note, which `LINK`
-  does not accept today because it wants a title before the `#`.
-- Typing `[[Note#` suggests the headings of that note, the way `[[` suggests
-  titles. The headings can be read in the browser from the note's text once
-  it is fetched, or come from a small `GET /notes/:id/headings`.
-- An outline of the open note: its headings as a list that folds, beside or
-  above the preview, where a click scrolls to the heading.
-- Tricky: the slug has to come out the same in the preview, the outline, the
-  suggestions, the shared pages and print, so it is one function in
-  `web/src/lib`. A `#` line inside code is no heading, Setext headings
-  (underlined with `===`) are, and the ids must not clash with the app's own
-  (the skip link targets), so they want a prefix.
-- Tricky: renaming a heading breaks the links to it, as renaming a note did
-  before item 5. A link whose heading is gone should open the top of the note
-  and say so, not fail.
-- Undecided: whether `NoteLink` stores the heading (a `targetHeading`
-  column), which would let backlinks show which heading is linked and the
-  preview mark links to headings that do not exist. Without it nothing
-  changes in the API.
 
 ### 22. Encrypted, off-site and watched backups
 
@@ -938,3 +908,27 @@ hand, links have no arrowheads, and above 300 notes only the filters show the
 rest. The dots are not tab stops, and two fingers on a touch screen do not
 zoom: the buttons do. The layout still runs on the main thread, for about a
 third of a second at 300 notes.
+
+### 21. Links to headings and an outline
+
+Built in the web app, with no change to the API. `web/src/lib/headings.ts`
+holds the one slug function, GitHub's with `-1`, `-2` for repeats, and reads
+the headings of a note with the parser the preview uses (remark with GFM, over
+the same linkified text), so code is skipped and Setext headings count. A
+remark plugin gives the headings of the editor's preview and of shared pages
+the id `h-<slug>`; the version history does not, so ids do not repeat on the
+page. `[[Note#Heading]]` opens the note at `/notes/<id>#h-<slug>`, which
+scrolls the preview to the heading and focuses it, and puts the cursor on its
+line in the text; in "Edit" the text takes the focus. The `#` part matches by
+slug, so the words of the heading and its slug both work. `[[#Heading]]` links
+within the note; the web parser accepts it and the API's does not, since it
+stores links between notes only. Typing `[[Note#` or `[[#` offers the headings
+of that note, read from its text in the browser, and inserts the words of the
+heading, or its slug where the words would not lead back to it (a repeat, or
+`|` in the words). "Outline" in the toolbar shows the headings above the panes
+as a list where each heading with headings under it folds, and the choice to
+show it is remembered. A link whose heading is gone opens the top of the note
+and says so. I left out the `targetHeading` column: backlinks do not say which
+heading is linked, and only links within a note are marked when their heading
+is missing, while a link to a heading of another note is only checked when it
+is followed. Renaming a heading still breaks the links to it.
