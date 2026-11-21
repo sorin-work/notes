@@ -1,7 +1,9 @@
 import type { Nodes } from 'mdast';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmFromMarkdown } from 'mdast-util-gfm';
+import { mathFromMarkdown } from 'mdast-util-math';
 import { gfm } from 'micromark-extension-gfm';
+import { math } from 'micromark-extension-math';
 
 /** A stretch of a note, as positions in its text. */
 export interface Span {
@@ -27,6 +29,8 @@ export interface ParsedNote {
 const VERBATIM = new Set([
   'inlineCode',
   'code',
+  'math',
+  'inlineMath',
   'html',
   'link',
   'linkReference',
@@ -35,6 +39,15 @@ const VERBATIM = new Set([
   'definition',
   'footnoteReference',
 ]);
+
+/**
+ * The parser and its extensions, as the preview has them: GFM, and math in
+ * `$$` only. A single `$` is no math there, so that prices stay text.
+ */
+const PARSE_OPTIONS = {
+  extensions: [gfm(), math({ singleDollarTextMath: false })],
+  mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
+};
 
 /** Marks whose pairing a pair of brackets next to them can change. */
 const FORMATTING = new Set(['emphasis', 'strong', 'delete']);
@@ -75,7 +88,7 @@ export function parseable(text: string): boolean {
  * plain text here is what shows as plain text there.
  *
  * The plain text is the text of sentences, headings and table cells, and
- * nothing else. Code of every kind, HTML, links, images and references with
+ * nothing else. Code of every kind, math, HTML, links, images and references with
  * all that is inside them, URLs, escapes and character references are left
  * out. A stretch never crosses a line ending (\n, \r\n or a lone \r, which
  * the parser takes for one too) and never holds the marks at the start of a
@@ -89,7 +102,7 @@ export function parseNote(text: string): ParsedNote | null {
   if (!parseable(text)) return null;
   let tree: Nodes;
   try {
-    tree = fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+    tree = fromMarkdown(text, PARSE_OPTIONS);
   } catch {
     return null;
   }
@@ -217,7 +230,7 @@ export function parseTasks(text: string): TaskItem[] | null {
   if (!parseable(text)) return null;
   let tree: Nodes;
   try {
-    tree = fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+    tree = fromMarkdown(text, PARSE_OPTIONS);
   } catch {
     return null;
   }

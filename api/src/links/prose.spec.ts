@@ -205,3 +205,11 @@ describe('parseTasks', () => {
     expect(parseTasks(`- [ ] x\n${']'.repeat(3_000)}`)).toBeNull();
   });
 });
+
+describe('math', () => {
+  it('is no plain text, in a line or in a block, while a single dollar is', () => {
+    const text = 'Atlas costs $5 and $$\\text{Atlas}^2$$ here\n\n$$\nAtlas = 1\n$$';
+    expect(texts(text)).toEqual(['Atlas costs $5 and ', ' here']);
+    expect(verbatimParts(text)).toEqual(['inlineMath:$$\\text{Atlas}^2$$', 'math:$$\nAtlas = 1\n$$']);
+  });
+});

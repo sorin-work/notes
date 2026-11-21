@@ -29,20 +29,29 @@ interface LinkInText extends WikiLink {
  */
 const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+/**
+ * A line that opens or closes a block of math: `$$` at its start and no
+ * second `$$` after it, which would make it math inside a line. Kept in step
+ * with web/src/lib/wikilinks.ts.
+ */
+const MATH_FENCE = /^\s{0,3}\$\$(?!.*\$\$)/;
+/** Code, then math inside a line: `$$...$$`, as the preview reads it. */
+const INLINE_CODE_OR_MATH = /(`+)([\s\S]*?[^`])\1(?!`)|\$\$(?:[^$]|\$(?!\$))+?\$\$/g;
 
 /** Case and whitespace insensitive form of a title, used to match links to notes. */
 export function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-/** Blanks out `inline code` so links inside it are not picked up. */
+/** Blanks out `inline code` and $$math$$ so links inside them are not picked up. */
 function withoutInlineCode(line: string): string {
-  return line.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (match) => ' '.repeat(match.length));
+  return line.replace(INLINE_CODE_OR_MATH, (match) => ' '.repeat(match.length));
 }
 
-/** The lines of a note outside fenced code blocks, each with where it starts in the note. */
+/** The lines of a note outside fenced code blocks and blocks of math, each with where it starts in the note. */
 function* proseLines(markdown: string): Generator<{ line: string; lineStart: number }> {
   let fence: string | null = null;
+  let inMath = false;
   let offset = 0;
   // Lines sit at the even indexes, the line endings between them at the odd ones.
   const parts = markdown.split(/(\r?\n)/);
@@ -51,6 +60,11 @@ function* proseLines(markdown: string): Generator<{ line: string; lineStart: num
     const lineStart = offset;
     offset += line.length + (parts[index + 1]?.length ?? 0);
 
+    if (fence === null && MATH_FENCE.test(line)) {
+      inMath = !inMath;
+      continue;
+    }
+    if (inMath) continue;
     const fenceMatch = FENCE.exec(line);
     if (fenceMatch) {
       const marker = fenceMatch[1];

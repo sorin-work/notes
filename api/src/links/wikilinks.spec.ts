@@ -19,6 +19,15 @@ describe('extractWikiLinks', () => {
     ]);
   });
 
+  it('skips math, in a line and in a block, as the preview does', () => {
+    const text = 'Area $$[[A]] r^2$$ of [[Circle]]\n$$\n[[Inside]]\n$$\n[[After]] for $5 or [[Shop]] $10';
+    expect(extractWikiLinks(text)).toEqual([
+      { title: 'Circle', alias: null },
+      { title: 'After', alias: null },
+      { title: 'Shop', alias: null },
+    ]);
+  });
+
   it('drops a #heading from the target', () => {
     expect(extractWikiLinks('[[Recipes#Bread]]')).toEqual([{ title: 'Recipes', alias: null }]);
   });
