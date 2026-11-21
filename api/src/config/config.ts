@@ -49,6 +49,12 @@ export interface AppConfig {
   attachmentMaxBytes: number;
   /** Bytes all attachments of one account may have together. */
   attachmentAccountBytes: number;
+  /**
+   * The key the secrets of two-step sign-in are encrypted with, 32 bytes.
+   * Null without TWO_STEP_KEY: codes cannot be turned on, and an account
+   * that has them cannot sign in until the key is back.
+   */
+  twoStepKey: Buffer | null;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -133,6 +139,21 @@ function attachmentMaxMb(value: string | undefined): number {
   return mb;
 }
 
+/**
+ * TWO_STEP_KEY is 32 random bytes, as 64 hex digits or in base64, for
+ * example from `openssl rand -hex 32`. Anything else is refused at start,
+ * rather than found out at the first sign-in.
+ */
+function twoStepKeyFrom(value: string | undefined): Buffer | null {
+  const text = value?.trim() ?? '';
+  if (text === '') return null;
+  const key = /^[0-9a-fA-F]{64}$/.test(text) ? Buffer.from(text, 'hex') : Buffer.from(text, 'base64');
+  if (key.length !== 32 || (!/^[0-9a-fA-F]{64}$/.test(text) && key.toString('base64') !== text)) {
+    throw new ConfigError('TWO_STEP_KEY must be 32 bytes, as 64 hex digits or in base64 (openssl rand -hex 32)');
+  }
+  return key;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) {
@@ -166,5 +187,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     attachmentsDir: env.ATTACHMENTS_DIR?.trim() || './data/attachments',
     attachmentMaxBytes: attachmentMaxMb(env.ATTACHMENT_MAX_MB) * 1024 * 1024,
     attachmentAccountBytes: toInt('ATTACHMENT_ACCOUNT_MB', env.ATTACHMENT_ACCOUNT_MB, 500, 1) * 1024 * 1024,
+    twoStepKey: twoStepKeyFrom(env.TWO_STEP_KEY),
   };
 }
