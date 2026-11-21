@@ -24,9 +24,9 @@ services:
       DATABASE_URL: postgresql://notes:notes@db:5432/notes?application_name=notes-api
       JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-me-0123456789}
       # Encrypts the secrets of two-step sign-in. The default is for trying
-      # it out only: set your own (openssl rand -hex 32) and keep it with the
-      # backups, since the secrets in a dump are no use without it. An empty
-      # value turns two-step sign-in off.
+      # it out only: set your own (openssl rand -hex 32) and keep a copy
+      # apart from the backups. A restored dump needs the same key, and a
+      # stolen dump is no use without it. Empty turns two-step sign-in off.
       TWO_STEP_KEY: ${TWO_STEP_KEY-6c6f63616c2d646576656c6f706d656e742d6b65792d6368616e67652d6d6521}
       PORT: 4401
       LOG_LEVEL: ${LOG_LEVEL:-info}
