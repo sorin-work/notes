@@ -146,6 +146,28 @@ describe('Layout', () => {
     expect(document.querySelector('.scrim')).not.toBeNull();
   });
 
+  it('moves the focus into the menu when it opens, and Escape closes it and goes back to its button', async () => {
+    mockFetch(routes);
+    renderLayout('/notes');
+    await screen.findByLabelText('Search notes');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+    const menu = screen.getByRole('button', { name: 'Close menu' });
+    expect(menu).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('navigation', { name: 'Main' }).querySelector('a')).toHaveFocus();
+
+    // A dialog opened from the menu takes Escape for itself, and the menu stays open.
+    await userEvent.click(screen.getByRole('button', { name: 'New notebook' }));
+    expect(screen.getByRole('dialog', { name: 'New notebook' })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(menu).toHaveAttribute('aria-expanded', 'true');
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus();
+  });
+
   it('offers skip links to the content and to the open note', async () => {
     mockFetch(routes);
     renderLayout('/notes/n1');

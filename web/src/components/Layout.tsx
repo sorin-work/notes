@@ -1,4 +1,4 @@
-import { MouseEvent, useCallback, useEffect, useState } from 'react';
+import { MouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Outlet, useMatch } from 'react-router';
 import { useOnline } from '../hooks/useOnline';
@@ -33,6 +33,7 @@ export function Layout() {
   const online = useOnline();
   const noteOpen = useMatch('/notes/:noteId') !== null;
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const closeSwitcher = useCallback(() => setSwitcherOpen(false), []);
 
@@ -59,6 +60,29 @@ export function Layout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [switcherOpen]);
 
+  // Escape closes the menu and puts the focus back on its button. A dialog
+  // that is open, even one opened from the menu, takes the key first.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
+      setMenuOpen(false);
+      menuButton.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
+  const toggleMenu = () => {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    // The menu is hidden until it is open, and a hidden link cannot take the focus.
+    flushSync(() => setMenuOpen(true));
+    document.querySelector<HTMLElement>('.sidebar a[href]')?.focus();
+  };
+
   return (
     <div className={menuOpen ? 'app menu-open' : 'app'}>
       <a href="#main" className="skip-link" onClick={skipTo}>
@@ -71,11 +95,12 @@ export function Layout() {
       )}
       <header className="mobile-bar">
         <button
+          ref={menuButton}
           type="button"
           className="icon-button"
           aria-label={menuOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((open) => !open)}
+          onClick={toggleMenu}
         >
           ☰
         </button>
