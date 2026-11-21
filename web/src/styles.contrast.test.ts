@@ -49,6 +49,13 @@ const TEXT: [text: string, background: string][] = [
   ['muted', 'success-soft'],
   ['text', 'danger-soft'],
   ['muted', 'danger-soft'],
+  // Code coloured by its language, on the background of a code block.
+  ['code-keyword', 'surface-2'],
+  ['code-string', 'surface-2'],
+  ['code-comment', 'surface-2'],
+  ['code-number', 'surface-2'],
+  ['code-title', 'surface-2'],
+  ['code-attr', 'surface-2'],
   // The words that differ inside a changed line.
   ['text', 'success-mark'],
   ['text', 'danger-mark'],

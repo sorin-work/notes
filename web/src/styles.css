@@ -17,6 +17,12 @@
   --danger-mark: #f5c4c1;
   --success-mark: #b9e3c9;
   --mark: #fff1a8;
+  --code-keyword: #8a2c9e;
+  --code-string: #1b6b2e;
+  --code-comment: #5f6670;
+  --code-number: #9a4a00;
+  --code-title: #1d5fa8;
+  --code-attr: #7a4b00;
   --missing: #ac541a;
   --favourite: #ae7e00;
   --shadow: 0 8px 30px rgb(0 0 0 / 12%);
@@ -47,6 +53,12 @@
   --danger-mark: #6b3532;
   --success-mark: #2b5a3f;
   --mark: #5c5216;
+  --code-keyword: #d7a3f0;
+  --code-string: #9ad28f;
+  --code-comment: #a2a7b0;
+  --code-number: #f0b87a;
+  --code-title: #8fb8f5;
+  --code-attr: #e8c77a;
   --missing: #e3a26b;
   --favourite: #e2a400;
   --shadow: 0 8px 30px rgb(0 0 0 / 45%);
@@ -73,6 +85,12 @@
     --danger-mark: #6b3532;
     --success-mark: #2b5a3f;
     --mark: #5c5216;
+    --code-keyword: #d7a3f0;
+    --code-string: #9ad28f;
+    --code-comment: #a2a7b0;
+    --code-number: #f0b87a;
+    --code-title: #8fb8f5;
+    --code-attr: #e8c77a;
     --missing: #e3a26b;
     --favourite: #e2a400;
     --shadow: 0 8px 30px rgb(0 0 0 / 45%);
@@ -1239,6 +1257,59 @@ mark {
 .markdown pre code {
   background: none;
   padding: 0;
+}
+
+/* Code in a block that names its language, coloured by rehype-highlight. */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-type {
+  color: var(--code-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-template-tag {
+  color: var(--code-string);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-deletion {
+  color: var(--code-number);
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--code-title);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-meta,
+.hljs-property {
+  color: var(--code-attr);
+}
+
+/* A formula on a line of its own scrolls sideways when it is wider than the preview. */
+.markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .markdown blockquote {
