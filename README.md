@@ -16,7 +16,8 @@ Markdown import/export.
   dollar, so prices are not taken for math. Both are loaded only for a note
   that has them, and their styles and fonts are part of the build, so nothing
   comes from another site. Shared pages, the history and print show them the
-  same way. Diagrams are not drawn: a ` ```mermaid ` block shows as code.
+  same way. A note draws its first 500 formulas, and shows any more as code.
+  Diagrams are not drawn: a ` ```mermaid ` block shows as code.
 - **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
   the same as typing the `x`. Boxes are read-only on shared pages, in version
   history and for notes in the trash.

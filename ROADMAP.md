@@ -915,8 +915,16 @@ CDN. The woff and ttf copies of the fonts are built but not cached ahead by
 the service worker. The colours of code are tokens in both themes, with
 their pairs in the contrast test. The API's parser reads math too
 (`micromark-extension-math`), as verbatim, so mentions are not found in a
-formula, and both link parsers skip `$$` blocks and `$$...$$` the way they
-skip code. Diagrams are left out: mermaid writes its SVG with an inline
+formula. Both link parsers find links in the note with code and math blanked
+out by one scan, `maskNonProse`, a copy of which sits on each side. It follows
+the parser's rules for fences, `$$` blocks (closed by at least as many `$`),
+code spans and math that run over line endings within a paragraph, in linear
+time. It is a scan and not the parser's tree, because links are stored on
+every save in the request's own thread, where the parser could take seconds
+on a note built to trip it; quotes and lists are not told apart. One note
+draws at most 500 formulas or 200,000 characters of them, and shows the rest
+as code. If the plugins cannot be loaded, the preview says that a reload
+shows them, instead of asking again. Diagrams are left out: mermaid writes its SVG with an inline
 `<style>` element and inline style attributes, which that policy refuses,
 and it is larger than everything else in the preview together. A
 ` ```mermaid ` block shows as code. Still open: diagrams by some other means,
