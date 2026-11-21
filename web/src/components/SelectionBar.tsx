@@ -10,7 +10,8 @@ import { ConfirmDialog } from './Modal';
 import { ErrorMessage } from './States';
 
 interface Props {
-  selected: string[];
+  /** The selected notes, with the notebook each one is in. */
+  selected: { id: string; notebookId: string | null }[];
   /** How many notes are loaded, for "Select all". */
   loaded: number;
   notebooks: Notebook[];
@@ -26,9 +27,58 @@ const REASONS: Record<BulkSkipReason, (n: number) => string> = {
   not_allowed: (n) => `${n === 1 ? 'is' : 'are'} not yours to change that way`,
   in_trash: (n) => `${n === 1 ? 'is' : 'are'} in the trash`,
   too_many_tags: (n) => `already ${n === 1 ? 'has' : 'have'} 20 tags`,
+  moved_since: (n) =>
+    `${n === 1 ? 'was' : 'were'} moved again since, and stayed where ${n === 1 ? 'it is' : 'they are'}`,
+  notebook_gone: (n) => `could not go back: ${n === 1 ? 'its notebook is' : 'their notebooks are'} gone`,
 };
 
 const notes = (n: number) => `${n.toLocaleString()} ${n === 1 ? 'note' : 'notes'}`;
+const accounts = (n: number) => `${n.toLocaleString()} other ${n === 1 ? 'account' : 'accounts'}`;
+
+interface SharedRoot {
+  id: string;
+  name: string;
+  members: number;
+}
+
+/** The notebooks shared with members that a note in `id` can be seen through: `id` itself and those it is inside. */
+export function memberRoots(notebooks: Notebook[], id: string | null): SharedRoot[] {
+  const byId = new Map(notebooks.map((notebook) => [notebook.id, notebook]));
+  const roots: SharedRoot[] = [];
+  const seen = new Set<string>();
+  for (let at = id ? byId.get(id) : undefined; at && !seen.has(at.id); at = byId.get(at.parentId ?? '')) {
+    seen.add(at.id);
+    if ((at.memberCount ?? 0) > 0) roots.push({ id: at.id, name: at.name, members: at.memberCount ?? 0 });
+  }
+  return roots;
+}
+
+/**
+ * Who gains or loses the notes in a move to `target`, in sentences: the
+ * members of the shared notebooks the notes come into, and of those they
+ * leave. Empty when the move changes nobody's access.
+ */
+export function accessChanges(notebooks: Notebook[], from: (string | null)[], target: string | null): string[] {
+  const into = memberRoots(notebooks, target);
+  const intoIds = new Set(into.map((root) => root.id));
+  const leaving = new Map<string, SharedRoot>();
+  const gaining = new Map<string, SharedRoot>();
+  for (const source of new Set(from)) {
+    const roots = memberRoots(notebooks, source);
+    const rootIds = new Set(roots.map((root) => root.id));
+    for (const root of roots) if (!intoIds.has(root.id)) leaving.set(root.id, root);
+    for (const root of into) if (!rootIds.has(root.id)) gaining.set(root.id, root);
+  }
+  return [
+    ...[...gaining.values()].map(
+      (root) => `“${root.name}” is shared with ${accounts(root.members)}, who will see the notes moved there.`,
+    ),
+    ...[...leaving.values()].map(
+      (root) =>
+        `The ${accounts(root.members)} that “${root.name}” is shared with will no longer see the notes moved out of it.`,
+    ),
+  ];
+}
 
 /** What a bulk action did, in a sentence or two. */
 export function describeResult(done: string, result: BulkResult, waiting: number): string {
@@ -55,8 +105,15 @@ export function SelectionBar({ selected, loaded, notebooks, onSelectAll, onClear
   const queryClient = useQueryClient();
   const online = useOnline();
   const [tag, setTag] = useState('');
-  const [notice, setNotice] = useState<{ text: string; undo?: Record<string, string | null> } | null>(null);
-  const [publicMove, setPublicMove] = useState<{ notebookId: string; name: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    text: string;
+    undo?: { previous: Record<string, string | null>; to: string | null };
+  } | null>(null);
+  // A move that changes who can read the notes waits for a yes.
+  const [question, setQuestion] = useState<{ notebookId: string | null; name: string; sentences: string[] } | null>(
+    null,
+  );
+  const selectedIds = selected.map((note) => note.id);
   const targets = useMemo(() => flattenTree(notebookTree(ownNotebooks(notebooks))), [notebooks]);
 
   // Undo is offered for a while, then the notice stays without it.
@@ -84,8 +141,8 @@ export function SelectionBar({ selected, loaded, notebooks, onSelectAll, onClear
       done: string;
     }) => {
       // A note made without a connection and not sent yet has no row on the server to change.
-      const waiting = selected.filter((id) => openEntryFor(id)?.kind === 'create');
-      const ids = selected.filter((id) => !waiting.includes(id));
+      const waiting = selectedIds.filter((id) => openEntryFor(id)?.kind === 'create');
+      const ids = selectedIds.filter((id) => !waiting.includes(id));
       const result =
         ids.length > 0
           ? await bulkNotes({
@@ -95,49 +152,52 @@ export function SelectionBar({ selected, loaded, notebooks, onSelectAll, onClear
               tag: action === 'addTag' || action === 'removeTag' ? tag : undefined,
             })
           : { changed: [], unchanged: [], skipped: [] };
-      return { result, done, waiting: waiting.length, action };
+      return { result, done, waiting: waiting.length, action, notebookId: notebookId ?? null };
     },
-    onSuccess: ({ result, done, waiting, action }) => {
+    onSuccess: ({ result, done, waiting, action, notebookId }) => {
       refresh([...result.changed, ...result.unchanged]);
-      const undo = action === 'move' && result.changed.length > 0 ? result.previous : undefined;
+      const undo =
+        action === 'move' && result.changed.length > 0 && result.previous
+          ? { previous: result.previous, to: notebookId }
+          : undefined;
       setNotice({ text: describeResult(done, result, waiting), undo });
       if (action === 'addTag' || action === 'removeTag') setTag('');
     },
   });
 
   const undo = useMutation({
-    mutationFn: async (previous: Record<string, string | null>) => {
-      // One request for each notebook the notes came from.
-      const back = new Map<string | null, string[]>();
-      for (const [id, notebookId] of Object.entries(previous))
-        back.set(notebookId, [...(back.get(notebookId) ?? []), id]);
-      const ids: string[] = [];
-      for (const [notebookId, group] of back) {
-        const result = await bulkNotes({ ids: group, action: 'move', notebookId });
-        ids.push(...result.changed);
-      }
-      return ids;
-    },
-    onSuccess: (ids) => {
-      refresh(ids);
-      setNotice({ text: `Moved ${notes(ids.length)} back.` });
-    },
+    // One request for all of it. A note moved again since the move is left where it is.
+    mutationFn: ({ previous, to }: { previous: Record<string, string | null>; to: string | null }) =>
+      bulkNotes({ ids: Object.keys(previous), action: 'moveBack', back: previous, expectedNotebookId: to }),
+    onSuccess: (result) => setNotice({ text: describeResult('Moved back', result, 0) }),
+    onSettled: (result, _error, { previous }) => refresh(result ? [...result.changed] : Object.keys(previous)),
   });
+
+  const doMove = (notebookId: string | null) => {
+    const name = notebookId ? (notebookLabel(notebooks, notebookId) ?? 'the notebook') : null;
+    run.mutate({ action: 'move', notebookId, done: name ? `Moved to “${name}”:` : 'Took out of their notebooks:' });
+  };
 
   const move = (value: string) => {
     if (!value) return;
     const notebookId = value === 'none' ? null : value;
-    const name = notebookId ? (notebookLabel(notebooks, notebookId) ?? 'the notebook') : 'no notebook';
+    const sentences = accessChanges(
+      notebooks,
+      selected.map((note) => note.notebookId),
+      notebookId,
+    );
     const through = newlyPublicThrough(notebooks, notebookId, null);
-    if (through && notebookId) {
-      setPublicMove({ notebookId, name: through.name });
+    if (through) {
+      sentences.unshift(
+        `“${through.name}” is shared with a link. Moved there, the notes can be read by anyone who has that link.`,
+      );
+    }
+    if (sentences.length > 0) {
+      const name = notebookId ? (notebookLabel(notebooks, notebookId) ?? 'the notebook') : 'no notebook';
+      setQuestion({ notebookId, name, sentences });
       return;
     }
-    run.mutate({
-      action: 'move',
-      notebookId,
-      done: notebookId ? `Moved to “${name}”:` : 'Took out of their notebooks:',
-    });
+    doMove(notebookId);
   };
 
   const tagAction = (action: 'addTag' | 'removeTag') => (event?: FormEvent) => {
@@ -236,26 +296,23 @@ export function SelectionBar({ selected, loaded, notebooks, onSelectAll, onClear
           </button>
         </div>
       )}
-      {publicMove && (
+      {question && (
         <ConfirmDialog
-          title="Make these notes public?"
+          title="Change who can read these notes?"
           message={
-            <p>
-              “{publicMove.name}” is shared with a link. Moved there, the selected notes can be read by anyone who has
-              that link.
-            </p>
+            <>
+              {question.sentences.map((sentence) => (
+                <p key={sentence}>{sentence}</p>
+              ))}
+            </>
           }
-          confirmLabel="Move them"
+          confirmLabel={question.notebookId ? `Move to “${question.name}”` : 'Take them out'}
           onConfirm={() => {
-            const { notebookId } = publicMove;
-            setPublicMove(null);
-            run.mutate({
-              action: 'move',
-              notebookId,
-              done: `Moved to “${notebookLabel(notebooks, notebookId) ?? 'the notebook'}”:`,
-            });
+            const { notebookId } = question;
+            setQuestion(null);
+            doMove(notebookId);
           }}
-          onCancel={() => setPublicMove(null)}
+          onCancel={() => setQuestion(null)}
         />
       )}
     </div>
