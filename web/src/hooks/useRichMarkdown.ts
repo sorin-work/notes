@@ -7,20 +7,29 @@ export interface RichPlugins {
   rehypePlugins: PluggableList;
 }
 
-let loaded: RichPlugins | null = null;
-let loading: Promise<void> | null = null;
+/**
+ * The module is asked for once per page. A failed import is not tried again:
+ * the browser keeps the failure of a module it could not load, and asking
+ * again only gets the same failure. A reload starts over.
+ */
+type State = { status: 'idle' | 'loading' | 'failed' } | { status: 'loaded'; plugins: RichPlugins };
+
+let state: State = { status: 'idle' };
 const listeners = new Set<() => void>();
 
+function set(next: State): void {
+  state = next;
+  for (const listener of listeners) listener();
+}
+
 function load(): void {
-  loading ??= import('../lib/richMarkdown')
-    .then((module) => {
-      loaded = { remarkPlugins: module.remarkPlugins, rehypePlugins: module.rehypePlugins };
-      for (const listener of listeners) listener();
-    })
-    .catch(() => {
-      // Without a connection for the file, the note shows as plain Markdown. The next note tries again.
-      loading = null;
-    });
+  if (state.status !== 'idle') return;
+  state = { status: 'loading' };
+  import('../lib/richMarkdown')
+    .then((module) =>
+      set({ status: 'loaded', plugins: { remarkPlugins: module.remarkPlugins, rehypePlugins: module.rehypePlugins } }),
+    )
+    .catch(() => set({ status: 'failed' }));
 }
 
 /**
@@ -32,18 +41,23 @@ export function needsRichMarkdown(markdown: string): boolean {
 }
 
 /**
- * The rich plugins for a note that needs them: null until they have
- * loaded, and for a note that does not need them.
+ * For a note that needs them: the rich plugins once they have loaded, or
+ * "failed" when they could not be, and the note shows as plain Markdown.
+ * Null while they load, and for a note that does not need them.
  */
-export function useRichMarkdown(markdown: string): RichPlugins | null {
+export function useRichMarkdown(markdown: string): RichPlugins | 'failed' | null {
   const needed = needsRichMarkdown(markdown);
-  if (needed && !loaded) load();
-  const plugins = useSyncExternalStore(
+  if (needed) load();
+  const current = useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    () => loaded,
+    () => state,
   );
-  return needed ? plugins : null;
+  if (!needed) return null;
+  if (current.status === 'loaded') return current.plugins;
+  return current.status === 'failed' ? 'failed' : null;
 }

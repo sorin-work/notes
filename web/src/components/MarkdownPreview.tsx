@@ -121,7 +121,8 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   headingIds = false,
 }: MarkdownPreviewProps) {
   // Colours for code and formulas, for a note that has either, once they have loaded.
-  const rich = useRichMarkdown(content);
+  const loadedRich = useRichMarkdown(content);
+  const rich = loadedRich === 'failed' ? null : loadedRich;
   if (!content.trim()) {
     return <p className="preview-empty">Nothing to preview yet.</p>;
   }
@@ -138,6 +139,11 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   ];
   return (
     <div className="markdown">
+      {loadedRich === 'failed' && (
+        <p className="muted rich-failed" role="status">
+          Formulas and code colours could not be loaded, so this shows the plain text. Reload the page to show them.
+        </p>
+      )}
       <ToggleTaskContext value={sameLines ? onToggleTask : undefined}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
