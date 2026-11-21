@@ -20,6 +20,10 @@ describe('linkifyWikiLinks', () => {
     expect(linkifyWikiLinks('[[#Next steps]] and [[#Q&A|questions]]')).toBe(
       '[Next steps](wiki:#Next%20steps) and [questions](wiki:#Q%26A)',
     );
+    // A blank title is no title, as in the API, which leaves these alone too.
+    expect(linkifyWikiLinks('[[ #Goals]] [[  #Goals|the goals]]')).toBe(
+      '[Goals](wiki:#Goals) [the goals](wiki:#Goals)',
+    );
   });
 
   it('leaves links to nothing as they are', () => {
