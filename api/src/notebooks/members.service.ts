@@ -23,7 +23,11 @@ export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_OPEN_INVITES = 20;
 /** Invitations one account can send in an hour. */
 export const MAX_INVITES_PER_HOUR = 10;
-/** Invitations one address can be sent in a day, whoever sends them, so the mail cannot be used to flood it. */
+/**
+ * Invitations one account can send to one address in a day. Counted per
+ * sender as well as per address, so that one account cannot use up the
+ * allowance of an address and keep everyone else from inviting it.
+ */
 export const MAX_INVITES_PER_ADDRESS_PER_DAY = 3;
 
 const INVITE_GONE = 'This invitation does not work any more. Ask for a new one.';
@@ -54,7 +58,9 @@ export interface InviteView {
  * Like the reset mail, nothing in it comes from an account: neither the name
  * of the notebook nor that of whoever invited. Anyone can sign up and invite
  * any address, and must not get to write part of a mail to a stranger. The
- * invited person sees who invited them, and to what, once signed in.
+ * invited person sees the notebook, and whose it is, once they have joined.
+ * The link is the invitation: whoever opens it while signed in joins, so the
+ * mail says to open it signed in to the account that should join.
  */
 export function inviteMail(to: string, link: string): OutgoingMail {
   return {
@@ -63,11 +69,11 @@ export function inviteMail(to: string, link: string): OutgoingMail {
     text: [
       'Hello,',
       '',
-      'Someone invited this address to a notebook on Notes. To see who, and to accept, sign in with this address, or create an account with it, and open this link:',
+      'Someone invited you to a notebook on Notes. To join, open this link while you are signed in to the Notes account that should join, or create an account first and then open it:',
       '',
       link,
       '',
-      'The invitation works for a week. If you do not know what this is about, ignore this mail.',
+      'The link works once, for a week, for whoever opens it while signed in, so do not pass it on. If you do not know what this is about, ignore this mail.',
       '',
     ].join('\n'),
   };
@@ -161,10 +167,10 @@ export class MembersService {
           HttpStatus.TOO_MANY_REQUESTS,
         );
       }
-      const toAddress = await tx.inviteSend.count({ where: { email, sentAt: { gt: day } } });
+      const toAddress = await tx.inviteSend.count({ where: { invitedById: ownerId, email, sentAt: { gt: day } } });
       if (toAddress >= MAX_INVITES_PER_ADDRESS_PER_DAY) {
         throw new HttpException(
-          'This address has had enough invitations for today. Try again tomorrow.',
+          'You have sent this address enough invitations for today. Try again tomorrow.',
           HttpStatus.TOO_MANY_REQUESTS,
         );
       }

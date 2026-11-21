@@ -53,10 +53,22 @@ describe('MembersService.invite', () => {
     expect(mail.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'dee@example.com' }));
   });
 
-  it('refuses past three sends to one address in a day, whoever sends them', async () => {
+  it('refuses past three sends from one account to one address in a day, counting that sender only', async () => {
     prisma.inviteSend.count.mockResolvedValueOnce(0).mockResolvedValueOnce(3);
     const { members } = service(false);
     await expect(members.invite('owner', 'nb', 'dee@example.com', 'read')).rejects.toMatchObject({ status: 429 });
     expect(prisma.notebookInvite.upsert).not.toHaveBeenCalled();
+    expect(prisma.inviteSend.count.mock.calls[1][0].where).toMatchObject({
+      invitedById: 'owner',
+      email: 'dee@example.com',
+    });
+  });
+
+  it('says in the mail to open the link signed in to the account that should join', async () => {
+    const { members, mail } = service(true);
+    await members.invite('owner', 'nb', 'dee@example.com', 'read');
+    const { text } = mail.send.mock.calls[0][0] as { text: string };
+    expect(text).toContain('while you are signed in to the Notes account that should join');
+    expect(text).toContain('for whoever opens it while signed in');
   });
 });
