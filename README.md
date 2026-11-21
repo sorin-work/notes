@@ -10,6 +10,13 @@ Markdown import/export.
 - **Markdown editor** with edit, split and preview modes. GitHub flavoured
   Markdown: tables, task lists, strikethrough and autolinks. Notes save
   automatically a moment after you stop typing.
+- **Code and formulas** in the preview: a fenced block that names its
+  language (` ```ts `, ` ```python `) is coloured, and `$$...$$` is a formula,
+  in a line or on lines of its own, drawn with KaTeX. A single `$` stays a
+  dollar, so prices are not taken for math. Both are loaded only for a note
+  that has them, and their styles and fonts are part of the build, so nothing
+  comes from another site. Shared pages, the history and print show them the
+  same way. Diagrams are not drawn: a ` ```mermaid ` block shows as code.
 - **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
   the same as typing the `x`. Boxes are read-only on shared pages, in version
   history and for notes in the trash.
@@ -815,7 +822,9 @@ backups/                where the dumps go by default, ignored by git
 
 ## How links and versions work
 
-Links point at titles, not ids. `[[Atlas]]` matches the note titled "Atlas"
+Links point at titles, not ids. A `[[link]]` inside code or inside `$$`
+math is no link, in the preview and in the API alike, and mentions are not
+looked for in either. `[[Atlas]]` matches the note titled "Atlas"
 ignoring case and extra spaces; if several notes share a title, the most
 recently edited one wins. Renaming a note therefore leaves links to the old
 title dangling (they show up dashed), and a new note with the old title picks

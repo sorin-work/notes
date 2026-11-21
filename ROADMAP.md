@@ -48,7 +48,7 @@ couple of weekends, **L** several weeks of spare time.
 | 23  | Keyboard and screen reader follow-ups               | Shipped | frontend | M    | -          |
 | 24  | Tasks across notes                                  | Shipped | both     | M    | -          |
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
-| 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
+| 26  | Code highlighting, math and diagrams in the preview | Shipped | frontend | M    | -          |
 | 27  | Two-step sign-in and verified email changes         | Later   | both     | M    | -          |
 | 28  | Select several notes at once                        | Shipped | both     | M    | -          |
 | 29  | Live change notices in open notes                   | Later   | both     | M    | -          |
@@ -110,31 +110,6 @@ filters instead of adding to them.
 - Undecided: whether a sidebar link adds to the filters or replaces them.
   Adding is what item 4 wanted, but it surprises when the old filter is out
   of sight.
-
-### 26. Code highlighting, math and diagrams in the preview
-
-Fenced code shows as plain monospace text, and there is no way to write a
-formula or a small diagram. All three are common in notes about programming,
-study or planning.
-
-- Highlighting: a fenced block that names its language gets colours, through
-  `rehype-highlight` with a set of common languages, loaded on demand like
-  the graph page (`lazyPage`) so the main bundle does not grow.
-- Math: `$...$` and `$$...$$` through `remark-math` and `rehype-katex`, with
-  KaTeX's styles and fonts in the build, nothing from a CDN.
-- Diagrams: a ` ```mermaid ` block drawn by mermaid, loaded only when
-  a note has one, with `securityLevel: 'strict'`.
-- Tricky: `$` in ordinary notes ("costs $5 or $10") turns into math. Single
-  dollars can be switched off in `remark-math`, at the price of the most
-  common way to write inline math.
-- Tricky: mermaid is large and writes SVG with inline `<style>`, which a
-  strict style policy from item 19 refuses. The parser in the API
-  (`prose.ts`) has to agree on what is not plain text, so mentions do not
-  match inside a formula, and `extractWikiLinks` may have to skip math as it
-  skips code.
-- The colours of the highlighting need both themes in `styles.css` and the
-  pairs in `styles.contrast.test.ts`. Shared pages and print render the same.
-- Undecided: whether diagrams are worth mermaid's weight, or come later.
 
 ### 27. Two-step sign-in and verified email changes
 
@@ -921,3 +896,26 @@ connection and says so, and notes made offline that are not on the server
 yet are left out and counted. "Select all" means the loaded rows; the action
 does not take the filters. Still open: favouriting in bulk, and selecting
 every page of a long list.
+
+### 26. Code highlighting, math and diagrams in the preview
+
+Highlighting and math are built, diagrams are not. `web/src/lib/richMarkdown.ts`
+holds `remark-math`, `rehype-katex` and `rehype-highlight` (the common set of
+languages, only for blocks that name one) and is imported on demand by
+`useRichMarkdown`, only for a note with a named code block or `$$`, so the
+main bundle does not carry them and other notes never load them. Single dollars
+are off: inline math is `$$...$$` on a line, which keeps "$5 or $10" a
+price. KaTeX's styles and fonts come with the build. Its layout is written
+as style properties, which React sets through the DOM, so the policy of item
+19 (`style-src 'self'`, no inline styles) holds, and nothing loads from a
+CDN. The woff and ttf copies of the fonts are built but not cached ahead by
+the service worker. The colours of code are tokens in both themes, with
+their pairs in the contrast test. The API's parser reads math too
+(`micromark-extension-math`), as verbatim, so mentions are not found in a
+formula, and both link parsers skip `$$` blocks and `$$...$$` the way they
+skip code. Diagrams are left out: mermaid writes its SVG with an inline
+`<style>` element and inline style attributes, which that policy refuses,
+and it is larger than everything else in the preview together. A
+` ```mermaid ` block shows as code. Still open: diagrams by some other means,
+and the outline (item 21) still reads headings without math, so a `#` line
+inside a `$$` block shows in the outline.
