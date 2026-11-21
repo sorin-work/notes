@@ -4,11 +4,11 @@ import type { ApiToken, CreatedApiToken } from './types';
 export const listApiTokens = () => api<ApiToken[]>('/auth/tokens');
 
 /**
- * Needs the password: a token outlives every login. The answer is the only
- * time the token itself comes back.
+ * Needs the password, and a code with two-step sign-in on: a token outlives
+ * every login. The answer is the only time the token itself comes back.
  */
-export const createApiToken = (name: string, readOnly: boolean, currentPassword: string) =>
-  api<CreatedApiToken>('/auth/tokens', json('POST', { name, readOnly, currentPassword }));
+export const createApiToken = (name: string, readOnly: boolean, currentPassword: string, code?: string) =>
+  api<CreatedApiToken>('/auth/tokens', json('POST', { name, readOnly, currentPassword, ...(code && { code }) }));
 
 /** Ends every token of the account. */
 export const revokeAllApiTokens = () => api<{ revoked: number }>('/auth/tokens', { method: 'DELETE' });

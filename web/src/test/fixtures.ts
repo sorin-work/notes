@@ -6,6 +6,8 @@ export const user: User = {
   name: 'Demo User',
   createdAt: '2026-01-01T00:00:00Z',
   preferences: { dailyNotes: { notebookId: null, templateId: null, dateFormat: 'iso' } },
+  twoStep: false,
+  pendingEmail: null,
 };
 
 export function note(overrides: Partial<Note> = {}): Note {

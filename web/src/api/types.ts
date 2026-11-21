@@ -14,11 +14,33 @@ export interface User {
   name: string;
   createdAt: string;
   preferences: Preferences;
+  /** Whether signing in asks for a code from an authenticator app. */
+  twoStep: boolean;
+  /** A new address waiting for the link mailed to it, or null. */
+  pendingEmail: string | null;
 }
 
 export interface AuthResult {
   token: string;
   user: User;
+}
+
+/** What the right password gets when codes are on: a ticket for the code. */
+export interface TwoStepTicket {
+  twoStep: true;
+  ticket: string;
+}
+
+export interface TwoStepStatus {
+  /** False when the server cannot do codes (no TWO_STEP_KEY). */
+  available: boolean;
+  on: boolean;
+  recoveryCodesLeft: number;
+}
+
+export interface TwoStepSetup {
+  secret: string;
+  uri: string;
 }
 
 /** A personal API token as Settings lists it. The token itself is not part of it. */

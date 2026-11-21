@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as authApi from '../api/auth';
 import { ApiError, getToken, onTokenChangedElsewhere, setToken, setUnauthorizedHandler } from '../api/client';
-import type { AuthResult, User } from '../api/types';
+import type { AuthResult, TwoStepTicket, User } from '../api/types';
 import { clearNotices } from '../lib/notices';
 import { dropOtherOutboxes, startOutbox, stopOutbox, unsentOfOthers } from '../lib/outbox';
 import { discardUnsavedWork, putUnsavedWorkAside } from '../lib/unsavedWork';
@@ -29,7 +29,9 @@ interface AuthContextValue {
    * and never sent, signing in as someone else deletes them, so `confirm` is
    * asked first; a no leaves everything as it was and resolves to false.
    */
-  login(email: string, password: string, confirm?: ConfirmDiscard): Promise<boolean>;
+  login(email: string, password: string, confirm?: ConfirmDiscard): Promise<boolean | TwoStepTicket>;
+  /** The second step, when `login` answered a ticket. */
+  loginWithCode(ticket: string, code: string, confirm?: ConfirmDiscard): Promise<boolean>;
   register(name: string, email: string, password: string, confirm?: ConfirmDiscard): Promise<boolean>;
   logout(): void;
   /** Shows a changed name or email without asking the API again. */
@@ -216,6 +218,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       login: async (email, password, confirm) => {
         const result = await authApi.login(email, password);
+        if ('ticket' in result) return result;
+        if (!(await mayDropOthers(result.user.id, confirm))) return false;
+        await signedIn(result);
+        return true;
+      },
+      loginWithCode: async (ticket, code, confirm) => {
+        const result = await authApi.loginWithCode(ticket, code);
         if (!(await mayDropOthers(result.user.id, confirm))) return false;
         await signedIn(result);
         return true;
