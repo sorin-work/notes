@@ -1,3 +1,4 @@
+import { maskNonProse } from './mask';
 import { parseNote, ParsedNote, Span } from './prose';
 
 export interface WikiLink {
@@ -28,83 +29,34 @@ interface LinkInText extends WikiLink {
  * are stored and rewritten (see findLinks).
  */
 const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
-const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-/**
- * A line that opens or closes a block of math: `$$` at its start and no
- * second `$$` after it, which would make it math inside a line. Kept in step
- * with web/src/lib/wikilinks.ts.
- */
-const MATH_FENCE = /^\s{0,3}\$\$(?!.*\$\$)/;
-/** Code, then math inside a line: `$$...$$`, as the preview reads it. */
-const INLINE_CODE_OR_MATH = /(`+)([\s\S]*?[^`])\1(?!`)|\$\$(?:[^$]|\$(?!\$))+?\$\$/g;
 
 /** Case and whitespace insensitive form of a title, used to match links to notes. */
 export function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-/** Blanks out `inline code` and $$math$$ so links inside them are not picked up. */
-function withoutInlineCode(line: string): string {
-  return line.replace(INLINE_CODE_OR_MATH, (match) => ' '.repeat(match.length));
-}
-
-/** The lines of a note outside fenced code blocks and blocks of math, each with where it starts in the note. */
-function* proseLines(markdown: string): Generator<{ line: string; lineStart: number }> {
-  let fence: string | null = null;
-  let inMath = false;
-  let offset = 0;
-  // Lines sit at the even indexes, the line endings between them at the odd ones.
-  const parts = markdown.split(/(\r?\n)/);
-  for (let index = 0; index < parts.length; index += 2) {
-    const line = parts[index];
-    const lineStart = offset;
-    offset += line.length + (parts[index + 1]?.length ?? 0);
-
-    if (fence === null && MATH_FENCE.test(line)) {
-      inMath = !inMath;
-      continue;
-    }
-    if (inMath) continue;
-    const fenceMatch = FENCE.exec(line);
-    if (fenceMatch) {
-      const marker = fenceMatch[1];
-      if (fence === null) {
-        fence = marker;
-        continue;
-      }
-      if (marker[0] === fence[0] && marker.length >= fence.length) {
-        fence = null;
-        continue;
-      }
-    }
-    if (fence === null) yield { line, lineStart };
-  }
-}
-
-/** Every [[wiki link]] in a note, in order, skipping fenced code blocks and inline code. */
+/** Every [[wiki link]] in a note, in order, skipping code and math (see maskNonProse). */
 function* findLinks(markdown: string): Generator<LinkInText> {
-  for (const { line, lineStart } of proseLines(markdown)) {
-    // Blanking keeps the length of the line, so positions in it are positions in the note.
-    for (const match of withoutInlineCode(line).matchAll(LINK)) {
-      // A blank title, as in [[ #Heading]], is a link within the note, which the web app reads.
-      // It leads to no other note, so it is left as it is written everywhere here.
-      if (!match[1].trim()) continue;
-      const from = lineStart + match.index;
-      const start = from + 2;
-      const end = start + match[1].length;
-      const to = from + match[0].length;
-      // From the note itself, not the blanked line: inline code in an alias is part of what is shown.
-      const alias = match[2] === undefined ? null : markdown.slice(to - 2 - match[2].length, to - 2).trim();
-      yield {
-        title: match[1].trim().replace(/\s+/g, ' '),
-        alias: alias || null,
-        start,
-        end,
-        plain: markdown.slice(start, end) === match[1],
-        from,
-        to,
-      };
-    }
+  // Blanking keeps the length of the note, so positions in it are positions in the note.
+  for (const match of maskNonProse(markdown).matchAll(LINK)) {
+    const from = match.index;
+    const start = from + 2;
+    const end = start + match[1].length;
+    const to = from + match[0].length;
+    // A blank title, as in [[ #Heading]], is a link within the note, which the web app reads.
+    // It leads to no other note, so it is left as it is written everywhere here.
+    if (!match[1].trim()) continue;
+    // From the note itself, not the blanked line: inline code in an alias is part of what is shown.
+    const alias = match[2] === undefined ? null : markdown.slice(to - 2 - match[2].length, to - 2).trim();
+    yield {
+      title: match[1].trim().replace(/\s+/g, ' '),
+      alias: alias || null,
+      start,
+      end,
+      plain: markdown.slice(start, end) === match[1],
+      from,
+      to,
+    };
   }
 }
 

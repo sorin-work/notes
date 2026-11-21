@@ -28,6 +28,12 @@ describe('extractWikiLinks', () => {
     ]);
   });
 
+  it('skips math that runs over a line ending, and leaves its source alone in a rename', () => {
+    const text = 'see $$a + [[Note]]\nb$$ here\n\n$$ x\n[[Note]]\n$$\n[[Note]]';
+    expect(extractWikiLinks(text)).toEqual([{ title: 'Note', alias: null }]);
+    expect(renameLinks(text, 'Note', 'Other')).toBe('see $$a + [[Note]]\nb$$ here\n\n$$ x\n[[Note]]\n$$\n[[Other]]');
+  });
+
   it('drops a #heading from the target', () => {
     expect(extractWikiLinks('[[Recipes#Bread]]')).toEqual([{ title: 'Recipes', alias: null }]);
   });
