@@ -753,11 +753,14 @@ same parser as for mentions, with the same limits and worker threads), so a
 of the note they were read from, and read again when the Tasks page is
 loaded and finds that a note has moved on. A save therefore never waits for
 the parser, and no way of changing a note (a restore, an import, Link on a
-mention) leaves the list behind. A note without `[ ]` or `[x]` anywhere is
-not parsed at all. One request parses at most 1,000,000 characters or two
-seconds, and the page says how many notes are left for the next one, with a
-"Read on" button. A note too long or too intricate for the parser is counted
-as one that could not be read, until it is edited. Only notes outside the
+mention) leaves the list behind. A note without `[ ]` or `[x]` anywhere, or
+one too long to parse, is told apart in the database and recorded without
+its text being loaded. One request reads at most 1,000,000 characters of the
+other notes or for two seconds, and the page says how many notes are left
+for the next one, with a "Read on" button, among them a note edited while
+the list was made. A note too long or too intricate for the parser is counted
+as one that could not be read, until it is edited. One the parser ran out of
+time on, on a busy machine, is left for the next request. Only notes outside the
 trash that are not templates are listed, 200 at most, the ones edited last.
 A member of a shared notebook sees its tasks with the notebook selected, and
 an editor can tick them.

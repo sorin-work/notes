@@ -894,8 +894,11 @@ save: the list reads again every note whose revision moved on, in the parse
 pool (`parseTasks` beside `parseNote`, micromark with GFM) with a budget of
 1,000,000 characters or two seconds per request. So no write path can forget
 them, saves never wait for the parser, and the notes that exist are filled in
-the first time the page is opened, with no start-up step. Notes without a box
-are not parsed. Tasks read from an older revision are not shown, because
+the first time the page is opened, with no start-up step. Notes without a box,
+and notes too long to parse, are found in SQL and written in bulk without
+loading their text. A parse that runs out of time leaves the note for the
+next request. The counts, the revisions and the tasks are read in one
+snapshot, so a tick always names the revision its line came from. Tasks read from an older revision are not shown, because
 their lines may have moved. `POST /notes/:id/tasks` takes the line, the state
 the box showed and the revision, flips the box by the rule of `toggleTask`
 (a copy of it lives in `api/src/tasks`), and saves through the normal update,
