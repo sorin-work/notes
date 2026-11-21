@@ -136,10 +136,17 @@ Markdown import/export.
   listed in words, and a note whose links lead to notes that are not shown
   says so.
 - **Keyboard and screen readers**: skip links lead past the sidebar to the
-  content and to the open note, dialogs keep Tab inside them, the arrow keys
-  move through the note list, and the link suggestions and the quick switcher
-  are announced. Colours meet WCAG AA contrast in both themes, and nothing
-  spins or slides when the system asks for reduced motion.
+  content and to the open note, dialogs keep Tab inside them, and the link
+  suggestions and the quick switcher are announced. The note list is one
+  stop for Tab, and the arrow keys move inside it. The arrow keys also move
+  through the notebooks in the sidebar and in the notebook picker of a note,
+  and fold and unfold them. On a phone, opening the menu puts the focus in
+  it, Tab stays in it, and Escape closes it again. The notebook selects name each notebook by
+  its whole way, such as "Work / Meetings", rather than by indenting.
+  Colours meet WCAG AA contrast in both themes, and nothing spins or slides
+  when the system asks for reduced motion. See
+  [Checking with a screen reader](#checking-with-a-screen-reader) for what
+  has and has not been tried.
 - Light and dark themes, keyboard shortcuts and a layout that works on phones.
 - **Installable**: the browser can install the app, from the address bar on
   a desktop or with "Add to Home Screen" on a phone. A service worker keeps
@@ -166,6 +173,40 @@ Markdown import/export.
 | `Ctrl+S` / `Cmd+S`   | Save now                          |
 | `Ctrl+E` / `Cmd+E`   | Switch between edit/split/preview |
 | `↑` `↓` `Home` `End` | Move through the note list        |
+| `↑` `↓` `Home` `End` | Move through a notebook tree      |
+| `→` / `←`            | Unfold or go in / fold or go up   |
+| `Esc`                | Close the menu on a phone         |
+
+### Checking with a screen reader
+
+The tests run axe over every page and dialog, and check the keys above, but
+neither stands in for a person with a screen reader. This is the list to go
+through with NVDA and Firefox on Windows and with VoiceOver and Safari on a
+Mac. It has not been gone through yet (roadmap item 34): nothing below has
+been heard in a real screen reader.
+
+- Sign in, then Tab from the top of a note page: the skip links come first
+  and lead where they say.
+- The note list: one Tab reaches it and the next one leaves it; the open note
+  is read as the current page; the arrow keys read one note after another.
+- The notebook tree in the sidebar: each notebook is read as a link with its
+  count; the fold buttons say "Fold" or "Unfold" and whether they are
+  expanded; the arrow keys work in focus mode (NVDA) and with VoiceOver's
+  keys passed through.
+- The notebook picker of a note: the button says where the note is, opening
+  it puts the focus on the choice that stands, the list is a group, and
+  Escape puts the focus back on the button.
+- Folding with Left and Right: the notebook itself is read as expanded or
+  collapsed.
+- The filter selects and "Inside" in the notebook dialog: options are read
+  with their whole way.
+- Typing `[[` in a note: the suggestions are read as they change, and Enter
+  takes one.
+- The quick switcher (`Ctrl+K`): the number of notes found is read.
+- A dialog: the focus starts inside it, Tab stays inside, and Escape returns
+  the focus.
+- On a phone-sized window: the menu button, the focus moving into the menu,
+  Tab staying in it, and Escape.
 
 ### Saving a page from the browser
 

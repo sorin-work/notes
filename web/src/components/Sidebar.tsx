@@ -21,6 +21,7 @@ import {
   trashedWith,
 } from '../lib/notebooks';
 import { fromTemplate } from '../lib/templates';
+import { treeItem, treeKeyDown } from '../lib/treeKeys';
 import {
   cannotReachServer,
   createOffline,
@@ -176,7 +177,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const sharedBranch = (node: NotebookNode): React.ReactNode => (
     <li key={node.id}>
       <div className="nav-row">
-        {filterLink(`?notebook=${node.id}`, activeNotebook === node.id, node.name, totalNotes(node), 'nested')}
+        {filterLink(
+          `?notebook=${node.id}`,
+          activeNotebook === node.id,
+          node.name,
+          totalNotes(node),
+          'nested',
+          null,
+          treeItem(node.id, node.children.length > 0 ? true : undefined),
+        )}
       </div>
       {node.children.length > 0 && <ul>{node.children.map(sharedBranch)}</ul>}
     </li>
@@ -200,6 +209,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             totalNotes(node),
             '',
             publicBecause(node),
+            treeItem(node.id, node.children.length > 0 ? open : undefined),
           )}
           <NotebookMenu
             notebook={node}
@@ -220,8 +230,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     className = '',
     /** Why the notebook is public, when it is. */
     publicTitle: string | null = null,
+    /** For a notebook in a tree, see treeKeyDown. */
+    tree: ReturnType<typeof treeItem> | null = null,
   ) => (
     <Link
+      {...tree}
       to={`/notes${search}`}
       className={`nav-item ${className} ${active ? 'active' : ''}`.trim()}
       aria-current={active ? 'page' : undefined}
@@ -333,7 +346,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             </button>
           </div>
           {notebooks.data?.length === 0 && <p className="nav-empty">No notebooks yet.</p>}
-          <ul className="notebook-tree">{tree.map(branch)}</ul>
+          <ul className="notebook-tree" onKeyDown={treeKeyDown(toggleClosed)}>
+            {tree.map(branch)}
+          </ul>
         </div>
 
         {sharedTree.length > 0 && (
@@ -341,7 +356,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <div className="nav-heading">
               <span>Shared with me</span>
             </div>
-            <ul className="notebook-tree">
+            <ul className="notebook-tree" onKeyDown={treeKeyDown()}>
               {sharedTree.map((parent) => (
                 <li key={parent.id}>
                   <div className="nav-row">
@@ -350,6 +365,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       activeNotebook === parent.id,
                       parent.name,
                       totalNotes(parent),
+                      '',
+                      null,
+                      treeItem(parent.id, parent.children.length > 0 ? true : undefined),
                     )}
                     <span
                       className="role-mark"

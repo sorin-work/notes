@@ -27,7 +27,14 @@ describe('NotebookDialog', () => {
     renderWithProviders(<NotebookDialog notebooks={notebooks} parentId="o" onClose={() => {}} />);
 
     // Not 2026: it sits at the last level.
-    expect(places()).toEqual(['Top level', 'Personal', 'Work', 'Meetings', 'One-to-ones', 'Reading']);
+    expect(places()).toEqual([
+      'Top level',
+      'Personal',
+      'Work',
+      'Work / Meetings',
+      'Work / Meetings / One-to-ones',
+      'Work / Reading',
+    ]);
     const inside = screen.getByLabelText('Inside');
     expect(inside).toHaveValue('o');
     expect(inside).toHaveAccessibleDescription(
@@ -48,7 +55,7 @@ describe('NotebookDialog', () => {
 
     renderWithProviders(<NotebookDialog notebooks={notebooks} notebook={byId('r')} onClose={() => {}} />);
     // Reading holds nothing, so it fits anywhere above the last level, except inside itself.
-    expect(places()).toEqual(['Top level', 'Personal', 'Work', 'Meetings', 'One-to-ones']);
+    expect(places()).toEqual(['Top level', 'Personal', 'Work', 'Work / Meetings', 'Work / Meetings / One-to-ones']);
   });
 
   it('moves a notebook, with what is inside it, to the place that is picked', async () => {

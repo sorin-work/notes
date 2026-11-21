@@ -1,5 +1,8 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { summary } from '../test/fixtures';
 import { renderWithProviders } from '../test/render';
@@ -42,5 +45,49 @@ describe('NoteList', () => {
     expect(link('First')).toHaveFocus();
     await userEvent.keyboard('{End}{Home}');
     expect(link('First')).toHaveFocus();
+  });
+
+  it('is one Tab stop: the open note, else the first, else where the focus was last', async () => {
+    const notes = ['First', 'Second', 'Third'].map((title) => summary({ id: title, title }));
+    const link = (name: string) => screen.getByRole('link', { name: new RegExp(name) });
+    const stops = () => screen.getAllByRole('link').filter((item) => item.tabIndex === 0);
+
+    const { rerender: rerenderBare, queryClient } = renderWithProviders(
+      <>
+        <button type="button">Before</button>
+        <NoteList notes={notes} activeId="Second" />
+        <button type="button">After</button>
+      </>,
+    );
+    // The same providers as the first render, so that the list stays mounted.
+    const rerender = (ui: ReactElement) =>
+      rerenderBare(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/']}>{ui}</MemoryRouter>
+        </QueryClientProvider>,
+      );
+    expect(stops()).toEqual([link('Second')]);
+    screen.getByRole('button', { name: 'Before' }).focus();
+    await userEvent.tab();
+    expect(link('Second')).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'After' })).toHaveFocus();
+
+    // Where the arrows left the focus is where Tab comes back to, also after the list reloads.
+    link('Second').focus();
+    await userEvent.keyboard('{ArrowDown}');
+    const reloaded = notes.map((note) => ({ ...note }));
+    rerender(
+      <>
+        <button type="button">Before</button>
+        <NoteList notes={reloaded} activeId="Second" />
+        <button type="button">After</button>
+      </>,
+    );
+    expect(stops()).toEqual([link('Third')]);
+
+    // Without that note in the list, and with no note open, it is the first one.
+    rerender(<NoteList notes={reloaded.slice(0, 2)} />);
+    expect(stops()).toEqual([link('First')]);
   });
 });

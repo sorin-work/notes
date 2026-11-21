@@ -1,4 +1,4 @@
-import { MouseEvent, useCallback, useEffect, useState } from 'react';
+import { MouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Outlet, useMatch } from 'react-router';
 import { useOnline } from '../hooks/useOnline';
@@ -23,6 +23,9 @@ function isSwitcherKey(event: KeyboardEvent): boolean {
 /** The width below which styles.css turns the sidebar into a menu. */
 const NARROW_SCREEN = '(max-width: 820px)';
 
+/** What Tab stops at in the open menu: its button and everything in the sidebar that takes the focus. */
+const MENU_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]';
+
 /** The skip links move the focus without putting their "#id" in the address. */
 function skipTo(event: MouseEvent<HTMLAnchorElement>) {
   event.preventDefault();
@@ -33,6 +36,7 @@ export function Layout() {
   const online = useOnline();
   const noteOpen = useMatch('/notes/:noteId') !== null;
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const closeSwitcher = useCallback(() => setSwitcherOpen(false), []);
 
@@ -59,6 +63,50 @@ export function Layout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [switcherOpen]);
 
+  // While the menu is open it holds the keyboard the way a dialog does: Tab
+  // goes round its button and what is in it, and does not reach the page
+  // under the shade. Escape closes it and puts the focus back on its
+  // button. A dialog that is open, even one opened from the menu, takes
+  // both keys first.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+        menuButton.current?.focus();
+        return;
+      }
+      if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+      const inMenu = [...document.querySelectorAll<HTMLElement>(`.sidebar :is(${MENU_STOPS})`)].filter(
+        (element) => element.tabIndex >= 0,
+      );
+      const stops = menuButton.current ? [menuButton.current, ...inMenu] : inMenu;
+      const at = stops.indexOf(document.activeElement as HTMLElement);
+      const next = event.shiftKey
+        ? at <= 0
+          ? stops.length - 1
+          : at - 1
+        : at === stops.length - 1 || at === -1
+          ? 0
+          : at + 1;
+      event.preventDefault();
+      stops[next]?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
+  const toggleMenu = () => {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    // The menu is hidden until it is open, and a hidden link cannot take the focus.
+    flushSync(() => setMenuOpen(true));
+    document.querySelector<HTMLElement>('.sidebar a[href]')?.focus();
+  };
+
   return (
     <div className={menuOpen ? 'app menu-open' : 'app'}>
       <a href="#main" className="skip-link" onClick={skipTo}>
@@ -71,11 +119,12 @@ export function Layout() {
       )}
       <header className="mobile-bar">
         <button
+          ref={menuButton}
           type="button"
           className="icon-button"
           aria-label={menuOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((open) => !open)}
+          onClick={toggleMenu}
         >
           ☰
         </button>

@@ -97,10 +97,10 @@ describe('NotebookSelect', () => {
 
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Notebook: No notebook' })).toHaveFocus();
+    // Opening it puts the focus on the choice that stands.
     await userEvent.keyboard('{Enter}');
-    // Tab goes through the list in the order it is read: no notebook, Personal, the fold button of Work, Work.
-    await userEvent.tab();
     expect(screen.getByRole('button', { name: 'No notebook' })).toHaveFocus();
+    // From there Tab goes through the list in the order it is read: Personal, the fold button of Work, Work.
     await userEvent.tab();
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Fold Work' })).toHaveFocus();
@@ -125,6 +125,33 @@ describe('NotebookSelect', () => {
     await userEvent.keyboard('{Enter}');
     screen.getByRole('button', { name: 'After' }).focus();
     await waitFor(() => expect(screen.queryByRole('group')).not.toBeInTheDocument());
+  });
+
+  it('moves and folds with the arrow keys, as the sidebar does', async () => {
+    const onChange = vi.fn();
+    render(<Picker onChange={onChange} />);
+    const option = (name: string) => screen.getByRole('button', { name });
+
+    await userEvent.click(option('Notebook: No notebook'));
+    // The focus is in the list at once, so the arrows work straight away.
+    expect(option('No notebook')).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+    expect(option('Work')).toHaveFocus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(option('Unfold Work')).toBeInTheDocument();
+    // The notebook itself says it is folded, so the fold is announced where the focus is.
+    expect(option('Work')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Meetings' })).not.toBeInTheDocument();
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}');
+    expect(option('Meetings')).toHaveFocus();
+    await userEvent.keyboard('{End}');
+    expect(option('Reading')).toHaveFocus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(option('Work')).toHaveFocus();
+    await userEvent.keyboard('{Home}');
+    expect(option('No notebook')).toHaveFocus();
+    await userEvent.keyboard('{End}{Enter}');
+    expect(onChange).toHaveBeenCalledWith('r');
   });
 
   it('remembers what is folded, and unfolds the way to the notebook the note is in', async () => {
@@ -161,20 +188,19 @@ describe('NotebookSelect', () => {
 });
 
 describe('NotebookOptions', () => {
-  it('lists every notebook for a select, in the order of the tree and indented by depth', () => {
+  it('lists every notebook for a select, in the order of the tree and named by its way there', () => {
     render(
       <select aria-label="Filter by notebook">
         <NotebookOptions notebooks={notebooks} />
       </select>,
     );
-    const step = '    ';
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'Personal',
       'Work',
-      `${step}Meetings`,
-      `${step}${step}One-to-ones`,
-      `${step}${step}${step}2026`,
-      `${step}Reading`,
+      'Work / Meetings',
+      'Work / Meetings / One-to-ones',
+      'Work / Meetings / One-to-ones / 2026',
+      'Work / Reading',
     ]);
   });
 });

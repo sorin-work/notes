@@ -45,7 +45,7 @@ couple of weekends, **L** several weeks of spare time.
 | 20  | Compare two versions with each other                | Shipped | frontend | S    | -          |
 | 21  | Links to headings and an outline                    | Shipped | both     | M    | -          |
 | 22  | Encrypted, off-site and watched backups             | Shipped | infra    | M    | -          |
-| 23  | Keyboard and screen reader follow-ups               | Next    | frontend | M    | -          |
+| 23  | Keyboard and screen reader follow-ups               | Shipped | frontend | M    | -          |
 | 24  | Tasks across notes                                  | Shipped | both     | M    | -          |
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
 | 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
@@ -56,37 +56,32 @@ couple of weekends, **L** several weeks of spare time.
 | 31  | Embedding one note in another                       | Maybe   | both     | M    | 21         |
 | 32  | A graph that copes with more notes                  | Maybe   | frontend | M    | -          |
 | 33  | Thumbnails, object storage and Evernote attachments | Maybe   | both     | L    | -          |
+| 34  | Screen reader pass with NVDA and VoiceOver          | Next    | frontend | S    | 23         |
 
 ## Next
 
-### 23. Keyboard and screen reader follow-ups
+### 34. Screen reader pass with NVDA and VoiceOver
 
-Improves items 6 and 15, whose notes list what is left: nobody has used the
-app with a real screen reader, every note in `NoteList` is its own Tab stop,
-the focus stays put when the menu opens on a narrow screen, the arrow keys do
-not move through the notebook tree, and the filter selects show the whole
-tree without folding.
+Improves item 23. The keys and names it added are tested in jsdom and were
+checked in a headless browser, but nobody has heard them in a real screen
+reader. The list is in the README under "Checking with a screen reader".
 
-- `NoteList`: one Tab stop for the whole list, with a roving `tabIndex` on
-  the open note or else the first one. The list already handles Up, Down,
-  Home and End, so Tab then gets past 500 notes in one press.
-- Notebook tree in `Sidebar` and in `NotebookSelect`: Up and Down move,
-  Right opens a folded notebook or goes into it, Left folds it or goes to
-  the notebook above, Home and End, as in the ARIA tree pattern.
-- Narrow screens: opening the menu moves the focus to its first link, and
-  Escape closes it and puts the focus back on the menu button.
-- `FilterSelects` and the "Inside" select of `NotebookDialog`: keep them as
-  native selects, which every screen reader knows, and write each option as
-  its path ("Work / Meetings") instead of relying on indentation.
-- A pass with NVDA and Firefox and with VoiceOver and Safari, kept as a short
-  checklist in the README, with what it finds fixed. The axe tests stay.
-- Tricky: item 15 chose nested lists of links and buttons over `role="tree"`
-  on purpose. Adding arrow keys to them without the role keeps the links
-  readable as links, while the full tree role changes how screen readers
-  read everything inside it.
-- Undecided: whether the tree gets `role="tree"` after all, and whether a
-  roving Tab stop in `NoteList` should remember its place when the list
-  reloads.
+- NVDA with Firefox and VoiceOver with Safari, each through the list.
+- Browse mode: NVDA and VoiceOver take the arrow keys for themselves. Check
+  that the trees and the note list work in focus mode (NVDA) or with the
+  keys passed through (VoiceOver), and that nothing is lost in browse mode.
+- Folding: a fold made with Left or Right is announced on the notebook, as
+  "collapsed" or "expanded", not only on its fold button.
+- The note list as one stop: Tab reaches it once and leaves it with the next
+  press, and the open note is read as the current page.
+- Option names: the filter selects, the daily note select and "Inside" read
+  each notebook with its whole way.
+- The menu on a phone-sized window: the focus moves into it, Tab stays in it,
+  and Escape gives the focus back to its button.
+- The notebook picker of a note: the focus lands on the choice that stands,
+  the list is read as a group with its name, and Escape returns the focus.
+- Whatever the pass finds is fixed in the same item, and the README list
+  records when and with what it was gone through.
 
 ## Later
 
@@ -876,6 +871,32 @@ did not get a passphrase: it is a download to the person's own machine, and
 encrypting it in the browser is a feature of its own. Still open: a copy that
 failed is not sent again with the next dump, nothing is sent when a failure
 is over, and Docker only shows the health state, it does not tell anyone.
+
+### 23. Keyboard and screen reader follow-ups
+
+`NoteList` is one Tab stop with a roving `tabIndex`: the note the focus was
+on last, else the open note, else the first. On the open point, it does
+remember its place when the list reloads, by the note's id, for as long as
+that note is in the list and the same note is open; opening another note
+makes that one the place. `treeKeyDown` in `web/src/lib/treeKeys.ts` gives
+the notebook trees of `Sidebar` (own and shared) and `NotebookSelect` the
+keys of the ARIA tree pattern: Up, Down, Home, End, Right to unfold or go
+in, Left to fold or go up. On the other open point the trees stay nested
+lists of links and buttons without `role="tree"`, for the reason the design
+gave, and each notebook link stays its own Tab stop, with `aria-expanded` on
+it so that a fold is announced where the focus is. The notebook picker puts
+the focus on the choice that stands when it opens. On a narrow screen the
+menu button puts the focus on the first link of the menu, Tab goes round
+the menu and its button as in a dialog, and Escape closes it and gives the
+focus back, unless a dialog is open and takes the keys.
+`FilterSelects`, the daily note select in Settings and the "Inside" select of
+`NotebookDialog` stay native and name every option by its whole way
+("Work / Meetings"), all through `NotebookOptions`. Not done: the pass with
+NVDA and Firefox and with VoiceOver and Safari. I could not run a screen
+reader where this was built, so the README has the checklist under
+"Checking with a screen reader", marked as not gone through yet, and
+nothing on it has been heard in a real screen reader. That pass is item 34,
+together with whatever it finds.
 
 ### 24. Tasks across notes
 
