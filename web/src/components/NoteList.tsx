@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import { type KeyboardEvent, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import type { NoteSummary } from '../api/types';
 import { formatRelative } from '../lib/dates';
@@ -21,14 +21,28 @@ function moveFocus(event: KeyboardEvent<HTMLUListElement>) {
   links[target]?.focus();
 }
 
+/**
+ * The list is one Tab stop: Tab goes to the note that had the focus last,
+ * else the open note, else the first one, and the next Tab leaves the list.
+ * The arrow keys, Home and End move inside it. The note with the focus is
+ * remembered by its id, so it keeps its place when the list reloads, for as
+ * long as it is in the list and the same note is open. Opening another note,
+ * from here or elsewhere, makes that one the place to come back to.
+ */
 export function NoteList({ notes, activeId }: Props) {
   const location = useLocation();
+  const [focused, setFocused] = useState<{ id: string; whileOpen?: string } | null>(null);
+  const has = (id: string | null | undefined) => !!id && notes.some((note) => note.id === id);
+  const focusedId = focused && focused.whileOpen === activeId ? focused.id : null;
+  const tabStop = has(focusedId) ? focusedId : has(activeId) ? activeId : notes[0]?.id;
   return (
     <ul className="note-list" onKeyDown={moveFocus}>
       {notes.map((note) => (
         <li key={note.id}>
           <Link
             to={{ pathname: `/notes/${note.id}`, search: location.search }}
+            tabIndex={note.id === tabStop ? 0 : -1}
+            onFocus={() => setFocused({ id: note.id, whileOpen: activeId })}
             className={note.id === activeId ? 'note-item active' : 'note-item'}
             aria-current={note.id === activeId ? 'page' : undefined}
           >
