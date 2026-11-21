@@ -12,35 +12,204 @@ What the app does today is in the [README](README.md).
 - **Maybe**: not sure yet that they are worth the extra complexity.
 - **Shipped**: built. The notes at the end say how each one turned out.
 
+Items 1 to 18 have shipped. An item from 19 on that starts with "Improves
+item N" builds on something that has, and the Shipped note of item N says
+what it left open.
+
 Sizes are rough: **S** is an evening or two, **M** a few evenings up to a
 couple of weekends, **L** several weeks of spare time.
 
 ## Overview
 
-| #   | Item                                   | Group   | Area     | Size | Depends on |
-| --- | -------------------------------------- | ------- | -------- | ---- | ---------- |
-| 1   | Clickable task lists in the preview    | Shipped | frontend | S    | -          |
-| 2   | Changes view in version history        | Shipped | frontend | S    | -          |
-| 3   | Quick switcher                         | Shipped | frontend | S    | -          |
-| 4   | Search filters, phrases and paging     | Shipped | both     | M    | -          |
-| 5   | Rename a note without breaking links   | Shipped | both     | M    | -          |
-| 6   | Accessibility pass                     | Shipped | frontend | M    | -          |
-| 7   | Scheduled backups                      | Shipped | infra    | S    | -          |
-| 8   | Edit conflict detection                | Shipped | both     | M    | -          |
-| 9   | Attachments and pasted images          | Shipped | both     | L    | -          |
-| 10  | Share link options                     | Shipped | both     | M    | -          |
-| 11  | Account settings and sessions          | Shipped | both     | M    | -          |
-| 12  | More import sources and export formats | Shipped | both     | M    | -          |
-| 13  | Personal API tokens                    | Shipped | both     | M    | -          |
-| 14  | Offline mode and installable app       | Shipped | both     | L    | 8          |
-| 15  | Deeper notebook nesting                | Shipped | both     | M    | -          |
-| 16  | Templates and daily notes              | Shipped | both     | M    | -          |
-| 17  | Notebooks shared with other accounts   | Shipped | both     | L    | 8          |
-| 18  | Graph view and unlinked mentions       | Shipped | both     | M    | -          |
+| #   | Item                                                | Group   | Area     | Size | Depends on |
+| --- | --------------------------------------------------- | ------- | -------- | ---- | ---------- |
+| 1   | Clickable task lists in the preview                 | Shipped | frontend | S    | -          |
+| 2   | Changes view in version history                     | Shipped | frontend | S    | -          |
+| 3   | Quick switcher                                      | Shipped | frontend | S    | -          |
+| 4   | Search filters, phrases and paging                  | Shipped | both     | M    | -          |
+| 5   | Rename a note without breaking links                | Shipped | both     | M    | -          |
+| 6   | Accessibility pass                                  | Shipped | frontend | M    | -          |
+| 7   | Scheduled backups                                   | Shipped | infra    | S    | -          |
+| 8   | Edit conflict detection                             | Shipped | both     | M    | -          |
+| 9   | Attachments and pasted images                       | Shipped | both     | L    | -          |
+| 10  | Share link options                                  | Shipped | both     | M    | -          |
+| 11  | Account settings and sessions                       | Shipped | both     | M    | -          |
+| 12  | More import sources and export formats              | Shipped | both     | M    | -          |
+| 13  | Personal API tokens                                 | Shipped | both     | M    | -          |
+| 14  | Offline mode and installable app                    | Shipped | both     | L    | 8          |
+| 15  | Deeper notebook nesting                             | Shipped | both     | M    | -          |
+| 16  | Templates and daily notes                           | Shipped | both     | M    | -          |
+| 17  | Notebooks shared with other accounts                | Shipped | both     | L    | 8          |
+| 18  | Graph view and unlinked mentions                    | Shipped | both     | M    | -          |
+| 19  | Security headers for the web app                    | Next    | infra    | S    | -          |
+| 20  | Compare two versions with each other                | Next    | frontend | S    | -          |
+| 21  | Links to headings and an outline                    | Next    | both     | M    | -          |
+| 22  | Encrypted, off-site and watched backups             | Next    | infra    | M    | -          |
+| 23  | Keyboard and screen reader follow-ups               | Next    | frontend | M    | -          |
+| 24  | Tasks across notes                                  | Later   | both     | M    | -          |
+| 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
+| 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
+| 27  | Two-step sign-in and verified email changes         | Later   | both     | M    | -          |
+| 28  | Select several notes at once                        | Later   | both     | M    | -          |
+| 29  | Live change notices in open notes                   | Later   | both     | M    | -          |
+| 30  | Tests in a real browser                             | Later   | infra    | M    | -          |
+| 31  | Embedding one note in another                       | Maybe   | both     | M    | 21         |
+| 32  | A graph that copes with more notes                  | Maybe   | frontend | M    | -          |
+| 33  | Thumbnails, object storage and Evernote attachments | Maybe   | both     | L    | -          |
 
 ## Next
 
-Empty for now: everything that was in this group has shipped.
+### 19. Security headers for the web app
+
+nginx serves the app with no security headers at all. The login token sits in
+`localStorage` (`web/src/api/client.ts`), so one script that got into the
+page could read it, and nothing tells the browser to refuse such a script, or
+to refuse showing the app inside a frame on another site.
+
+- A `Content-Security-Policy` for the app shell in `web/nginx.conf`:
+  `default-src 'self'`, scripts only from the app's own files,
+  `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
+  `frame-ancestors 'none'`. Images need `'self'`, `blob:` and `data:` for a
+  pasted image before its upload is done, and `https:` for as long as notes
+  may show images from other sites. `worker-src 'self'` covers the service
+  worker.
+- Next to it: `X-Content-Type-Options: nosniff`, a `Referrer-Policy` (the
+  address of a `/s/<token>` page is the share link itself, so `no-referrer`
+  there at least), and a `Permissions-Policy` that turns off the camera, the
+  microphone and the location, which the app never uses.
+- Tricky: nginx forgets every `add_header` of the `server` block in a
+  `location` that has one of its own, and most locations here set
+  `Cache-Control`, `index.html` among them. The headers have to go into each
+  location, best through one `include` file, or the shell loses them exactly
+  where they matter.
+- Tricky: responses from `/api/` keep their own headers. The attachments
+  already send `default-src 'none'; sandbox` (`attachments.controller.ts`),
+  and the page at `/api/docs` is Swagger UI, which may need inline styles or
+  scripts. A second policy added by nginx would be applied on top of theirs,
+  so nginx should leave `/api/` alone and the API set what the docs page
+  needs.
+- A test that reads `nginx.conf` and fails when a location that can serve
+  `index.html` lacks the include, the way `styles.contrast.test.ts` reads
+  `styles.css`.
+- Undecided: whether images from other sites stay allowed. Blocking them
+  stops a shared note from telling its author who reads it, but breaks notes
+  that show images from the web today. Also whether to start with
+  `Content-Security-Policy-Report-Only` for a while, which needs somewhere
+  for the reports to go.
+
+### 20. Compare two versions with each other
+
+Improves item 2. The Changes view compares a version with the text in the
+editor, and that is all: two old versions cannot be compared, a line that
+changed by one word shows as a whole line removed and a whole line added, and
+folded lines stay folded.
+
+- `VersionHistoryDialog` gets a second choice next to the selected version:
+  compare with the current text, as now, or with another version. Both texts
+  come from `GET /notes/:id/versions/:versionId`, so no API change.
+- Changes inside a line: when a block of removed lines faces a block of
+  added lines, pair them up and mark the words that differ with `<del>` and
+  `<ins>`. `diffLines` in `web/src/lib/diff.ts` can run over words as well as
+  lines.
+- A folded stretch gets a "Show N lines" button that unfolds it.
+  `foldUnchanged` has to say which lines it hid.
+- Tricky: a single line can be very long (a pasted table, a line of minified
+  code), so the word diff needs its own cut-off like `MAX_EDITS`, past which
+  the line is shown whole. Most screen readers do not announce `del` and
+  `ins`, so the marks need words for them too.
+- Undecided: whether the older version is always on the left, or the one
+  picked first. And how to pair lines when the two blocks are not the same
+  length.
+
+### 21. Links to headings and an outline
+
+`[[Note#Heading]]` is read by both parsers (`LINK` in
+`web/src/lib/wikilinks.ts`, `extractWikiLinks` in `api/src/links/wikilinks.ts`)
+and a rename keeps the heading part, but nothing uses it: the link opens the
+top of the note. Long notes also have no outline to jump around in.
+
+- Headings in `MarkdownPreview` get ids made from their text, a slug like
+  GitHub's with `-1`, `-2` for repeats. Following `[[Note#Heading]]` opens
+  the note and scrolls the preview to that heading, or puts the cursor on its
+  line in edit mode. `[[#Heading]]` links within the same note, which `LINK`
+  does not accept today because it wants a title before the `#`.
+- Typing `[[Note#` suggests the headings of that note, the way `[[` suggests
+  titles. The headings can be read in the browser from the note's text once
+  it is fetched, or come from a small `GET /notes/:id/headings`.
+- An outline of the open note: its headings as a list that folds, beside or
+  above the preview, where a click scrolls to the heading.
+- Tricky: the slug has to come out the same in the preview, the outline, the
+  suggestions, the shared pages and print, so it is one function in
+  `web/src/lib`. A `#` line inside code is no heading, Setext headings
+  (underlined with `===`) are, and the ids must not clash with the app's own
+  (the skip link targets), so they want a prefix.
+- Tricky: renaming a heading breaks the links to it, as renaming a note did
+  before item 5. A link whose heading is gone should open the top of the note
+  and say so, not fail.
+- Undecided: whether `NoteLink` stores the heading (a `targetHeading`
+  column), which would let backlinks show which heading is linked and the
+  preview mark links to headings that do not exist. Without it nothing
+  changes in the API.
+
+### 22. Encrypted, off-site and watched backups
+
+Improves item 7. The dumps are not encrypted, stay on the same disk unless
+`BACKUP_DIR` points elsewhere, and a failed dump only shows in
+`docker compose logs backup`.
+
+- Encryption: with `BACKUP_ENCRYPT_TO` set to an `age` public key,
+  `scripts/backup.sh` encrypts each dump and its `.files.tar` as they are
+  written and keeps no plain copy. `restore` decrypts with a key file that is
+  mounted only for the restore. The `postgres:17-alpine` image has no `age`,
+  so the service either installs it on start or gets a small image of its own
+  built from that one.
+- Off-site copy: an optional `BACKUP_COPY_COMMAND` run after each good dump
+  with the new files as arguments, documented with `rsync` over SSH and
+  `rclone` (which reaches self-hosted S3-compatible storage too). Pruning
+  copies on the other side is left to the other side.
+- Watching: the service writes the time of the last good dump to a file, and
+  a `healthcheck` in `docker-compose.yml` turns it unhealthy when that is
+  more than a day and a bit old. An optional `BACKUP_ALERT_URL` gets a `POST`
+  on every failure, which works with a self-hosted ntfy or any webhook.
+- Tricky: `dumps()`, `prune()` and `newest_dump_time()` read the time from
+  file names. Encrypted files end in `.age` and have to be counted the same
+  way, a plain and an encrypted file of the same time are one dump, and the
+  future-dated rules still hold.
+- Tricky: a failed encryption must leave no plain file behind, a failed copy
+  is not a failed dump but still alerts, and `check-backup-loop.sh` needs
+  stand-ins for `age`, the copy and the alert to prove both.
+- Undecided: installing `age` on start (needs the network every time) or a
+  built image (one more thing to build). And whether the JSON backup in
+  Settings should offer a passphrase too.
+
+### 23. Keyboard and screen reader follow-ups
+
+Improves items 6 and 15, whose notes list what is left: nobody has used the
+app with a real screen reader, every note in `NoteList` is its own Tab stop,
+the focus stays put when the menu opens on a narrow screen, the arrow keys do
+not move through the notebook tree, and the filter selects show the whole
+tree without folding.
+
+- `NoteList`: one Tab stop for the whole list, with a roving `tabIndex` on
+  the open note or else the first one. The list already handles Up, Down,
+  Home and End, so Tab then gets past 500 notes in one press.
+- Notebook tree in `Sidebar` and in `NotebookSelect`: Up and Down move,
+  Right opens a folded notebook or goes into it, Left folds it or goes to
+  the notebook above, Home and End, as in the ARIA tree pattern.
+- Narrow screens: opening the menu moves the focus to its first link, and
+  Escape closes it and puts the focus back on the menu button.
+- `FilterSelects` and the "Inside" select of `NotebookDialog`: keep them as
+  native selects, which every screen reader knows, and write each option as
+  its path ("Work / Meetings") instead of relying on indentation.
+- A pass with NVDA and Firefox and with VoiceOver and Safari, kept as a short
+  checklist in the README, with what it finds fixed. The axe tests stay.
+- Tricky: item 15 chose nested lists of links and buttons over `role="tree"`
+  on purpose. Adding arrow keys to them without the role keeps the links
+  readable as links, while the full tree role changes how screen readers
+  read everything inside it.
+- Undecided: whether the tree gets `role="tree"` after all, and whether a
+  roving Tab stop in `NoteList` should remember its place when the list
+  reloads.
 
 ## Later
 
