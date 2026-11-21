@@ -238,7 +238,8 @@ between it and a script that got into the page some other way. Images may
 also be `blob:` and `data:`, for a pasted image before its upload is done,
 and come from any `https:` site, because notes show images from the web. That
 also means an image in a shared note tells the site it comes from when
-someone reads the note.
+someone reads the note. An image linked over plain `http:` is blocked: the
+browser does not load it.
 
 `no-referrer` holds everywhere: the address of a `/s/<token>` page is the
 share link itself, and the other addresses name notes, so none of them goes

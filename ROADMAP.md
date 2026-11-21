@@ -916,7 +916,8 @@ holds wherever it navigates afterwards, and the other addresses name notes.
 nginx leaves `/api/` alone, and the API sends the docs page a policy of its
 own that allows the inline styles of Swagger UI, `data:` images, and scripts
 only from its own files. On the two open points: images from other `https:`
-sites stay allowed, so notes that show them keep working, and the policy is
+sites stay allowed, so notes that show them keep working (plain `http:`
+images are blocked), and the policy is
 enforced from the start, without a `Report-Only` phase, because there is
 nowhere for reports to go and the app shell has no inline script or style to
 find out about. Still open: blocking images from other sites, at least on
