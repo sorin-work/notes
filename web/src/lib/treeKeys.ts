@@ -2,11 +2,16 @@ import type { KeyboardEvent } from 'react';
 
 /**
  * What a notebook in a tree carries, on its link or button, for
- * `treeKeyDown`: its id, and whether what is inside it is shown (`true`),
- * folded (`false`), or there is nothing inside (left out).
+ * `treeKeyDown` and for screen readers: its id, and whether what is inside
+ * it is shown (`true`), folded (`false`), or there is nothing inside (left
+ * out).
  */
 export function treeItem(id: string, expanded?: boolean) {
-  return { 'data-tree-item': id, 'data-expanded': expanded === undefined ? undefined : String(expanded) };
+  const state = expanded === undefined ? undefined : String(expanded);
+  // aria-expanded too, so that a screen reader says "expanded" or
+  // "collapsed" on the notebook itself and announces a fold made with Left
+  // or Right, not only on its fold button.
+  return { 'data-tree-item': id, 'data-expanded': state, 'aria-expanded': expanded };
 }
 
 /**

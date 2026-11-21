@@ -341,7 +341,9 @@ describe('Sidebar', () => {
       // Right goes into an open notebook, Left folds one, and Left on a folded one goes to the one it is in.
       await press('{ArrowRight}', /Meetings/);
       await press('{ArrowRight}', /One-to-ones/);
+      expect(link(/One-to-ones/)).toHaveAttribute('aria-expanded', 'true');
       await press('{ArrowLeft}', /One-to-ones/);
+      expect(link(/One-to-ones/)).toHaveAttribute('aria-expanded', 'false');
       expect(screen.queryByRole('link', { name: /2026/ })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Unfold One-to-ones' })).toBeInTheDocument();
       await press('{ArrowLeft}', /Meetings/);
@@ -352,6 +354,7 @@ describe('Sidebar', () => {
       await press('{ArrowDown}', /2026/);
       // 2026 has nothing inside, so Right does nothing.
       await press('{ArrowRight}', /2026/);
+      expect(link(/2026/)).not.toHaveAttribute('aria-expanded');
       await press('{Home}', /Personal/);
       await press('{ArrowUp}', /Personal/);
       await press('{End}', /2026/);
