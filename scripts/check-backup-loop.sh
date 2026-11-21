@@ -8,6 +8,10 @@
 # For the loop: it runs for a number of rounds, makes at most one dump,
 # pauses after every attempt, and never leaves fewer dumps behind than
 # BACKUP_KEEP allows.
+#
+# age, curl and the copy command have stand-ins too, for encrypted dumps
+# (no plain file is ever left, and a plain and an encrypted file of one time
+# are one dump), copies that fail, alerts, and the healthcheck.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -24,7 +28,8 @@ AHEAD=$(date -u -d "@$((now + 2 * DAY))" '+%Y-%m-%d %H:%M:%S')
 
 mkdir "$work/bin"
 
-# Writes the file pg_dump was asked for, unless the case wants it to fail.
+# Writes the file pg_dump was asked for, or to its output without one,
+# unless the case wants it to fail.
 # With "fast-clock" the file gets a modification time in the future, as if
 # the folder were on a machine whose clock runs ahead. With "slow" it takes
 # as many seconds as that file says.
@@ -33,6 +38,10 @@ cat >"$work/bin/pg_dump" <<'STUB'
 echo attempt >>"$STATE/attempts"
 [ ! -e "$STATE/fail" ] || exit 1
 [ ! -e "$STATE/slow" ] || "$REAL_SLEEP" "$(cat "$STATE/slow")"
+case "$*" in
+  *--file=*) ;;
+  *) echo "new" ;;
+esac
 for arg in "$@"; do
   case $arg in
     --file=*)
@@ -97,13 +106,64 @@ cat >"$work/bin/pg_restore" <<'STUB'
 #!/bin/sh
 echo "pg_restore $*" >>"$STATE/calls"
 [ ! -e "$STATE/restore-fails" ] || exit 1
+input=''
 for arg in "$@"; do
   case $arg in
     --dbname=*) echo restored >"$STATE/dbs/${arg#--dbname=}" ;;
+    -*) ;;
+    *) input=$arg ;;
   esac
 done
+# What it was given to load, from the file or through a pipe.
+if [ -n "$input" ]; then cp "$input" "$STATE/loaded"; else cat >"$STATE/loaded"; fi
 STUB
 chmod +x "$work/bin/createdb" "$work/bin/dropdb" "$work/bin/pg_restore"
+
+# age: "encrypts" by putting a line "sealed" in front, and "decrypts" by
+# taking it off again, with a key file that says "key". With
+# $STATE/age-fails it writes half a file and fails, for a dump only, so that
+# the check of the keys at the start still passes.
+cat >"$work/bin/age" <<'STUB'
+#!/bin/sh
+echo "age $*" >>"$STATE/calls"
+out=/dev/stdout
+identity=''
+decrypt=''
+input=/dev/stdin
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift ;;
+    -r) shift ;;
+    -i) identity=$2; shift ;;
+    -d) decrypt=1 ;;
+    *) input=$1 ;;
+  esac
+  shift
+done
+if [ -n "$decrypt" ]; then
+  [ "$(cat "$identity" 2>/dev/null)" = key ] || { echo "age: no identity matched" >&2; exit 1; }
+  [ "$(head -n 1 "$input")" = sealed ] || exit 1
+  tail -n +2 "$input" >"$out"
+  exit 0
+fi
+if [ -e "$STATE/age-fails" ] && [ "${out%.partial}" != "$out" ]; then
+  echo sealed >"$out"
+  head -c 3 >>"$out"
+  exit 1
+fi
+{ echo sealed; cat; } >"$out"
+STUB
+
+# Takes down the text of every alert.
+cat >"$work/bin/curl" <<'STUB'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+  [ "$1" != --data-binary ] || echo "$2" >>"$STATE/alerts"
+  shift
+done
+[ ! -e "$STATE/alert-fails" ]
+STUB
+chmod +x "$work/bin/age" "$work/bin/curl"
 
 # Returns at once and stops the loop, its parent, after $ROUNDS naps.
 cat >"$work/bin/sleep" <<'STUB'
@@ -140,8 +200,10 @@ begin() {
   : >"$STATE/attempts"
   : >"$STATE/naps"
   : >"$STATE/calls"
+  : >"$STATE/alerts"
   export STATE BACKUP_DIR ROUNDS AHEAD REAL_SLEEP
   export BACKUP_KEEP=3 BACKUP_INTERVAL_SECONDS=$DAY PGDATABASE=notes
+  unset BACKUP_ENCRYPT_TO BACKUP_IDENTITY_FILE BACKUP_COPY_COMMAND BACKUP_ALERT_URL
 }
 
 # Runs the loop until the stand-in for sleep stops it. The timeout is for a
@@ -576,5 +638,207 @@ run_restore "$dump"
 grep -q "files of attachments are left as they are" "$STATE/log" || fail "no warning about the files"
 echo "ok: $case_name"
 unset ATTACHMENTS_DIR
+
+# Encryption, copies, alerts and the healthcheck.
+KEY=age1stand-in
+A1=00000000-0000-4000-8000-000000000001
+
+once() {
+  status=0
+  PATH="$work/bin:$PATH" sh "$here/backup.sh" once >"$STATE/log" 2>&1 || status=$?
+}
+
+# Everything in the backup folder that is not sealed: a plain dump or
+# archive, or a partial file of either.
+plain_files() {
+  for found in "$BACKUP_DIR"/notes-* "$BACKUP_DIR"/.notes-*; do
+    [ -e "$found" ] || continue
+    [ "$(head -n 1 "$found")" = sealed ] || echo "$(basename "$found")"
+  done
+}
+
+# The times there are dumps for, each counted once.
+stem_count() {
+  ls "$BACKUP_DIR" | grep -E '\.dump(\.age)?$' | sed -E 's/\.dump(\.age)?$//' | sort -u | wc -l | tr -d ' '
+}
+
+files_begin "encrypted: the dump and the archive are written through age, and nothing plain is left"
+export BACKUP_ENCRYPT_TO="$KEY"
+echo one >"$FILES/$A1"
+once
+[ "$status" -eq 0 ] || fail "once failed"
+dump=$(ls "$BACKUP_DIR" | grep '\.dump\.age$')
+[ -n "$dump" ] || fail "no .dump.age was written"
+[ -f "$(archive_of "${dump%.age}").age" ] || fail "no .files.tar.age beside $dump"
+[ -z "$(plain_files)" ] || fail "plain files in the backup folder: $(plain_files)"
+grep -q -e "-r $KEY" "$STATE/calls" || fail "age was not given the key"
+[ -s "$BACKUP_DIR/.last-good-dump" ] || fail "the time of the good dump was not written"
+echo "ok: $case_name"
+
+files_begin "encrypted: age fails half way: no file of the dump is left, and an alert goes out"
+export BACKUP_ENCRYPT_TO="$KEY" BACKUP_ALERT_URL=http://alerts.invalid/notes
+echo one >"$FILES/$A1"
+touch "$STATE/age-fails"
+once
+[ "$status" -ne 0 ] || fail "once reported success"
+[ -z "$(ls -A "$BACKUP_DIR" | grep -v '^\.last-good-dump$' || true)" ] || fail "left in the backup folder: $(ls -A "$BACKUP_DIR" | tr '\n' ' ')"
+[ ! -e "$BACKUP_DIR/.last-good-dump" ] || fail "a failed dump was taken for a good one"
+[ "$(count "$STATE/alerts")" -eq 1 ] && grep -q "failed" "$STATE/alerts" || fail "expected one alert, got: $(cat "$STATE/alerts")"
+echo "ok: $case_name"
+
+begin "encrypted: pg_dump fails: no partial file is left"
+export BACKUP_ENCRYPT_TO="$KEY"
+touch "$STATE/fail"
+once
+[ "$status" -ne 0 ] || fail "once reported success"
+[ -z "$(ls -A "$BACKUP_DIR")" ] || fail "left in the backup folder: $(ls -A "$BACKUP_DIR" | tr '\n' ' ')"
+echo "ok: $case_name"
+
+begin "encrypted: a plain and an encrypted file of one time are one dump, and are pruned together"
+export BACKUP_ENCRYPT_TO="$KEY"
+oldest=$(old_dump $((-4 * DAY)))
+echo sealed >"$BACKUP_DIR/$oldest.age"
+echo sealed >"$BACKUP_DIR/${oldest%.dump}.files.tar.age"
+middle=$(old_dump $((-3 * DAY)))
+echo sealed >"$BACKUP_DIR/$middle.age"
+echo sealed >"$BACKUP_DIR/$(old_dump $((-2 * DAY))).age"
+once
+[ "$status" -eq 0 ] || fail "once failed"
+[ "$(stem_count)" -eq 3 ] || fail "expected the dumps of 3 times, found $(stem_count): $(ls "$BACKUP_DIR" | tr '\n' ' ')"
+[ -z "$(ls "$BACKUP_DIR" | grep -F "${oldest%.dump}" || true)" ] || fail "a file of the oldest dump was kept: $(ls "$BACKUP_DIR" | tr '\n' ' ')"
+[ -e "$BACKUP_DIR/$middle" ] && [ -e "$BACKUP_DIR/$middle.age" ] || fail "a dump with two files was pruned as if it were two dumps"
+echo "ok: $case_name"
+
+begin "encrypted: an encrypted dump an hour old counts, and one dated in the future is kept and named"
+old_dump $((-2 * DAY)) >/dev/null
+recent=$(old_dump -3600)
+mv "$BACKUP_DIR/$recent" "$BACKUP_DIR/$recent.age"
+ahead=$(old_dump $((2 * DAY)))
+mv "$BACKUP_DIR/$ahead" "$BACKUP_DIR/$ahead.age"
+run_loop
+[ "$(count "$STATE/attempts")" -eq 0 ] || fail "a dump was made although an encrypted one is an hour old"
+[ -e "$BACKUP_DIR/$ahead.age" ] || fail "the encrypted dump from the future was removed"
+grep -q "warning: dated in the future.*$ahead.age" "$STATE/log" || fail "no warning names the encrypted dump from the future"
+echo "ok: $case_name"
+
+files_begin "copy: gets the new dump and its archive, and a failed copy is not a failed dump but alerts"
+export BACKUP_COPY_COMMAND='echo "$@" >>"$STATE/copied"; [ ! -e "$STATE/copy-fails" ]'
+export BACKUP_ALERT_URL=http://alerts.invalid/notes
+once
+[ "$status" -eq 0 ] || fail "once failed"
+dump=$(ls "$BACKUP_DIR" | grep '\.dump$')
+[ "$(cat "$STATE/copied")" = "$BACKUP_DIR/$dump $(archive_of "$dump")" ] || fail "the copy was given: $(cat "$STATE/copied")"
+[ "$(count "$STATE/alerts")" -eq 0 ] || fail "an alert for a copy that worked"
+sleep 1
+touch "$STATE/copy-fails"
+once
+[ "$status" -eq 0 ] || fail "a failed copy failed the dump"
+[ "$(stem_count)" -eq 2 ] || fail "expected both dumps to be there, found $(stem_count)"
+[ "$(count "$STATE/alerts")" -eq 1 ] && grep -q "copy of notes-.*failed" "$STATE/alerts" || fail "expected one alert about the copy, got: $(cat "$STATE/alerts")"
+echo "ok: $case_name"
+
+begin "copy: a copy that hangs is stopped after BACKUP_COPY_TIMEOUT_SECONDS"
+export BACKUP_COPY_COMMAND="$REAL_SLEEP 30" BACKUP_COPY_TIMEOUT_SECONDS=1
+started=$(date +%s)
+once
+[ "$status" -eq 0 ] || fail "a copy that timed out failed the dump"
+[ $(($(date +%s) - started)) -lt 10 ] || fail "the copy was not stopped"
+grep -q "BACKUP_COPY_COMMAND failed" "$STATE/log" || fail "the log does not say the copy failed"
+unset BACKUP_COPY_TIMEOUT_SECONDS
+echo "ok: $case_name"
+
+begin "alerts: a dump that keeps failing in the loop alerts once, not once a round"
+export BACKUP_ALERT_URL=http://alerts.invalid/notes
+touch "$STATE/fail" "$STATE/alert-fails"
+run_loop
+[ "$(count "$STATE/attempts")" -gt 1 ] || fail "expected the loop to try more than once"
+[ "$(count "$STATE/alerts")" -eq 1 ] || fail "expected one alert, got $(count "$STATE/alerts")"
+grep -q "could not send the alert" "$STATE/log" || fail "an alert that did not go out is not logged"
+if grep -q "alerts.invalid" "$STATE/log"; then fail "the alert address is in the log"; fi
+echo "ok: $case_name"
+
+files_begin "restore: an encrypted dump and archive are decrypted as they are read"
+export BACKUP_IDENTITY_FILE="$STATE/key.txt"
+echo key >"$BACKUP_IDENTITY_FILE"
+dump=$(old_dump -3600)
+echo new >"$BACKUP_DIR/$dump"
+{ echo sealed; cat "$BACKUP_DIR/$dump"; } >"$BACKUP_DIR/$dump.age"
+rm "$BACKUP_DIR/$dump"
+rm -rf "$work/source" && mkdir "$work/source"
+echo restored >"$work/source/$A1"
+make_archive "$work/plain.tar"
+{ echo sealed; cat "$work/plain.tar"; } >"$(archive_of "$dump").age"
+echo original >"$STATE/dbs/notes"
+run_restore "$dump.age"
+[ "$status" -eq 0 ] || fail "the restore failed"
+[ "$(database notes)" = restored ] || fail "notes holds '$(database notes)'"
+[ "$(cat "$STATE/loaded")" = new ] || fail "pg_restore was given: $(cat "$STATE/loaded")"
+[ "$(cat "$FILES/$A1" 2>/dev/null)" = restored ] || fail "the archived file is not in place"
+[ "$(ls -A "$FILES")" = "$A1" ] || fail "the files folder holds: $(ls -A "$FILES" | tr '\n' ' ')"
+echo "ok: $case_name"
+
+for key in missing wrong; do
+  files_begin "restore: an encrypted dump with a $key key: nothing is touched"
+  export BACKUP_IDENTITY_FILE="$STATE/key.txt"
+  [ "$key" = missing ] || echo "another key" >"$BACKUP_IDENTITY_FILE"
+  dump=$(old_dump -3600)
+  { echo sealed; echo new; } >"$BACKUP_DIR/$dump.age"
+  rm "$BACKUP_DIR/$dump"
+  rm -rf "$work/source" && mkdir "$work/source"
+  echo restored >"$work/source/$A1"
+  make_archive "$work/plain.tar"
+  { echo sealed; cat "$work/plain.tar"; } >"$(archive_of "$dump").age"
+  echo original >"$STATE/dbs/notes"
+  echo "in use" >"$FILES/$A2"
+  run_restore "$dump.age"
+  [ "$status" -ne 0 ] || fail "the restore reported success"
+  [ "$(database notes)" = original ] || fail "notes holds '$(database notes)'"
+  [ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+  [ "$(ls -A "$FILES")" = "$A2" ] || fail "the files folder holds: $(ls -A "$FILES" | tr '\n' ' ')"
+  echo "ok: $case_name"
+done
+
+begin "restore: the dump does not decrypt: the database is untouched"
+export BACKUP_IDENTITY_FILE="$STATE/key.txt"
+echo key >"$BACKUP_IDENTITY_FILE"
+dump=$(old_dump -3600)
+echo "not sealed" >"$BACKUP_DIR/$dump.age"
+rm "$BACKUP_DIR/$dump"
+echo original >"$STATE/dbs/notes"
+run_restore "$dump.age"
+[ "$status" -ne 0 ] || fail "the restore reported success"
+[ "$(database notes)" = original ] || fail "notes holds '$(database notes)'"
+[ "$(ls "$STATE/dbs")" = notes ] || fail "databases left behind: $(ls "$STATE/dbs" | tr '\n' ' ')"
+echo "ok: $case_name"
+unset ATTACHMENTS_DIR
+
+health() {
+  status=0
+  PATH="$work/bin:$PATH" sh "$here/backup.sh" health >"$STATE/log" 2>&1 || status=$?
+}
+
+begin "health: unhealthy without a good dump, healthy after one, unhealthy once it is a day and a bit old"
+health
+[ "$status" -ne 0 ] || fail "healthy without any dump"
+once
+health
+[ "$status" -eq 0 ] || fail "unhealthy right after a good dump: $(cat "$STATE/log")"
+echo "$((now - DAY - 3600)) notes-old.dump" >"$BACKUP_DIR/.last-good-dump"
+health
+[ "$status" -eq 0 ] || fail "unhealthy an hour after the next dump was due"
+echo "$((now - DAY - 3 * 3600)) notes-old.dump" >"$BACKUP_DIR/.last-good-dump"
+health
+[ "$status" -ne 0 ] || fail "healthy three hours after the next dump was due"
+echo "$((now + DAY)) notes-ahead.dump" >"$BACKUP_DIR/.last-good-dump"
+health
+[ "$status" -eq 0 ] || fail "a time from the future made it unhealthy"
+echo "ok: $case_name"
+
+begin "health: dumps from before the marker count when the loop starts"
+old_dump -3600 >/dev/null
+run_loop
+expect 0 1
+health
+[ "$status" -eq 0 ] || fail "unhealthy with a dump an hour old: $(cat "$STATE/log")"
 
 echo "OK: the loop, the pruning and the restore held in every case"

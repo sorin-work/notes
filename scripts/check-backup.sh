@@ -14,6 +14,11 @@
 #      else, and nothing of the swap is left on the server.
 #   6. A damaged dump, and a database with a client connected to it, leave
 #      the database as it was.
+#   7. With a real age key: an encrypted dump leaves no plain file, restores
+#      with the key to the same row counts, and is refused with another key.
+#
+# Step 7 needs age, so this runs in the image of the backup service
+# (scripts/backup.Dockerfile), not the plain postgres one.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -128,6 +133,30 @@ grep -q "Connected now: someone-else (1)\.$" "$work/busy.log" || fail "the messa
 kill "$holder" 2>/dev/null || true
 wait "$holder" 2>/dev/null || true
 holder=''
+# Killing the client does not end its query on the server at once.
+sql postgres "select pg_terminate_backend(pid) from pg_stat_activity where application_name = 'someone-else'" >/dev/null
 [ -z "$(leftovers)" ] || fail "left on the server after a refused swap: $(leftovers)"
+
+echo "== an encrypted dump"
+command -v age >/dev/null || fail "there is no age here: run this in the image of the backup service"
+age-keygen -o "$work/key.txt" 2>/dev/null
+age-keygen -o "$work/other-key.txt" 2>/dev/null
+sealed_dir="$work/sealed"
+mkdir "$sealed_dir"
+BACKUP_DIR="$sealed_dir" BACKUP_ENCRYPT_TO="$(age-keygen -y "$work/key.txt")" sh "$here/backup.sh" once
+sealed=$(ls "$sealed_dir" | grep '\.dump\.age$')
+[ "$(ls "$sealed_dir" | grep -c '^notes-')" -eq 1 ] || fail "expected only $sealed, found: $(ls "$sealed_dir" | tr '\n' ' ')"
+[ -z "$(ls -A "$sealed_dir" | grep '\.partial' || true)" ] || fail "a partial file was left behind"
+head -n 1 "$sealed_dir/$sealed" | grep -q '^age-encryption.org/' || fail "$sealed is not an age file"
+if grep -q -a 'PGDMP' "$sealed_dir/$sealed"; then fail "$sealed holds a plain dump"; fi
+if PGDATABASE="$scratch" BACKUP_DIR="$sealed_dir" BACKUP_IDENTITY_FILE="$work/other-key.txt" \
+  sh "$here/backup.sh" restore "$sealed" >"$work/wrong-key.log" 2>&1; then
+  fail "an encrypted dump was restored with another key"
+fi
+[ "$(sql "$scratch" "select id from marker")" = 7 ] || fail "a restore with the wrong key changed the database"
+[ -z "$(leftovers)" ] || fail "left on the server after a restore with the wrong key: $(leftovers)"
+PGDATABASE="$scratch" BACKUP_DIR="$sealed_dir" BACKUP_IDENTITY_FILE="$work/key.txt" sh "$here/backup.sh" restore "$sealed"
+row_counts "$scratch" >"$work/decrypted.txt"
+diff "$work/source.txt" "$work/decrypted.txt" || fail "the restored encrypted dump differs from $PGDATABASE (-)"
 
 echo "OK: $(wc -l <"$work/source.txt") tables came back from $newest, $total rows in the application tables"
