@@ -463,7 +463,7 @@ test walks every note route as an outsider and expects `404`.
 `NotebookMember` has a read or edit role. Invitations are accepted only with
 the token of their link, under the password reset's rules plus a week of
 life; the link is mailed, or without mail shown once to the owner. Sends are
-counted per account an hour and per address a day. Members see nothing of
+counted per account an hour and per account and address a day. Members see nothing of
 the owner beyond the notebook: links, backlinks, titles, mentions, the graph
 and search with the notebook filter are kept to it, and templates and the
 trash stay out. Two editors meet the conflict question of item 8. Owners

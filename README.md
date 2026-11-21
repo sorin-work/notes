@@ -931,11 +931,14 @@ themselves: the token is the proof, not the address, which nothing here has
 checked. Nothing lists invitations by address, so registering with an
 invited address gets nobody in. When the server can send mail, the link goes
 by mail, which says nothing that came from the inviting account: not their
-name, not the notebook's. When it cannot, the owner gets the link once, in
+name, not the notebook's. It says to open the link while signed in to the
+account that should join, and not to pass it on. When it cannot, the owner gets the link once, in
 the answer to the invitation, to pass on; it is never shown again. Sends are
 counted apart from the invitations, so withdrawing or renewing one makes no
-room: ten an hour from one account, three a day to one address, and twenty
-open invitations per notebook. A change waiting in a member's outbox for a
+room: ten an hour from one account, three a day from one account to one
+address (so one account cannot keep others from inviting it), and twenty
+open invitations per notebook. Mention lookups of a member are counted
+against the member, so they never use up the owner's. A change waiting in a member's outbox for a
 note they can no longer reach is listed as stuck ("gone, or not shared with
 you any more").
 
