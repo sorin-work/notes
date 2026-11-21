@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Notebook } from '../api/types';
 import { useStoredSet } from '../hooks/useStoredSet';
 import { flattenTree, type NotebookNode, notebookLabel, notebookTree } from '../lib/notebooks';
+import { treeItem, treeKeyDown } from '../lib/treeKeys';
 import { TreeToggle } from './TreeToggle';
 
 interface Props {
@@ -16,8 +17,9 @@ interface Props {
  * Picks the notebook of a note. A button shows where the note is, with the
  * whole way to it ("Work / Meetings / Weekly"), and opens the notebooks as
  * a list that folds like the one in the sidebar. Everything in it is a
- * button in a plain nested list, so Tab, Enter and Space are all it takes.
- * Escape closes it. What is folded is remembered, apart from the sidebar:
+ * button in a plain nested list, so Tab, Enter and Space are all it takes,
+ * and the arrow keys move and fold as in the sidebar (treeKeyDown). Escape
+ * closes it. What is folded is remembered, apart from the sidebar:
  * looking for a notebook here should not rearrange the sidebar.
  */
 export function NotebookSelect({ notebooks, value, onChange, disabled, label = 'Notebook' }: Props) {
@@ -58,8 +60,9 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
     if (notebookId !== value) onChange(notebookId);
   };
 
-  const option = (notebookId: string | null, name: string) => (
+  const option = (notebookId: string | null, name: string, expanded?: boolean) => (
     <button
+      {...treeItem(notebookId ?? 'none', expanded)}
       type="button"
       className="notebook-option"
       aria-current={notebookId === value ? 'true' : undefined}
@@ -79,7 +82,7 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
           ) : (
             <span className="tree-toggle" aria-hidden="true" />
           )}
-          {option(node.id, node.name)}
+          {option(node.id, node.name, node.children.length > 0 ? unfolded : undefined)}
         </div>
         {node.children.length > 0 && unfolded && <ul id={insideId}>{node.children.map(branch)}</ul>}
       </li>
@@ -116,7 +119,7 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
       </button>
       {open && (
         <div className="notebook-select-list" id={listId} role="group" aria-label={`${label}, pick one`}>
-          <ul>
+          <ul onKeyDown={treeKeyDown(toggleClosed)}>
             <li>
               <div className="nav-row">
                 <span className="tree-toggle" aria-hidden="true" />
@@ -131,21 +134,19 @@ export function NotebookSelect({ notebooks, value, onChange, disabled, label = '
   );
 }
 
-/** A step of indent in a select, where ordinary spaces at the start of an option are dropped. */
-export const INDENT = '    ';
-
 /**
  * One option per notebook for a native select, in the order of the tree,
- * each indented by how deep it sits. Used where a notebook narrows a list
+ * each named by its whole way ("Work / Meetings"). Indenting does not do:
+ * a screen reader reads an option without its indent, and two notebooks
+ * called "2026" would sound the same. Used where a notebook narrows a list
  * down or a notebook gets a place, not where a note gets a notebook.
  */
-export function NotebookOptions({ notebooks }: { notebooks: Notebook[] }) {
+export function NotebookOptions({ notebooks, only }: { notebooks: Notebook[]; only?: NotebookNode[] }) {
   return (
     <>
-      {flattenTree(notebookTree(notebooks)).map((notebook) => (
+      {(only ?? flattenTree(notebookTree(notebooks))).map((notebook) => (
         <option key={notebook.id} value={notebook.id}>
-          {INDENT.repeat(notebook.depth - 1)}
-          {notebook.name}
+          {notebookLabel(notebooks, notebook.id) ?? notebook.name}
         </option>
       ))}
     </>

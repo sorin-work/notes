@@ -127,6 +127,30 @@ describe('NotebookSelect', () => {
     await waitFor(() => expect(screen.queryByRole('group')).not.toBeInTheDocument());
   });
 
+  it('moves and folds with the arrow keys, as the sidebar does', async () => {
+    const onChange = vi.fn();
+    render(<Picker onChange={onChange} />);
+    const option = (name: string) => screen.getByRole('button', { name });
+
+    await userEvent.click(option('Notebook: No notebook'));
+    option('No notebook').focus();
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+    expect(option('Work')).toHaveFocus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(option('Unfold Work')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Meetings' })).not.toBeInTheDocument();
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}');
+    expect(option('Meetings')).toHaveFocus();
+    await userEvent.keyboard('{End}');
+    expect(option('Reading')).toHaveFocus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(option('Work')).toHaveFocus();
+    await userEvent.keyboard('{Home}');
+    expect(option('No notebook')).toHaveFocus();
+    await userEvent.keyboard('{End}{Enter}');
+    expect(onChange).toHaveBeenCalledWith('r');
+  });
+
   it('remembers what is folded, and unfolds the way to the notebook the note is in', async () => {
     const first = render(<Picker />);
     await userEvent.click(screen.getByRole('button', { name: 'Notebook: No notebook' }));

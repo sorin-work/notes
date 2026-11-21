@@ -327,6 +327,39 @@ describe('Sidebar', () => {
       expect(screen.queryByRole('button', { name: /Fold (2026|Personal)/ })).not.toBeInTheDocument();
     });
 
+    it('moves through the tree with the arrow keys, Home and End, and folds with Left and Right', async () => {
+      mockFetch(routes);
+      renderSidebar();
+      const link = (name: RegExp) => screen.getByRole('link', { name });
+      const press = async (keys: string, name: RegExp) => {
+        await userEvent.keyboard(keys);
+        expect(link(name)).toHaveFocus();
+      };
+
+      (await screen.findByRole('link', { name: /Personal/ })).focus();
+      await press('{ArrowDown}', /Work/);
+      // Right goes into an open notebook, Left folds one, and Left on a folded one goes to the one it is in.
+      await press('{ArrowRight}', /Meetings/);
+      await press('{ArrowRight}', /One-to-ones/);
+      await press('{ArrowLeft}', /One-to-ones/);
+      expect(screen.queryByRole('link', { name: /2026/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Unfold One-to-ones' })).toBeInTheDocument();
+      await press('{ArrowLeft}', /Meetings/);
+      // Down skips what is folded away, and Right unfolds it again.
+      await press('{ArrowDown}', /One-to-ones/);
+      await press('{ArrowDown}', /One-to-ones/);
+      await press('{ArrowRight}', /One-to-ones/);
+      await press('{ArrowDown}', /2026/);
+      // 2026 has nothing inside, so Right does nothing.
+      await press('{ArrowRight}', /2026/);
+      await press('{Home}', /Personal/);
+      await press('{ArrowUp}', /Personal/);
+      await press('{End}', /2026/);
+      // The links still work as links.
+      await userEvent.keyboard('{Enter}');
+      expect(screen.getByTestId('location')).toHaveTextContent('/notes?notebook=y');
+    });
+
     it('offers a new notebook inside every notebook but those at the last level', async () => {
       mockFetch(routes);
       renderSidebar();
