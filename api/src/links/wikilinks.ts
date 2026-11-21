@@ -21,6 +21,11 @@ interface LinkInText extends WikiLink {
   to: number;
 }
 
+/**
+ * Kept in step with web/src/lib/wikilinks.ts. The web app also reads
+ * [[#Heading]], a link to a heading of the same note. It needs a title here,
+ * since only links to other notes are stored and rewritten.
+ */
 const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
