@@ -24,7 +24,7 @@ describe('extractWikiLinks', () => {
   });
 
   it('reads no link to another note in [[#Heading]], which the web app reads as a heading of the same note', () => {
-    expect(extractWikiLinks('[[#Bread]] and [[#Bread|the bread]]')).toEqual([]);
+    expect(extractWikiLinks('[[#Bread]] and [[#Bread|the bread]] and [[ #Bread]] and [[ \t|x]]')).toEqual([]);
   });
 
   it('lists each target once, matching case-insensitively', () => {
@@ -622,7 +622,8 @@ describe('unlinkExcept', () => {
   });
 
   it('keeps links to a heading of the note itself, which lead nowhere else', () => {
-    expect(unlinkExcept('[[#Method]] and [[Starter#Feeding]]', shared)).toBe('[[#Method]] and [[Starter#Feeding]]');
+    const text = '[[#Method]], [[ #Method]], [[  #Method|how]] and [[Starter#Feeding]]';
+    expect(unlinkExcept(text, shared)).toBe(text);
   });
 
   it('does not touch code, and copes with a note that has no links', () => {

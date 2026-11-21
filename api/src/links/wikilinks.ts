@@ -23,8 +23,9 @@ interface LinkInText extends WikiLink {
 
 /**
  * Kept in step with web/src/lib/wikilinks.ts. The web app also reads
- * [[#Heading]], a link to a heading of the same note. It needs a title here,
- * since only links to other notes are stored and rewritten.
+ * [[#Heading]] and [[ #Heading]], links to a heading of the same note. Here
+ * a link needs a title that is not blank, since only links to other notes
+ * are stored and rewritten (see findLinks).
  */
 const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
@@ -71,6 +72,9 @@ function* findLinks(markdown: string): Generator<LinkInText> {
   for (const { line, lineStart } of proseLines(markdown)) {
     // Blanking keeps the length of the line, so positions in it are positions in the note.
     for (const match of withoutInlineCode(line).matchAll(LINK)) {
+      // A blank title, as in [[ #Heading]], is a link within the note, which the web app reads.
+      // It leads to no other note, so it is left as it is written everywhere here.
+      if (!match[1].trim()) continue;
       const from = lineStart + match.index;
       const start = from + 2;
       const end = start + match[1].length;
