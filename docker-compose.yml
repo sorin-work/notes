@@ -99,7 +99,12 @@ services:
   # Dumps the database once a day into BACKUP_DIR and keeps the newest
   # BACKUP_KEEP dumps. See "Backup and restore" in the README.
   backup:
-    image: postgres:17-alpine
+    # postgres:17-alpine with age, curl and the tools of the copy command.
+    build:
+      context: ./scripts
+      dockerfile: backup.Dockerfile
+      args:
+        COPY_PACKAGES: ${BACKUP_COPY_PACKAGES:-rsync openssh-client}
     profiles: [backup]
     entrypoint: ['sh', '/scripts/backup.sh']
     environment:
@@ -111,6 +116,11 @@ services:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
       # The files of attachments, archived beside each dump and put back with it.
       ATTACHMENTS_DIR: /attachments
+      # All optional, see "Encryption, copies and alerts" in the README.
+      BACKUP_ENCRYPT_TO: ${BACKUP_ENCRYPT_TO:-}
+      BACKUP_COPY_COMMAND: ${BACKUP_COPY_COMMAND:-}
+      BACKUP_COPY_TIMEOUT_SECONDS: ${BACKUP_COPY_TIMEOUT_SECONDS:-3600}
+      BACKUP_ALERT_URL: ${BACKUP_ALERT_URL:-}
     depends_on:
       db:
         condition: service_healthy
@@ -119,6 +129,13 @@ services:
       - ${BACKUP_DIR:-./backups}:/backups
       # Written to only by a restore, which refuses to run while the API does.
       - attachments:/attachments
+    # Unhealthy once the last good dump is more than a day and two hours old.
+    healthcheck:
+      test: ['CMD', 'sh', '/scripts/backup.sh', 'health']
+      interval: 5m
+      timeout: 10s
+      start_period: 10m
+      start_interval: 30s
 
 volumes:
   db-data:
