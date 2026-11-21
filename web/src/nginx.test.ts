@@ -18,28 +18,43 @@ interface Location {
   match: string;
   /** Everything between its braces, nested blocks included. */
   body: string;
-  /** How many blocks it is inside of, the server block not counted. */
+  /** How many locations it is inside of: 0 for one right in the server block. */
   depth: number;
 }
 
 /**
  * Each `location` block of nginx.conf, found by counting braces, so that a
  * location inside another one is found too and its body is all of it.
+ * Braces inside quotes are not counted: a header value or a regex may hold
+ * them.
  */
 function locations(): Location[] {
   const text = code(config);
   const found: Location[] = [];
-  const opened: number[] = [];
+  const opened: { at: number; match: string | null }[] = [];
+  let quote: string | null = null;
   for (let at = 0; at < text.length; at++) {
-    if (text[at] === '{') opened.push(at);
-    if (text[at] !== '}') continue;
-    const start = opened.pop();
-    if (start === undefined) throw new Error(`a } without its { at ${at}`);
-    const head = /location\s+([^;{}]+?)\s*$/.exec(text.slice(0, start));
-    if (head) {
-      found.push({ match: head[1] ?? '', body: text.slice(start + 1, at), depth: opened.length - 1 });
+    const char = text[at];
+    if (quote) {
+      if (char === '\\') at++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '{') {
+      const head = /location\s+([^;{}]+?)\s*$/.exec(text.slice(0, at));
+      opened.push({ at, match: head ? (head[1] ?? '') : null });
+    } else if (char === '}') {
+      const block = opened.pop();
+      if (!block) throw new Error(`a } without its { at ${at}`);
+      if (block.match !== null) {
+        const depth = opened.filter((outer) => outer.match !== null).length;
+        found.push({ match: block.match, body: text.slice(block.at + 1, at), depth });
+      }
     }
   }
+  if (quote) throw new Error('a quote that is not closed');
   if (opened.length > 0) throw new Error('a { without its }');
   return found;
 }
@@ -99,7 +114,9 @@ describe('nginx.conf', () => {
 
   it('puts no headers on the server block, where a location would drop them unseen', () => {
     let outside = code(config);
-    for (const location of locations()) outside = outside.replace(location.body, '');
+    // Outer locations first: their bodies hold the inner ones.
+    const outermost = locations().sort((a, b) => a.depth - b.depth);
+    for (const location of outermost) outside = outside.replace(location.body, '');
     expect(outside).not.toMatch(/add_header/);
   });
 
