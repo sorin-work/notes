@@ -154,7 +154,19 @@ describe('Layout', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open menu' }));
     const menu = screen.getByRole('button', { name: 'Close menu' });
     expect(menu).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('navigation', { name: 'Main' }).querySelector('a')).toHaveFocus();
+    const first = screen.getByRole('navigation', { name: 'Main' }).querySelector('a');
+    expect(first).toHaveFocus();
+
+    // Tab goes round the menu and its button, and never reaches the page under the shade.
+    await userEvent.tab({ shift: true });
+    expect(menu).toHaveFocus();
+    await userEvent.tab({ shift: true });
+    const last = screen.getByRole('button', { name: 'Sign out' });
+    expect(last).toHaveFocus();
+    await userEvent.tab();
+    expect(menu).toHaveFocus();
+    await userEvent.tab();
+    expect(first).toHaveFocus();
 
     // A dialog opened from the menu takes Escape for itself, and the menu stays open.
     await userEvent.click(screen.getByRole('button', { name: 'New notebook' }));
