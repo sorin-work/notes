@@ -15,6 +15,8 @@ import {
   StreamableFile,
 } from '@nestjs/common';
 import { AccessService, Granted } from '../access/access.service';
+import { BulkResult, BulkService } from './bulk.service';
+import { BulkNotesDto } from './dto/bulk.dto';
 import { AllowApiToken } from '../common/allow-api-token.decorator';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import type { Page } from '../common/pagination';
@@ -40,6 +42,7 @@ export class NotesController {
     private readonly links: LinksService,
     private readonly exporter: ExportService,
     private readonly access: AccessService,
+    private readonly bulkNotes: BulkService,
   ) {}
 
   /** The notebooks a member may see of the owner: what their links, titles and backlinks are kept to. */
@@ -127,6 +130,18 @@ export class NotesController {
   async duplicate(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<NoteView> {
     await this.access.note(user.id, id, 'owner');
     return this.notes.duplicate(user.id, id);
+  }
+
+  /**
+   * One action for up to 500 notes: move, add or remove a tag, pin, unpin or
+   * move to the trash. Done in one transaction, note by note as far as the
+   * caller may: the answer says which notes changed, which were already so,
+   * and which were left out and why.
+   */
+  @Post('bulk')
+  @HttpCode(HttpStatus.OK)
+  async bulk(@CurrentUser() user: AuthUser, @Body() dto: BulkNotesDto): Promise<BulkResult> {
+    return this.bulkNotes.apply(user.id, dto);
   }
 
   /** Changes a note. The text it had before is kept as a version, at most every ten minutes. */

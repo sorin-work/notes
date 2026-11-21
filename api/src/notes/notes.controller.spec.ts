@@ -5,6 +5,7 @@ import { ExportService } from '../transfer/export.service';
 import { ListNotesQuery } from './dto/note.dto';
 import { asciiFilename, NotesController } from './notes.controller';
 import { NotesService } from './notes.service';
+import { BulkService } from './bulk.service';
 
 const user = { id: 'user-1', email: 'ada@example.com' };
 
@@ -37,6 +38,7 @@ describe('NotesController', () => {
     links as unknown as LinksService,
     exporter as unknown as ExportService,
     access as unknown as AccessService,
+    { apply: jest.fn() } as unknown as BulkService,
   );
 
   beforeEach(() => {

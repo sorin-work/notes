@@ -6,11 +6,12 @@ import { TransferModule } from '../transfer/transfer.module';
 import { VersionsModule } from '../versions/versions.module';
 import { NotesController } from './notes.controller';
 import { NotesService } from './notes.service';
+import { BulkService } from './bulk.service';
 
 @Module({
   imports: [NotebooksModule, TagsModule, LinksModule, VersionsModule, TransferModule],
   controllers: [NotesController],
-  providers: [NotesService],
+  providers: [NotesService, BulkService],
   exports: [NotesService],
 })
 export class NotesModule {}
