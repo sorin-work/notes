@@ -136,6 +136,8 @@ export function VersionHistoryDialog({ noteId, current, beforeRestore, onClose, 
                     </label>
                     {otherId === null ? (
                       <VersionChanges key={version.data.id} from={version.data} to={current} />
+                    ) : other.isPending && other.fetchStatus === 'paused' ? (
+                      <NeedsConnection>This version is not available offline.</NeedsConnection>
                     ) : other.isLoading ? (
                       <Spinner />
                     ) : other.error ? (
