@@ -44,6 +44,9 @@ export const MAX_WORD_SPAN = 2_000;
  */
 export const MAX_WORD_WORK = 1_000_000;
 
+/** What one word or space read counts for against MAX_WORD_WORK, where one step of the search counts 1. */
+const READ_COST = 10;
+
 /** A pair of lines longer than this in all, in characters, is shown whole without being read. */
 export const MAX_WORD_LINE = 100_000;
 
@@ -207,20 +210,21 @@ export function diffWords(before: string, after: string): { removed: LinePart[];
 }
 
 /**
- * diffWords, with the work it took. That is the characters read for a pair
- * that is too long to read, else the words and spaces read plus the steps of
- * the search: the changed stretch once for each round it ran, which for a
- * search that gave up is every round it had.
+ * diffWords, with the work it took: nothing for a pair too long to read,
+ * else the words and spaces read, READ_COST each, plus the steps of the
+ * search, the changed stretch once for each round it ran, which for a search
+ * that gave up is every round it had.
  */
 function compareWords(
   before: string,
   after: string,
 ): { words: { removed: LinePart[]; added: LinePart[] } | null; work: number } {
-  if (before.length + after.length > MAX_WORD_LINE) return { words: null, work: before.length + after.length };
+  if (before.length + after.length > MAX_WORD_LINE) return { words: null, work: 0 };
   const a = before.match(TOKEN) ?? [];
   const b = after.match(TOKEN) ?? [];
   const { edits, span } = diffItems(a, b, MAX_WORD_EDITS, MAX_WORD_SPAN);
-  const read = a.length + b.length;
+  // Reading a word costs a match, an allocation and a comparison, far more than one step of the search.
+  const read = (a.length + b.length) * READ_COST;
   if (edits === null) {
     return { words: null, work: read + (span > MAX_WORD_SPAN ? 0 : span * Math.min(span, MAX_WORD_EDITS)) };
   }
