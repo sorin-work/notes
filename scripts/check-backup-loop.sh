@@ -165,9 +165,12 @@ done
 STUB
 chmod +x "$work/bin/age" "$work/bin/curl"
 
-# Returns at once and stops the loop, its parent, after $ROUNDS naps.
+# Returns at once and stops the loop, its parent, after $ROUNDS naps. With
+# $STATE/real-sleep it sleeps for real and counts nothing: the watchdog of a
+# copy sleeps too, and must not stop the copy at once.
 cat >"$work/bin/sleep" <<'STUB'
 #!/bin/sh
+[ ! -e "$STATE/real-sleep" ] || exec "$REAL_SLEEP" "$@"
 echo "$1" >>"$STATE/naps"
 if [ "$(wc -l <"$STATE/naps")" -ge "$ROUNDS" ]; then
   kill -TERM "$PPID"
@@ -724,6 +727,7 @@ echo "ok: $case_name"
 files_begin "copy: gets the new dump and its archive, and a failed copy is not a failed dump but alerts"
 export BACKUP_COPY_COMMAND='echo "$@" >>"$STATE/copied"; [ ! -e "$STATE/copy-fails" ]'
 export BACKUP_ALERT_URL=http://alerts.invalid/notes
+touch "$STATE/real-sleep"
 once
 [ "$status" -eq 0 ] || fail "once failed"
 dump=$(ls "$BACKUP_DIR" | grep '\.dump$')
@@ -737,14 +741,33 @@ once
 [ "$(count "$STATE/alerts")" -eq 1 ] && grep -q "copy of notes-.*failed" "$STATE/alerts" || fail "expected one alert about the copy, got: $(cat "$STATE/alerts")"
 echo "ok: $case_name"
 
-begin "copy: a copy that hangs is stopped after BACKUP_COPY_TIMEOUT_SECONDS"
-export BACKUP_COPY_COMMAND="$REAL_SLEEP 30" BACKUP_COPY_TIMEOUT_SECONDS=1
+begin "copy: a copy that hangs is stopped after BACKUP_COPY_TIMEOUT_SECONDS, all of it"
+# More than one process, the way a loop over the files with rclone in it is:
+# a shell inside the shell of the command. Stopping only the outer one would
+# leave the inner one to write "late" after the copy was given up.
+export BACKUP_COPY_COMMAND='for file; do sh -c "\"$REAL_SLEEP\" 3; echo late >\"$STATE/late\""; done'
+export BACKUP_COPY_TIMEOUT_SECONDS=1 BACKUP_ALERT_URL=http://alerts.invalid/notes
+touch "$STATE/real-sleep"
 started=$(date +%s)
 once
 [ "$status" -eq 0 ] || fail "a copy that timed out failed the dump"
-[ $(($(date +%s) - started)) -lt 10 ] || fail "the copy was not stopped"
-grep -q "BACKUP_COPY_COMMAND failed" "$STATE/log" || fail "the log does not say the copy failed"
+[ $(($(date +%s) - started)) -lt 3 ] || fail "the copy was not stopped in time"
+grep -q "took longer than 1s" "$STATE/log" || fail "the log does not say the copy was stopped"
+grep -q "took longer than 1s" "$STATE/alerts" || fail "no alert says the copy was stopped"
+"$REAL_SLEEP" 4
+[ ! -e "$STATE/late" ] || fail "a part of the copy kept running after the timeout"
 unset BACKUP_COPY_TIMEOUT_SECONDS
+echo "ok: $case_name"
+
+begin "copy: what a copy leaves running is ended when it is done"
+export BACKUP_COPY_COMMAND='sh -c "\"$REAL_SLEEP\" 3; echo late >\"$STATE/late\"" & echo "$@" >"$STATE/copied"'
+touch "$STATE/real-sleep"
+once
+[ "$status" -eq 0 ] || fail "once failed"
+[ -s "$STATE/copied" ] || fail "the copy did not run"
+grep -q "copied notes-" "$STATE/log" || fail "the copy is not logged as done"
+"$REAL_SLEEP" 4
+[ ! -e "$STATE/late" ] || fail "what the copy left behind kept running"
 echo "ok: $case_name"
 
 begin "alerts: a dump that keeps failing in the loop alerts once, not once a round"
@@ -823,22 +846,33 @@ health
 once
 health
 [ "$status" -eq 0 ] || fail "unhealthy right after a good dump: $(cat "$STATE/log")"
-echo "$((now - DAY - 3600)) notes-old.dump" >"$BACKUP_DIR/.last-good-dump"
+written=$(ls "$BACKUP_DIR" | grep '\.dump$')
+[ "$(cut -d ' ' -f 2 "$BACKUP_DIR/.last-good-dump")" = "$written" ] || fail "the marker does not name the dump: $(cat "$BACKUP_DIR/.last-good-dump")"
+[ "$(cut -d ' ' -f 1 "$BACKUP_DIR/.last-good-dump")" = "$(date -u -d "$(echo "$written" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')" +%s)" ] ||
+  fail "the marker does not hold the time in the name of the dump: $(cat "$BACKUP_DIR/.last-good-dump")"
+echo "$((now - DAY - 3600)) $written" >"$BACKUP_DIR/.last-good-dump"
 health
 [ "$status" -eq 0 ] || fail "unhealthy an hour after the next dump was due"
-echo "$((now - DAY - 3 * 3600)) notes-old.dump" >"$BACKUP_DIR/.last-good-dump"
+echo "$((now - DAY - 3 * 3600)) $written" >"$BACKUP_DIR/.last-good-dump"
 health
 [ "$status" -ne 0 ] || fail "healthy three hours after the next dump was due"
-echo "$((now + DAY)) notes-ahead.dump" >"$BACKUP_DIR/.last-good-dump"
+echo "$((now + DAY)) $written" >"$BACKUP_DIR/.last-good-dump"
 health
 [ "$status" -eq 0 ] || fail "a time from the future made it unhealthy"
+rm "$BACKUP_DIR/$written"
+health
+[ "$status" -ne 0 ] || fail "healthy although the dump it names is gone"
+grep -q "no longer in" "$STATE/log" || fail "the check does not say the dump is gone"
 echo "ok: $case_name"
 
 begin "health: dumps from before the marker count when the loop starts"
-old_dump -3600 >/dev/null
+hour_old=$(old_dump -3600)
+mv "$BACKUP_DIR/$hour_old" "$BACKUP_DIR/$hour_old.age"
 run_loop
-expect 0 1
+[ "$(count "$STATE/attempts")" -eq 0 ] || fail "a dump was made although one is an hour old"
 health
 [ "$status" -eq 0 ] || fail "unhealthy with a dump an hour old: $(cat "$STATE/log")"
+[ "$(cut -d ' ' -f 2 "$BACKUP_DIR/.last-good-dump")" = "$hour_old.age" ] || fail "the marker names: $(cat "$BACKUP_DIR/.last-good-dump")"
+echo "ok: $case_name"
 
 echo "OK: the loop, the pruning and the restore held in every case"
