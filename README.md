@@ -224,6 +224,39 @@ nginx serves `index.html`, `sw.js`, `version.json` and
 them every time and finds a new version as soon as it is deployed. The fingerprinted files under
 `/assets/` are cached for a year.
 
+### Security headers
+
+Everything nginx serves itself, the app shell and its files, the service
+worker and the manifest, comes with these headers, from
+`web/security-headers.conf`:
+
+| Header                    | Value                                                     |
+| ------------------------- | --------------------------------------------------------- |
+| `Content-Security-Policy` | see below                                                 |
+| `X-Content-Type-Options`  | `nosniff`                                                 |
+| `Referrer-Policy`         | `no-referrer`                                             |
+| `Permissions-Policy`      | `camera=(), microphone=(), geolocation=()`, none are used |
+
+The policy lets the page run scripts, load styles and send requests only to
+its own host, and no other site may show it in a frame (`frame-ancestors
+'none'`). The login token is in `localStorage`, so this is what stands
+between it and a script that got into the page some other way. Images may
+also be `blob:` and `data:`, for a pasted image before its upload is done,
+and come from any `https:` site, because notes show images from the web. That
+also means an image in a shared note tells the site it comes from when
+someone reads the note.
+
+`no-referrer` holds everywhere: the address of a `/s/<token>` page is the
+share link itself, and the other addresses name notes, so none of them goes
+to the sites a note links to.
+
+nginx drops the `add_header` lines of the `server` block in every
+`location` that has one of its own, and most of them set `Cache-Control`. So
+each location includes the file, and `web/src/nginx.test.ts` fails when one
+does not. Answers under `/api/` keep the headers the API gives them:
+attachments their sandboxing policy, and the page at `/api/docs` one of its
+own that allows the inline styles of Swagger UI and nothing else inline.
+
 The ports can be changed with `WEB_PORT`, `API_PORT`, `DB_PORT` and
 `MAILPIT_UI_PORT`. The API container runs `prisma migrate deploy` before it
 starts. Data lives in the `db-data` volume and the files of attachments in
@@ -604,6 +637,8 @@ web/
     pages/              one component per route
     sw/                 the service worker and what it does with each request
   build/                the build step that writes the service worker
+  nginx.conf            how the container serves the app and passes /api on
+  security-headers.conf the headers every location of nginx.conf includes
 scripts/
   backup.sh             the backup service: daily dumps, pruning and restore
   check-backup.sh       dumps, restores and compares row counts, run by CI

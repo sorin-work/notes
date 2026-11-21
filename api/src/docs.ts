@@ -130,6 +130,22 @@ const PAGE_FILES = new Set([
   '/favicon-32x32.png',
 ]);
 
+/**
+ * nginx leaves the answers of the API alone, so the docs page brings its own
+ * policy. Swagger UI loads only its files next to the page, but its page has
+ * inline styles, and its icons are data: images.
+ */
+export const DOCS_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 export function setupDocs(app: INestApplication): void {
   // SwaggerModule hands out the whole swagger-ui-dist folder under the docs
   // path, twice. In it is the stock index.html, reachable as
@@ -137,6 +153,9 @@ export function setupDocs(app: INestApplication): void {
   // document from petstore.swagger.io. Nothing of that is wanted: only the
   // page made here and the files it asks for get through.
   app.use(`/${DOCS_PATH}`, (request: Request, response: Response, next: NextFunction) => {
+    response.setHeader('Content-Security-Policy', DOCS_POLICY);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Referrer-Policy', 'no-referrer');
     if (request.path === '/' || PAGE_FILES.has(request.path)) {
       next();
       return;

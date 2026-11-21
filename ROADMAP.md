@@ -41,7 +41,7 @@ couple of weekends, **L** several weeks of spare time.
 | 16  | Templates and daily notes                           | Shipped | both     | M    | -          |
 | 17  | Notebooks shared with other accounts                | Shipped | both     | L    | 8          |
 | 18  | Graph view and unlinked mentions                    | Shipped | both     | M    | -          |
-| 19  | Security headers for the web app                    | Next    | infra    | S    | -          |
+| 19  | Security headers for the web app                    | Shipped | infra    | S    | -          |
 | 20  | Compare two versions with each other                | Shipped | frontend | S    | -          |
 | 21  | Links to headings and an outline                    | Shipped | both     | M    | -          |
 | 22  | Encrypted, off-site and watched backups             | Next    | infra    | M    | -          |
@@ -58,44 +58,6 @@ couple of weekends, **L** several weeks of spare time.
 | 33  | Thumbnails, object storage and Evernote attachments | Maybe   | both     | L    | -          |
 
 ## Next
-
-### 19. Security headers for the web app
-
-nginx serves the app with no security headers at all. The login token sits in
-`localStorage` (`web/src/api/client.ts`), so one script that got into the
-page could read it, and nothing tells the browser to refuse such a script, or
-to refuse showing the app inside a frame on another site.
-
-- A `Content-Security-Policy` for the app shell in `web/nginx.conf`:
-  `default-src 'self'`, scripts only from the app's own files,
-  `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and
-  `frame-ancestors 'none'`. Images need `'self'`, `blob:` and `data:` for a
-  pasted image before its upload is done, and `https:` for as long as notes
-  may show images from other sites. `worker-src 'self'` covers the service
-  worker.
-- Next to it: `X-Content-Type-Options: nosniff`, a `Referrer-Policy` (the
-  address of a `/s/<token>` page is the share link itself, so `no-referrer`
-  there at least), and a `Permissions-Policy` that turns off the camera, the
-  microphone and the location, which the app never uses.
-- Tricky: nginx forgets every `add_header` of the `server` block in a
-  `location` that has one of its own, and most locations here set
-  `Cache-Control`, `index.html` among them. The headers have to go into each
-  location, best through one `include` file, or the shell loses them exactly
-  where they matter.
-- Tricky: responses from `/api/` keep their own headers. The attachments
-  already send `default-src 'none'; sandbox` (`attachments.controller.ts`),
-  and the page at `/api/docs` is Swagger UI, which may need inline styles or
-  scripts. A second policy added by nginx would be applied on top of theirs,
-  so nginx should leave `/api/` alone and the API set what the docs page
-  needs.
-- A test that reads `nginx.conf` and fails when a location that can serve
-  `index.html` lacks the include, the way `styles.contrast.test.ts` reads
-  `styles.css`.
-- Undecided: whether images from other sites stay allowed. Blocking them
-  stops a shared note from telling its author who reads it, but breaks notes
-  that show images from the web today. Also whether to start with
-  `Content-Security-Policy-Report-Only` for a while, which needs somewhere
-  for the reports to go.
 
 ### 22. Encrypted, off-site and watched backups
 
@@ -884,6 +846,28 @@ hand, links have no arrowheads, and above 300 notes only the filters show the
 rest. The dots are not tab stops, and two fingers on a touch screen do not
 zoom: the buttons do. The layout still runs on the main thread, for about a
 third of a second at 300 notes.
+
+### 19. Security headers for the web app
+
+nginx sends a `Content-Security-Policy`, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: no-referrer` and a `Permissions-Policy` that turns off the
+camera, the microphone and the location. They live in
+`web/security-headers.conf`, which every location outside `/api/` includes
+with `always`, so a 404 from `/assets/` has them too. `web/src/nginx.test.ts`
+fails when a location lacks the include, when an `/api/` location adds
+headers, or when the `server` block gets an `add_header` that a location
+would drop. The policy is as designed. `no-referrer` goes on every page, not
+only on `/s/<token>`: the app is one page, so the policy of the first answer
+holds wherever it navigates afterwards, and the other addresses name notes.
+nginx leaves `/api/` alone, and the API sends the docs page a policy of its
+own that allows the inline styles of Swagger UI, `data:` images, and scripts
+only from its own files. On the two open points: images from other `https:`
+sites stay allowed, so notes that show them keep working, and the policy is
+enforced from the start, without a `Report-Only` phase, because there is
+nowhere for reports to go and the app shell has no inline script or style to
+find out about. Still open: blocking images from other sites, at least on
+shared pages, and `Strict-Transport-Security`, which belongs to whatever
+terminates TLS in front of nginx.
 
 ### 20. Compare two versions with each other
 
