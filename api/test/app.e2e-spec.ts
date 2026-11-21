@@ -2392,6 +2392,7 @@ describe('notebooks shared with other accounts', () => {
       'NotesController.update': { title: 'Taken' },
       'NotesController.renameLinks': { from: 'Old' },
       'MentionsController.link': { offset: 0, text: 'Soup', version: 0 },
+      'TasksController.tick': { line: 1, checked: false, revision: 0 },
     };
     const routes = registeredRoutes(app).filter(
       (route) =>
@@ -3031,6 +3032,120 @@ describe('links between shared notes', () => {
       .get(`/api/public/notes/${shared.body.token as string}`)
       .expect(200);
     expect(read.body).toMatchObject({ content: 'See Starter.', links: {} });
+  });
+});
+
+describe('tasks across notes', () => {
+  type Auth = { Authorization: string };
+  const server = () => app.getHttpServer();
+  const post = async (auth: Auth, path: string, body: object = {}) =>
+    (await request(server()).post(path).set(auth).send(body).expect(201)).body;
+  const tasks = async (auth: Auth, query = '') =>
+    (await request(server()).get(`/api/tasks${query}`).set(auth).expect(200)).body;
+  const summary = (list: { notes: { title: string; tasks: { line: number; text: string }[] }[] }) =>
+    list.notes.map((note) => [note.title, note.tasks.map((task) => `${task.line}:${task.text}`)]);
+
+  it('lists the open tasks of working notes, newest note first, and keeps up with edits', async () => {
+    const { auth } = await signUp();
+    const work = await post(auth, '/api/notebooks', { name: 'Work' });
+    const sync = await post(auth, '/api/notes', {
+      title: 'Sync',
+      content: '# Sync\n\n- [ ] Draft the proposal\n- [x] Alert on lag\n\n```\n- [ ] in code\n```',
+      notebookId: work.id,
+    });
+    await post(auth, '/api/notes', { title: 'Home', content: '- [ ] Fix the tap', tags: ['house'] });
+    await post(auth, '/api/notes', { title: 'Plain', content: 'No tasks here' });
+    await post(auth, '/api/notes', { title: 'Template', content: '- [ ] From a template', isTemplate: true });
+    const trashed = await post(auth, '/api/notes', { title: 'Trashed', content: '- [ ] In the trash' });
+    await request(server()).delete(`/api/notes/${trashed.id}`).set(auth).expect(204);
+
+    const all = await tasks(auth);
+    expect(summary(all)).toEqual([
+      ['Home', ['1:Fix the tap']],
+      ['Sync', ['3:Draft the proposal']],
+    ]);
+    expect(all).toMatchObject({ unreadable: 0, unread: 0, capped: false, canTick: true });
+    expect(all.notes[1]).toMatchObject({ notebook: { id: work.id, name: 'Work' }, revision: sync.revision });
+    expect(summary(await tasks(auth, `?notebookId=${work.id}`))).toEqual([['Sync', ['3:Draft the proposal']]]);
+    expect(summary(await tasks(auth, '?tag=house'))).toEqual([['Home', ['1:Fix the tap']]]);
+    expect(summary(await tasks(auth, '?notebookId=none'))).toEqual([['Home', ['1:Fix the tap']]]);
+
+    // An edit moves the revision on, and the next list reads the note again.
+    await request(server())
+      .patch(`/api/notes/${sync.id}`)
+      .set(auth)
+      .send({ content: '- [ ] New first\n- [ ] Draft the proposal' })
+      .expect(200);
+    expect(summary(await tasks(auth, `?notebookId=${work.id}`))).toEqual([
+      ['Sync', ['1:New first', '2:Draft the proposal']],
+    ]);
+  });
+
+  it('ticks a box through the revision, and refuses a changed note or a line in another state', async () => {
+    const { auth } = await signUp();
+    const note = await post(auth, '/api/notes', { title: 'List', content: 'Intro\r\n- [ ] one\r\n- [ ] two' });
+    const [listed] = (await tasks(auth)).notes;
+    const tick = (body: object) => request(server()).post(`/api/notes/${note.id}/tasks`).set(auth).send(body);
+
+    const ticked = await tick({ line: 2, checked: false, revision: listed.revision }).expect(200);
+    expect(ticked.body.content).toBe('Intro\r\n- [x] one\r\n- [ ] two');
+    expect(summary(await tasks(auth))).toEqual([['List', ['3:two']]]);
+
+    // The list it came from is out of date now.
+    const stale = await tick({ line: 3, checked: false, revision: listed.revision }).expect(409);
+    expect(stale.body).toMatchObject({ code: 'stale_revision', note: { revision: ticked.body.revision } });
+    await tick({ line: 2, checked: false, revision: ticked.body.revision }).expect(409);
+    await tick({ line: 1, checked: false, revision: ticked.body.revision }).expect(409);
+    await tick({ line: 0, checked: false, revision: ticked.body.revision }).expect(400);
+  });
+
+  it('says how many notes it could not read', async () => {
+    const { auth } = await signUp();
+    await post(auth, '/api/notes', { title: 'Brackets', content: `- [ ] lost\n${']'.repeat(2_500)}` });
+    const list = await tasks(auth);
+    expect(list).toMatchObject({ notes: [], unreadable: 1, unread: 0 });
+  });
+
+  it('shows a member the tasks of a shared notebook, and lets only an editor tick them', async () => {
+    const owner = await signUp();
+    const kitchen = await post(owner.auth, '/api/notebooks', { name: 'Kitchen' });
+    const soup = await post(owner.auth, '/api/notes', {
+      title: 'Soup',
+      content: '- [ ] Buy leeks',
+      notebookId: kitchen.id,
+    });
+    await post(owner.auth, '/api/notes', { title: 'Private', content: '- [ ] Secret errand' });
+
+    const join = async (role: 'read' | 'edit') => {
+      const email = `tasks-${Date.now()}-${++counter}@example.com`;
+      const registered = await request(server())
+        .post('/api/auth/register')
+        .send({ email, name: 'Member', password: 'password123' })
+        .expect(201);
+      const auth = { Authorization: `Bearer ${registered.body.token}` };
+      await request(server())
+        .post(`/api/notebooks/${kitchen.id}/members/invites`)
+        .set(owner.auth)
+        .send({ email, role })
+        .expect(201);
+      const token = /#token=([\w-]+)/.exec((await mailTo(email)).text)?.[1] ?? '';
+      await request(server()).post('/api/invites/accept').set(auth).send({ token }).expect(200);
+      return auth;
+    };
+
+    const reader = await join('read');
+    const shared = await tasks(reader, `?notebookId=${kitchen.id}`);
+    expect(summary(shared)).toEqual([['Soup', ['1:Buy leeks']]]);
+    expect(shared.canTick).toBe(false);
+    // Without the filter a member sees their own notes, which have no tasks.
+    expect(summary(await tasks(reader))).toEqual([]);
+    const body = { line: 1, checked: false, revision: shared.notes[0].revision };
+    await request(server()).post(`/api/notes/${soup.id}/tasks`).set(reader).send(body).expect(403);
+
+    const editor = await join('edit');
+    expect((await tasks(editor, `?notebookId=${kitchen.id}`)).canTick).toBe(true);
+    const ticked = await request(server()).post(`/api/notes/${soup.id}/tasks`).set(editor).send(body).expect(200);
+    expect(ticked.body).toMatchObject({ content: '- [x] Buy leeks', access: 'edit' });
   });
 });
 
