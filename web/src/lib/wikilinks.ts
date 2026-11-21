@@ -1,59 +1,16 @@
+import { maskNonProse } from './mask';
+
 /**
  * Kept in step with api/src/links/wikilinks.ts, with one difference: here the
  * title may be left out, as in [[#Heading]], a link to a heading of the same
  * note. The API reads no link there, since it leads to no other note.
  */
 const LINK = /\[\[([^[\]\n|#]*)(?:#([^[\]\n|]*))?(?:\|([^[\]\n]+))?\]\]/g;
-const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-/** A line that opens or closes a block of math: `$$` at its start and no second `$$` on it. */
-const MATH_FENCE = /^\s{0,3}\$\$(?!.*\$\$)/;
-/** Code, then math inside a line: `$$...$$`. Links are not read in either. */
-const INLINE_CODE = /(`+)([\s\S]*?[^`])\1(?!`)|\$\$(?:[^$]|\$(?!\$))+?\$\$/g;
 
 export const WIKI_PROTOCOL = 'wiki:';
 
 export function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-/** Calls `fn` for each line that is not inside a fenced code block or a block of math. */
-function mapProseLines(markdown: string, fn: (line: string) => string): string {
-  let fence: string | null = null;
-  let inMath = false;
-  return markdown
-    .split('\n')
-    .map((line) => {
-      if (fence === null && MATH_FENCE.test(line)) {
-        inMath = !inMath;
-        return line;
-      }
-      if (inMath) return line;
-      const match = FENCE.exec(line);
-      if (match) {
-        const marker = match[1] ?? '';
-        if (fence === null) {
-          fence = marker;
-          return line;
-        }
-        if (marker[0] === fence[0] && marker.length >= fence.length) {
-          fence = null;
-          return line;
-        }
-      }
-      return fence === null ? fn(line) : line;
-    })
-    .join('\n');
-}
-
-/** Runs `fn` on the parts of a line that are not inline code or math. */
-function outsideInlineCode(line: string, fn: (text: string) => string): string {
-  let result = '';
-  let last = 0;
-  for (const match of line.matchAll(INLINE_CODE)) {
-    result += fn(line.slice(last, match.index)) + match[0];
-    last = (match.index ?? 0) + match[0].length;
-  }
-  return result + fn(line.slice(last));
 }
 
 function countCarriageReturns(text: string): number {
@@ -65,7 +22,7 @@ const collapse = (text: string) => text.trim().replace(/\s+/g, ' ');
 /**
  * Rewrites [[Title]], [[Title|text]], [[Title#Heading]] and [[#Heading]] as
  * Markdown links with a wiki: URL so the preview can render them as in-app
- * links. Code is left alone.
+ * links. Code and math are left alone.
  *
  * The result has the same line endings as the input, in the same number: the
  * preview finds a clicked task box in the source by its line number. A link
@@ -73,24 +30,33 @@ const collapse = (text: string) => text.trim().replace(/\s+/g, ' ');
  * also takes for a line ending.
  */
 export function linkifyWikiLinks(markdown: string): string {
-  return mapProseLines(markdown, (line) =>
-    outsideInlineCode(line, (text) =>
-      text.replace(LINK, (match, title: string, heading?: string, alias?: string) => {
-        const target = collapse(title);
-        const part = heading === undefined ? '' : collapse(heading);
-        // [[]], [[|text]] and [[#]] lead nowhere.
-        if (!target && !part) return match;
-        const shown = target && part ? `${target} › ${part}` : target || part;
-        const label = (alias === undefined ? shown : alias.trim()).replace(/[[\]]/g, '\\$&');
-        const url = `${WIKI_PROTOCOL}${encodeURIComponent(target)}${part ? `#${encodeURIComponent(part)}` : ''}`;
-        const link = `[${label}](${url})`;
-        // Trimming and collapsing spaces lose any \r that was in the link. They
-        // go back in front of the link, not after it, where one could join a
-        // following \n into a single \r\n.
-        return '\r'.repeat(countCarriageReturns(match) - countCarriageReturns(link)) + link;
-      }),
-    ),
-  );
+  // Code and math are blanked out, keeping every position, so a link found
+  // in what is left stands at the same place in the note (see maskNonProse).
+  const masked = maskNonProse(markdown);
+  let result = '';
+  let copied = 0;
+  for (const found of masked.matchAll(LINK)) {
+    const from = found.index;
+    const match = markdown.slice(from, from + found[0].length);
+    // Code or math between the brackets: the words there are not a title.
+    if (match !== found[0]) continue;
+    const [, title = '', heading, alias] = found;
+    const target = collapse(title);
+    const part = heading === undefined ? '' : collapse(heading);
+    // [[]], [[|text]] and [[#]] lead nowhere.
+    if (!target && !part) continue;
+    const shown = target && part ? `${target} › ${part}` : target || part;
+    const label = (alias === undefined ? shown : alias.trim()).replace(/[[\]]/g, '\\$&');
+    const url = `${WIKI_PROTOCOL}${encodeURIComponent(target)}${part ? `#${encodeURIComponent(part)}` : ''}`;
+    const link = `[${label}](${url})`;
+    // Trimming and collapsing spaces lose any \r that was in the link. They
+    // go back in front of the link, not after it, where one could join a
+    // following \n into a single \r\n.
+    result +=
+      markdown.slice(copied, from) + '\r'.repeat(countCarriageReturns(match) - countCarriageReturns(link)) + link;
+    copied = from + match.length;
+  }
+  return result + markdown.slice(copied);
 }
 
 /**

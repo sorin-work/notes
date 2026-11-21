@@ -33,6 +33,9 @@ describe('linkifyWikiLinks', () => {
   it('leaves math alone, in a line and in a block', () => {
     expect(linkifyWikiLinks('Area $$[[A]] r^2$$ of [[Circle]]')).toBe('Area $$[[A]] r^2$$ of [Circle](wiki:Circle)');
     expect(linkifyWikiLinks('$$\n[[x]]\n$$\n[[After]]')).toBe('$$\n[[x]]\n$$\n[After](wiki:After)');
+    // Math can run over a line ending, and a $$$ block ends only at $$$ or more.
+    expect(linkifyWikiLinks('see $$a + [[Note]]\nb$$ here')).toBe('see $$a + [[Note]]\nb$$ here');
+    expect(linkifyWikiLinks('$$$\n[[x]]\n$$\n[[y]]\n$$$\n[[z]]')).toBe('$$$\n[[x]]\n$$\n[[y]]\n$$$\n[z](wiki:z)');
     // A single dollar is no math.
     expect(linkifyWikiLinks('Costs $5 at [[Shop]], or $10')).toBe('Costs $5 at [Shop](wiki:Shop), or $10');
   });
