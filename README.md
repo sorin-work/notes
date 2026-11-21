@@ -787,8 +787,10 @@ the added one, and read out as "removed" and "added" by a screen reader).
 Lines left over when the blocks are not the same length stay whole, and so do
 pairs with less than a third of their text in common, where marks would cover
 almost everything. A pair with more than 200 words and spaces changed, or
-more than 2,000 between the first and the last change, is shown whole too, as
-is everything after 100,000 words and spaces compared in one view. A folded
+more than 2,000 between the first and the last change, or more than 100,000
+characters in all, is shown whole too. One view does a fixed amount of work
+on words, about a million steps counting the pairs it gave up on, and shows
+the rest of the lines whole after that. A folded
 stretch has a "Show" button that puts back its lines, 500 at a time.
 
 Every note has a revision, a number that goes up by one whenever its title or

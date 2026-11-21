@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -93,6 +94,26 @@ describe('VersionHistoryDialog', () => {
     // The selected version itself is not on offer.
     expect(screen.getAllByRole('option')).toHaveLength(3);
     await expectNoAxeViolations({ part: true });
+  });
+
+  it('says so when the other version cannot be fetched without a connection', async () => {
+    const versions = [
+      { id: 'v2', title: 'Plan', characters: 20, createdAt: '2026-01-02T10:00:00Z' },
+      { id: 'v1', title: 'Plan', characters: 5, createdAt: '2026-01-01T10:00:00Z' },
+    ];
+    mockFetch({
+      'GET /api/notes/n1/versions': { body: versions },
+      'GET /api/notes/n1/versions/v2': { body: { ...versions[0], content: 'Ship in May' } },
+    });
+    renderWithProviders(<VersionHistoryDialog noteId="n1" current={current} onClose={vi.fn()} onRestored={vi.fn()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Changes' }));
+    onlineManager.setOnline(false);
+    try {
+      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Compare with' }), 'v1');
+      expect(await screen.findByText('This version is not available offline.')).toBeInTheDocument();
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 
   it('explains when there are no versions yet', async () => {
