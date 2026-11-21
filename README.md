@@ -13,6 +13,11 @@ Markdown import/export.
 - **Task lists**: clicking a `- [ ]` box in the preview ticks it in the note,
   the same as typing the `x`. Boxes are read-only on shared pages, in version
   history and for notes in the trash.
+- **Tasks** in the sidebar lists every box that is not ticked yet, from all
+  notes, grouped by note with the note edited last first, and narrowed by the
+  same notebook and tag selects as the note list. A box ticks from there, and
+  a click on a task opens its note at that line. `due:2026-11-30` after a task
+  shows the day, and says "late" once it has passed.
 - **Notebooks**, nested up to four levels deep (e.g. _Work -> Meetings ->
   One-to-ones_). Selecting a notebook shows the notes in every notebook inside
   it too. In the sidebar they are a tree that folds, and what is folded is
@@ -618,6 +623,7 @@ api/
     tags/               tag names, renaming and merging
     links/              [[wiki link]] parsing, link storage, backlinks and the graph
     mentions/           unlinked mentions and the link that fixes one
+    tasks/              task items across notes, and ticking one from the list
     versions/           version history and restore
     trash/              trash, restore and the hourly purge
     search/             Postgres full-text search
@@ -740,6 +746,21 @@ say that the heading is not there. A link within the note, `[[#Heading]]`, is
 shown dashed when the note has no such heading. A rename of the note keeps
 the `#heading` part, and only links to other notes count as links for
 backlinks, the graph and orphans.
+
+The tasks of a note are the task list items the parser finds in it (the
+same parser as for mentions, with the same limits and worker threads), so a
+`- [ ]` in code is none. They are kept in their own table with the revision
+of the note they were read from, and read again when the Tasks page is
+loaded and finds that a note has moved on. A save therefore never waits for
+the parser, and no way of changing a note (a restore, an import, Link on a
+mention) leaves the list behind. A note without `[ ]` or `[x]` anywhere is
+not parsed at all. One request parses at most 1,000,000 characters or two
+seconds, and the page says how many notes are left for the next one, with a
+"Read on" button. A note too long or too intricate for the parser is counted
+as one that could not be read, until it is edited. Only notes outside the
+trash that are not templates are listed, 200 at most, the ones edited last.
+A member of a shared notebook sees its tasks with the notebook selected, and
+an editor can tick them.
 
 Versions hold the text a note had _before_ an edit. The first change after a
 ten minute pause saves the old text as a version; further changes in the
@@ -1043,6 +1064,16 @@ carries the note as it is now:
 The check only applies when `title` or `content` is sent, and a request
 without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
+
+`GET /tasks` lists the open tasks, grouped by note, with `notebookId` and
+`tag` as for the note list, and says how many notes it could not read
+(`unreadable`) or has not read yet (`unread`). Each note comes with the
+`revision` its tasks were read from. `POST /notes/:id/tasks` with
+`{"line": 3, "checked": false, "revision": 7}` ticks the box on that line, or
+unticks it with `"checked": true`, as a save tied to that revision: a note
+that changed since is the same `409` with `"code": "stale_revision"`, and a
+line that holds no box in that state is a `409` too. Readers of a shared
+notebook get a `403`.
 
 `POST /notes` takes an `"id"`, a random UUID made by the client, for a note
 made offline. If any note has that id the answer is a `409` with
