@@ -16,7 +16,7 @@ function code(text: string): string {
 
 /** Each `location` block of nginx.conf: what it matches and what is in it. None of them nest. */
 function locations(): { match: string; body: string }[] {
-  return [...code(config).matchAll(/location\s+([^{]+?)\s*\{([^}]*)\}/g)].map(([, match, body]) => ({
+  return [...code(config).matchAll(/location\s+([^{]+?)\s*\{([^}]*)\}/g)].map(([, match = '', body = '']) => ({
     match,
     body,
   }));
@@ -28,7 +28,9 @@ function isApi(match: string): boolean {
 
 function headers(): Map<string, string> {
   const found = new Map<string, string>();
-  for (const [, name, value, always] of code(snippet).matchAll(/add_header\s+(\S+)\s+"([^"]*)"\s*(always)?\s*;/g)) {
+  for (const [, name = '', value = '', always] of code(snippet).matchAll(
+    /add_header\s+(\S+)\s+"([^"]*)"\s*(always)?\s*;/g,
+  )) {
     expect({ name, always }).toEqual({ name, always: 'always' });
     found.set(name, value);
   }
