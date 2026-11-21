@@ -49,6 +49,12 @@ export interface AppConfig {
   attachmentMaxBytes: number;
   /** Bytes all attachments of one account may have together. */
   attachmentAccountBytes: number;
+  /**
+   * The key the secrets of two-step sign-in are encrypted with, 32 bytes.
+   * Null without TWO_STEP_KEY: codes cannot be turned on, and an account
+   * that has them cannot sign in until the key is back.
+   */
+  twoStepKey: Buffer | null;
 }
 
 const LEVELS: LogLevel[] = ['error', 'warn', 'log', 'debug', 'verbose'];
@@ -133,6 +139,39 @@ function attachmentMaxMb(value: string | undefined): number {
   return mb;
 }
 
+/**
+ * TWO_STEP_KEY is 32 random bytes, as 64 hex digits or in base64, for
+ * example from `openssl rand -hex 32`. Anything else is refused at start,
+ * rather than found out at the first sign-in.
+ */
+function twoStepKeyFrom(value: string | undefined): Buffer | null {
+  const text = value?.trim() ?? '';
+  if (text === '') return null;
+  const key = /^[0-9a-fA-F]{64}$/.test(text) ? Buffer.from(text, 'hex') : Buffer.from(text, 'base64');
+  if (key.length !== 32 || (!/^[0-9a-fA-F]{64}$/.test(text) && key.toString('base64') !== text)) {
+    throw new ConfigError('TWO_STEP_KEY must be 32 bytes, as 64 hex digits or in base64 (openssl rand -hex 32)');
+  }
+  return key;
+}
+
+/** The values in docker-compose.yml and .env.example, which anyone can read. */
+export const SAMPLE_JWT_SECRET = 'local-development-secret-change-me-0123456789';
+export const SAMPLE_TWO_STEP_KEY = Buffer.from('local-development-key-change-me!');
+
+/**
+ * The settings that still have the sample value from the repository. With
+ * the sample JWT_SECRET anyone can make login tokens, and with the sample
+ * TWO_STEP_KEY anyone with a dump can read the two-step secrets. main.ts
+ * warns about each at start, loudly, rather than refusing: they are what the
+ * Compose stack starts with for trying it out.
+ */
+export function sampleSecretsInUse(config: Pick<AppConfig, 'jwtSecret' | 'twoStepKey'>): string[] {
+  const found: string[] = [];
+  if (config.jwtSecret === SAMPLE_JWT_SECRET) found.push('JWT_SECRET');
+  if (config.twoStepKey?.equals(SAMPLE_TWO_STEP_KEY)) found.push('TWO_STEP_KEY');
+  return found;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) {
@@ -166,5 +205,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     attachmentsDir: env.ATTACHMENTS_DIR?.trim() || './data/attachments',
     attachmentMaxBytes: attachmentMaxMb(env.ATTACHMENT_MAX_MB) * 1024 * 1024,
     attachmentAccountBytes: toInt('ATTACHMENT_ACCOUNT_MB', env.ATTACHMENT_ACCOUNT_MB, 500, 1) * 1024 * 1024,
+    twoStepKey: twoStepKeyFrom(env.TWO_STEP_KEY),
   };
 }

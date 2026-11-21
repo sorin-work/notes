@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailChangeService } from './email-change.service';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -14,14 +15,19 @@ describe('AuthController', () => {
     deleteAccount: jest.fn(),
     changePassword: jest.fn(),
     logoutEverywhere: jest.fn(),
+    loginWithCode: jest.fn(),
   };
+  const emailChanges = { confirm: jest.fn() };
 
   beforeEach(async () => {
     jest.resetAllMocks();
     const moduleRef = await Test.createTestingModule({
       imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }])],
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: auth }],
+      providers: [
+        { provide: AuthService, useValue: auth },
+        { provide: EmailChangeService, useValue: emailChanges },
+      ],
     }).compile();
     controller = moduleRef.get(AuthController);
   });
@@ -31,6 +37,17 @@ describe('AuthController', () => {
     const dto = { email: 'ada@example.com', name: 'Ada', password: 'long-enough' };
     await expect(controller.register(dto)).resolves.toEqual({ token: 't', user: { id: '1' } });
     expect(auth.register).toHaveBeenCalledWith(dto);
+  });
+
+  it('takes the second step of a login with the address the request came from', async () => {
+    auth.loginWithCode.mockResolvedValue({ token: 't', user: { id: '1' } });
+    await controller.loginWithCode({ ticket: 'ticket', code: '123456' }, '203.0.113.7');
+    expect(auth.loginWithCode).toHaveBeenCalledWith('ticket', '123456', '203.0.113.7');
+  });
+
+  it('confirms a new email with the token from the link', async () => {
+    await controller.confirmEmail({ token: 'from-the-mail' });
+    expect(emailChanges.confirm).toHaveBeenCalledWith('from-the-mail');
   });
 
   it('logs in', async () => {

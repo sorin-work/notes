@@ -49,7 +49,7 @@ couple of weekends, **L** several weeks of spare time.
 | 24  | Tasks across notes                                  | Shipped | both     | M    | -          |
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
 | 26  | Code highlighting, math and diagrams in the preview | Shipped | frontend | M    | -          |
-| 27  | Two-step sign-in and verified email changes         | Later   | both     | M    | -          |
+| 27  | Two-step sign-in and verified email changes         | Shipped | both     | M    | -          |
 | 28  | Select several notes at once                        | Shipped | both     | M    | -          |
 | 29  | Live change notices in open notes                   | Later   | both     | M    | -          |
 | 30  | Tests in a real browser                             | Later   | infra    | M    | -          |
@@ -110,32 +110,6 @@ filters instead of adding to them.
 - Undecided: whether a sidebar link adds to the filters or replaces them.
   Adding is what item 4 wanted, but it surprises when the old filter is out
   of sight.
-
-### 27. Two-step sign-in and verified email changes
-
-Improves item 11. A password is the only thing between the internet and every
-note, a new email address is taken without checking that it works, and a
-mail that could not be sent shows only in the API log.
-
-- One-time codes from an authenticator app (TOTP, RFC 6238), built on
-  `node:crypto`. Settings shows a QR code and the secret, the first code
-  turns it on, and ten recovery codes are shown once and kept as hashes.
-- `POST /auth/login` answers with a short-lived ticket instead of a token
-  when codes are on, and `POST /auth/login/code` takes the ticket and a code.
-  Throttled per account as well as per address (`AccountThrottlerGuard`), so
-  the million codes cannot be tried.
-- A new email address: `PATCH /auth/me` keeps it pending and mails a link to
-  it, under the password reset's rules (hashed, once, an hour). The old
-  address gets a notice. Without SMTP the change goes through as today.
-- Tricky: a password reset by mail must still ask for the code afterwards,
-  or the reset becomes the way around it. Turning codes off takes the
-  password and a code. A code is accepted once, with one step of clock drift
-  either side.
-- Tricky: the secret is stored encrypted with a key from the environment,
-  stays out of the JSON backup, and a restore of the database dump keeps it.
-  API tokens keep working, but making one should ask for a code too.
-- Undecided: WebAuthn passkeys instead of or beside TOTP. They need no
-  shared secret but are more work in the browser and in tests.
 
 ### 29. Live change notices in open notes
 
@@ -878,28 +852,6 @@ the browser only. The list is not sorted by it, and there are no reminders by
 mail. Still open: sorting by due day, and a count of open tasks in the
 sidebar.
 
-### 28. Select several notes at once
-
-"Select" above the note list turns on a box per row, so a click on a note
-still opens it; that settles the open point. Shift with a click selects a
-range, Space selects the note with the focus, and Shift with Up or Down
-selects while it moves, on top of the roving Tab stop of item 23. The count is
-said in a status line, and each note says whether it is selected. The bar
-does Move to, Add tag, Remove tag, Pin, Unpin and Move to trash through
-`POST /notes/bulk`: up to 500 ids, one transaction, the notes locked in id
-order, access decided note by note with `AccessService.notes` (the
-memberships read once), and an answer that lists changed, unchanged and
-skipped notes with a reason. A move answers with where each note was, and its
-notice offers Undo for 15 seconds: one `moveBack` request that leaves a note
-moved again since where it is. A move that changes who can read the notes,
-into or out of a notebook shared with a link or with members, asks first and
-says who gains or loses them. `renameLinks` now locks its notes in id order
-too, so it cannot deadlock with a bulk action. The bar needs a
-connection and says so, and notes made offline that are not on the server
-yet are left out and counted. "Select all" means the loaded rows; the action
-does not take the filters. Still open: favouriting in bulk, and selecting
-every page of a long list.
-
 ### 26. Code highlighting, math and diagrams in the preview
 
 Highlighting and math are built, diagrams are not. `web/src/lib/richMarkdown.ts`
@@ -930,3 +882,55 @@ and it is larger than everything else in the preview together. A
 ` ```mermaid ` block shows as code. Still open: diagrams by some other means,
 and the outline (item 21) still reads headings without math, so a `#` line
 inside a `$$` block shows in the outline.
+
+### 27. Two-step sign-in and verified email changes
+
+Codes from an authenticator app (TOTP, RFC 6238, on `node:crypto`), turned
+on in Settings with a QR code, the key in text and the first code. Ten
+recovery codes are shown once and kept as SHA-256 hashes. With codes on,
+`POST /auth/login` answers a ticket, and `POST /auth/login/code` takes it
+with a code or a recovery code. A code is taken once, one step of drift
+either side. The secret is encrypted with AES-256-GCM under `TWO_STEP_KEY`
+and bound to its account, stays out of the JSON backup, and comes back with a
+dump restored under the same key. A ticket signs in once. Codes are counted
+per address, per account and address, and per ticket (five), and an account
+takes 20 wrong codes an hour from all addresses, after which only recovery
+codes work until the hour is over. Only someone with the password can use
+that up, and the owner gets a mail, at most once an hour, when the right
+password comes with a wrong code. A key that does not fit answers like a
+missing one and is logged at start, and the sample keys of the repository
+are warned about. Turning codes on ends
+the other sessions, turning them off and new recovery codes take the
+password and a code, and making an API token takes a code. A password reset
+by mail leaves codes on, so the next sign-in still asks. The QR code is
+drawn from `qrcode-generator`, the one new dependency. A new email address
+waits in `email_changes` until the link mailed to it is opened and its page's
+button pressed, under the reset link's rules, and the old address gets a
+notice. A new password, signing out everywhere and a reset cancel it.
+Without SMTP the address changes at once. Still open: passkeys (WebAuthn),
+left out as the bigger piece of work; a way back for someone who lost the
+phone and the recovery codes other than the database; codes for the other
+account changes, which still take the password only; and the mails are
+plain text in English.
+
+### 28. Select several notes at once
+
+"Select" above the note list turns on a box per row, so a click on a note
+still opens it; that settles the open point. Shift with a click selects a
+range, Space selects the note with the focus, and Shift with Up or Down
+selects while it moves, on top of the roving Tab stop of item 23. The count is
+said in a status line, and each note says whether it is selected. The bar
+does Move to, Add tag, Remove tag, Pin, Unpin and Move to trash through
+`POST /notes/bulk`: up to 500 ids, one transaction, the notes locked in id
+order, access decided note by note with `AccessService.notes` (the
+memberships read once), and an answer that lists changed, unchanged and
+skipped notes with a reason. A move answers with where each note was, and its
+notice offers Undo for 15 seconds: one `moveBack` request that leaves a note
+moved again since where it is. A move that changes who can read the notes,
+into or out of a notebook shared with a link or with members, asks first and
+says who gains or loses them. `renameLinks` now locks its notes in id order
+too, so it cannot deadlock with a bulk action. The bar needs a
+connection and says so, and notes made offline that are not on the server
+yet are left out and counted. "Select all" means the loaded rows; the action
+does not take the filters. Still open: favouriting in bulk, and selecting
+every page of a long list.

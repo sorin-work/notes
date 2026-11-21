@@ -8,6 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { randomUUID } from 'node:crypto';
 import { AttachmentsService } from '../attachments/attachments.service';
 import type { Prisma, User } from '@prisma/client';
 import type { AuthUser } from '../common/current-user.decorator';
@@ -19,8 +20,15 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { EmailChangeService } from './email-change.service';
 import { hashPassword, verifyPassword } from './password';
 import { Preferences, readPreferences } from './preferences';
+import { looksLikeTotp } from './totp';
+import { TooManyCodes, TwoStepService } from './two-step.service';
+
+/** How long the ticket from the password step is good for the code step. */
+export const TICKET_TTL_SECONDS = 5 * 60;
+const TICKET_PURPOSE = 'two-step';
 
 export interface PublicUser {
   id: string;
@@ -29,11 +37,32 @@ export interface PublicUser {
   createdAt: Date;
   /** Choices kept with the account, so they are the same on every device. */
   preferences: Preferences;
+  /** Whether signing in asks for a code from an authenticator app. */
+  twoStep: boolean;
+  /** A new address that waits for its link to be opened, or null. */
+  pendingEmail: string | null;
 }
 
 export interface AuthResult {
   token: string;
   user: PublicUser;
+}
+
+/**
+ * What the right password gets when codes are on: no token yet, a ticket
+ * for POST /auth/login/code that is good for five minutes and a few codes.
+ */
+export interface TwoStepTicket {
+  twoStep: true;
+  ticket: string;
+}
+
+interface TicketPayload {
+  sub: string;
+  ver: number;
+  purpose: typeof TICKET_PURPOSE;
+  jti: string;
+  exp?: number;
 }
 
 export interface TokenPayload {
@@ -43,15 +72,19 @@ export interface TokenPayload {
    * the column existed have none and count as version 0.
    */
   ver?: number;
+  /** Only on a two-step ticket, which is never a login token. */
+  purpose?: string;
 }
 
-export function toPublicUser(user: User): PublicUser {
+export function toPublicUser(user: User, pendingEmail: string | null = null): PublicUser {
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     createdAt: user.createdAt,
     preferences: readPreferences(user.preferences),
+    twoStep: (user.twoStepSince ?? null) !== null,
+    pendingEmail,
   };
 }
 
@@ -61,6 +94,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     @Optional() private readonly attachments?: AttachmentsService,
+    @Optional() private readonly twoStep?: TwoStepService,
+    @Optional() private readonly emailChanges?: EmailChangeService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResult> {
@@ -74,17 +109,68 @@ export class AuthService {
     return this.issue(user);
   }
 
-  async login(dto: LoginDto): Promise<AuthResult> {
+  async login(dto: LoginDto): Promise<AuthResult | TwoStepTicket> {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     // Same message either way so the endpoint does not reveal which emails exist.
     if (!user || !(await verifyPassword(dto.password, user.passwordHash))) {
       throw new UnauthorizedException('Email or password is incorrect');
     }
+    if (this.twoStep?.isOn(user)) {
+      const payload: TicketPayload = {
+        sub: user.id,
+        ver: user.tokenVersion,
+        purpose: TICKET_PURPOSE,
+        jti: randomUUID(),
+      };
+      return { twoStep: true, ticket: await this.jwt.signAsync(payload, { expiresIn: TICKET_TTL_SECONDS }) };
+    }
+    return this.issue(user);
+  }
+
+  /**
+   * The second step: the ticket from the password and a code from the app
+   * or a recovery code. A ticket stops working when the password changes or
+   * every session is ended, like a token, and after a few wrong codes.
+   */
+  async loginWithCode(ticket: string, code: string, address: string, now = new Date()): Promise<AuthResult> {
+    const expired = new UnauthorizedException('Sign in with your password again: that took too long.');
+    let payload: TicketPayload;
+    try {
+      payload = await this.jwt.verifyAsync<TicketPayload>(ticket);
+    } catch {
+      throw expired;
+    }
+    if (payload.purpose !== TICKET_PURPOSE || !payload.jti || !this.twoStep) {
+      throw expired;
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || user.tokenVersion !== payload.ver || !this.twoStep.isOn(user)) {
+      throw expired;
+    }
+    const expires = (payload.exp ?? 0) * 1000;
+    const attempts = this.twoStep.attempts;
+    attempts.take(user.id, address, payload.jti, expires, now.getTime());
+    if (looksLikeTotp(code) && attempts.capped(user.id, now.getTime())) {
+      throw new TooManyCodes('Too many wrong codes for this account this hour. A recovery code still works.');
+    }
+    if (!(await this.twoStep.check(user, code, now))) {
+      attempts.wrongCode(user.id, now.getTime());
+      this.twoStep.warnOwner(user, now.getTime());
+      // 403, not 401: the web app signs out on a 401, and the ticket may have codes left.
+      throw new ForbiddenException('That code is not right');
+    }
+    // A ticket signs in once.
+    attempts.succeeded(user.id, address, payload.jti, expires);
     return this.issue(user);
   }
 
   async me(userId: string): Promise<PublicUser> {
-    return toPublicUser(await this.find(userId));
+    return this.publicUser(await this.find(userId));
+  }
+
+  /** Signs the caller in again after the token version was bumped for them, as turning codes on does. */
+  async renew(userId: string): Promise<AuthResult> {
+    return this.issue(await this.find(userId));
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto): Promise<PublicUser> {
@@ -102,17 +188,22 @@ export class AuthService {
       if (await this.prisma.user.findUnique({ where: { email: dto.email } })) {
         throw new ConflictException('An account with this email already exists');
       }
-      data.email = dto.email;
+      if (this.emailChanges?.confirms) {
+        // The new address waits for its link. The name, if sent too, changes now.
+        await this.emailChanges.request(user, dto.email);
+      } else {
+        data.email = dto.email;
+      }
     }
     if (Object.keys(data).length === 0) {
-      return toPublicUser(user);
+      return this.publicUser(user);
     }
     const updated = await this.prisma.user.update({ where: { id: userId }, data });
     if (data.email) {
       // A reset link that is still out was mailed to the old address.
       await this.prisma.passwordReset.deleteMany({ where: { userId } });
     }
-    return toPublicUser(updated);
+    return this.publicUser(updated);
   }
 
   /**
@@ -160,14 +251,17 @@ export class AuthService {
       where: { id: userId },
       data: { passwordHash: await hashPassword(dto.newPassword), tokenVersion: { increment: 1 } },
     });
-    // A reset link that is still out has no business working after this.
+    // A reset link that is still out has no business working after this,
+    // nor a new address asked for in a session that may not have been the owner's.
     await this.prisma.passwordReset.deleteMany({ where: { userId } });
+    await this.emailChanges?.cancel(userId);
     return this.issue(updated);
   }
 
-  /** Makes every token issued so far worthless, the caller's included. */
+  /** Makes every token issued so far worthless, the caller's included, and cancels a new address that waits. */
   async logoutEverywhere(userId: string): Promise<void> {
     await this.prisma.user.update({ where: { id: userId }, data: { tokenVersion: { increment: 1 } } });
+    await this.emailChanges?.cancel(userId);
   }
 
   /** Notebooks, notes, tags, versions and share links go with the user (cascades in the schema). */
@@ -196,7 +290,8 @@ export class AuthService {
       where: { id: payload.sub },
       select: { email: true, tokenVersion: true },
     });
-    if (!user || user.tokenVersion !== (payload.ver ?? 0)) {
+    // A two-step ticket is signed with the same key, and is no login.
+    if (payload.purpose !== undefined || !user || user.tokenVersion !== (payload.ver ?? 0)) {
       return null;
     }
     return { id: payload.sub, email: user.email };
@@ -227,6 +322,10 @@ export class AuthService {
 
   private async issue(user: User): Promise<AuthResult> {
     const payload: TokenPayload = { sub: user.id, ver: user.tokenVersion };
-    return { token: await this.jwt.signAsync(payload), user: toPublicUser(user) };
+    return { token: await this.jwt.signAsync(payload), user: await this.publicUser(user) };
+  }
+
+  private async publicUser(user: User): Promise<PublicUser> {
+    return toPublicUser(user, (await this.emailChanges?.pending(user.id)) ?? null);
   }
 }

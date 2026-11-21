@@ -20,4 +20,10 @@ export class CreateApiTokenDto {
   @IsString()
   @IsNotEmpty({ message: 'currentPassword is required' })
   currentPassword: string;
+
+  /** With two-step sign-in on, a code from the app or a recovery code: the password alone does not make a token. */
+  @IfPresent()
+  @IsString()
+  @MaxLength(40)
+  code?: string;
 }

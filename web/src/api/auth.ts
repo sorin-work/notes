@@ -1,8 +1,32 @@
 import { api, json } from './client';
-import type { AuthResult, Preferences, User } from './types';
+import type { AuthResult, Preferences, TwoStepSetup, TwoStepStatus, TwoStepTicket, User } from './types';
 
+/** With two-step sign-in on, the answer is a ticket for `loginWithCode` instead of a token. */
 export const login = (email: string, password: string) =>
-  api<AuthResult>('/auth/login', json('POST', { email, password }));
+  api<AuthResult | TwoStepTicket>('/auth/login', json('POST', { email, password }));
+
+/** The second step: the ticket and a code from the app, or a recovery code. A wrong code answers 403. */
+export const loginWithCode = (ticket: string, code: string) =>
+  api<AuthResult>('/auth/login/code', json('POST', { ticket, code }));
+
+export const twoStepStatus = () => api<TwoStepStatus>('/auth/two-step');
+
+/** A new secret for the app. Codes are not on until `enableTwoStep` gets the first one. */
+export const startTwoStep = (currentPassword: string) =>
+  api<TwoStepSetup>('/auth/two-step/setup', json('POST', { currentPassword }));
+
+/** Turns codes on. Every other session ends, so the answer holds a new token, and the recovery codes. */
+export const enableTwoStep = (code: string) =>
+  api<AuthResult & { recoveryCodes: string[] }>('/auth/two-step/enable', json('POST', { code }));
+
+export const disableTwoStep = (currentPassword: string, code: string) =>
+  api<void>('/auth/two-step/disable', json('POST', { currentPassword, code }));
+
+export const newRecoveryCodes = (currentPassword: string, code: string) =>
+  api<{ recoveryCodes: string[] }>('/auth/two-step/recovery-codes', json('POST', { currentPassword, code }));
+
+/** `token` comes from the link mailed to the new address. */
+export const confirmEmail = (token: string) => api<void>('/auth/email/confirm', json('POST', { token }));
 
 export const register = (name: string, email: string, password: string) =>
   api<AuthResult>('/auth/register', json('POST', { name, email, password }));

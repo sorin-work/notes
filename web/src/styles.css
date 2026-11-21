@@ -2378,6 +2378,26 @@ ul.error-box {
   color: var(--danger);
 }
 
+/* Two-step sign-in in Settings. The QR code keeps its white ground in the dark theme too. */
+.qr-code {
+  display: block;
+  border-radius: 4px;
+}
+
+.two-step-secret {
+  word-spacing: 0.3em;
+  user-select: all;
+}
+
+.recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+}
+
 /* Selecting several notes */
 
 .selection-bar {

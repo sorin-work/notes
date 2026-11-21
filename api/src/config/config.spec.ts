@@ -1,4 +1,4 @@
-import { ConfigError, loadConfig, logLevelsFrom } from './config';
+import { ConfigError, loadConfig, logLevelsFrom, sampleSecretsInUse } from './config';
 
 const base = {
   DATABASE_URL: 'postgresql://notes:notes@localhost:5441/notes',
@@ -24,8 +24,28 @@ describe('loadConfig', () => {
       attachmentsDir: './data/attachments',
       attachmentMaxBytes: 10 * 1024 * 1024,
       attachmentAccountBytes: 500 * 1024 * 1024,
+      twoStepKey: null,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
+  });
+
+  it('names the settings that still have the sample value from the repository', () => {
+    const sample = loadConfig({
+      ...base,
+      JWT_SECRET: 'local-development-secret-change-me-0123456789',
+      TWO_STEP_KEY: '6c6f63616c2d646576656c6f706d656e742d6b65792d6368616e67652d6d6521',
+    });
+    expect(sampleSecretsInUse(sample)).toEqual(['JWT_SECRET', 'TWO_STEP_KEY']);
+    expect(sampleSecretsInUse(loadConfig({ ...base, TWO_STEP_KEY: 'ab'.repeat(32) }))).toEqual([]);
+  });
+
+  it('reads TWO_STEP_KEY as hex or base64, and refuses a key of the wrong size', () => {
+    const hex = 'ab'.repeat(32);
+    expect(loadConfig({ ...base, TWO_STEP_KEY: hex }).twoStepKey).toEqual(Buffer.from(hex, 'hex'));
+    const base64 = Buffer.alloc(32, 7).toString('base64');
+    expect(loadConfig({ ...base, TWO_STEP_KEY: base64 }).twoStepKey).toEqual(Buffer.alloc(32, 7));
+    expect(() => loadConfig({ ...base, TWO_STEP_KEY: 'ab'.repeat(16) })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...base, TWO_STEP_KEY: 'not a key at all' })).toThrow(ConfigError);
   });
 
   it('reads every setting from the environment', () => {

@@ -133,7 +133,13 @@ Markdown import/export.
 - **Account**: change your name, email and password in Settings, sign out
   everywhere at once, or delete the account with everything in it. A
   forgotten password can be reset through a link sent by mail, on servers
-  that have SMTP settings.
+  that have SMTP settings. On those servers a new email address only takes
+  over once the link mailed to it is opened, and the old address is told.
+- **Two-step sign-in**: Settings can turn on codes from an authenticator
+  app. The QR code goes into the app, its first code turns codes on, and ten
+  recovery codes are shown once. After that, signing in and making an API
+  token take a code as well as the password, see
+  [Two-step sign-in](#two-step-sign-in).
 - **Capture**: `/capture?title=...&url=...` opens a new note with a page's
   title and its address, ready to save. A bookmarklet makes that one click
   on any page, see [Saving a page from the browser](#saving-a-page-from-the-browser).
@@ -329,8 +335,10 @@ the `attachments` volume; `docker compose down -v` removes both. [Backup and res
 
 ### Mail
 
-The API sends one kind of mail: the link behind "Forgot password?" on the
-sign-in page. In the Compose stack that mail goes to
+The API sends a few kinds of mail: the link behind "Forgot password?" on the
+sign-in page, the link that confirms a new email address and the notice to
+the old one, invitations to shared notebooks, and a warning to the owner
+when someone gives the right password and a wrong code. In the Compose stack that mail goes to
 [mailpit](https://mailpit.axllent.org), which keeps it and shows it at
 http://localhost:8041 instead of delivering it. So to try a reset with the
 demo account, ask for the link and pick it up there. The mailpit page is
@@ -717,6 +725,7 @@ Docker stack.
 | `ATTACHMENTS_DIR`          | `./data/attachments` | Folder for the files of attachments                                      |
 | `ATTACHMENT_MAX_MB`        | `10`                 | Most one attached file may have, 50 at most                              |
 | `ATTACHMENT_ACCOUNT_MB`    | `500`                | Most all files of one account may have together                          |
+| `TWO_STEP_KEY`             | (none)               | 32 bytes as 64 hex digits, encrypts the secrets of two-step sign-in      |
 
 The API on its own sends no mail unless `SMTP_HOST` is set, and mailpit's
 SMTP port is not reachable from outside the Compose network. To work on
@@ -1322,6 +1331,79 @@ the account. Without `SMTP_HOST` both routes answer `404`, and
 `GET /auth/password-reset` says `{ "enabled": false }`, which is how the
 sign-in page knows to hide the link.
 
+### Two-step sign-in
+
+With codes on, `POST /auth/login` answers `{ "twoStep": true, "ticket": "..." }`
+for the right password, and no token. `POST /auth/login/code` with
+`{ ticket, code }` gives the token, for six digits from the app or a
+recovery code. The ticket is good for five minutes and five wrong codes, and
+for one sign-in: once it has made a token it is spent. It stops working like a
+token when the password changes or every session ends. It is never a login
+token: the API refuses it as one.
+
+The codes are TOTP (RFC 6238): SHA-1, six digits, thirty seconds, which every
+authenticator app reads from the QR code. The API takes the codes of one
+step before and after the current one, for a phone whose clock is a little
+off, and each code once: the step of the last code taken is kept, and a code
+has to come after it. Recovery codes are 16 letters and digits each, kept as
+SHA-256 hashes, and deleted when used.
+
+Codes are counted per client address and per account and address
+(`AUTH_THROTTLE_LIMIT` a minute), five to a ticket, and every five cost a new
+sign-in with the password, which is throttled too. On top of that an account
+takes 20 wrong codes an hour from all addresses together. Past that, codes
+from the app are refused until the hour is over, and recovery codes still
+work. Only someone who has the password can use that allowance up, and the
+owner gets a mail, at most once an hour, saying that someone gave the right
+password and a wrong code. Six digits are a million codes with three right at
+any moment, so the cap leaves someone with the password, guessing from as
+many addresses as they like, 480 codes a day: about one chance in 700 a day.
+That is time to change the password after the first mail, which ends their
+tickets too.
+
+| Method & path                        | What it does                                                |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `GET /auth/two-step`                 | `{ available, on, recoveryCodesLeft }`                      |
+| `POST /auth/two-step/setup`          | With the password: a new secret and its `otpauth://` URI    |
+| `POST /auth/two-step/enable`         | With the first code: on, a new token and the recovery codes |
+| `POST /auth/two-step/disable`        | With the password and a code: off                           |
+| `POST /auth/two-step/recovery-codes` | With the password and a code: ten new recovery codes        |
+
+Turning codes on ends every other session, which was signed in without a
+code. Making an API token takes a code too, as `code` next to
+`currentPassword`. Tokens made before keep working. A password reset by mail
+changes the password and nothing else: the next sign-in asks for the code as
+before, so a reset is no way around it. Someone who loses both the phone and
+the recovery codes needs whoever runs the server, who can clear
+`two_step_since` and `two_step_secret` for the account in the database.
+
+The secret is kept encrypted with AES-256-GCM under `TWO_STEP_KEY`, bound to
+the account it belongs to. Without the key the database holds nothing that
+makes codes. The JSON backup leaves it out, with the recovery codes. A dump
+of the database keeps both, so restoring it on a server with the same key
+keeps two-step sign-in working. Restored with another key, or with none,
+codes from the app no longer work and recovery codes still do: a code from
+the app answers `503`, saying so, and the API logs at start when the key does
+not decrypt the stored secrets. Without `TWO_STEP_KEY` the server offers no
+setup at all. The API also warns at start when `TWO_STEP_KEY` or `JWT_SECRET`
+is still the sample value from `docker-compose.yml` and `.env.example`.
+
+### Changing the email address
+
+With mail set up, `PATCH /auth/me` with a new `email` and `currentPassword`
+does not change the address yet. The answer has it as `pendingEmail`, a link
+to `/confirm-email#token=...` goes to the new address, and the old address
+gets a notice. The page asks for a press of a button before it sends the
+token to `POST /auth/email/confirm`, so a mail scanner that opens links does
+not confirm it. The link follows the rules of a reset link: random, kept as
+a hash, once, for an hour. An account has one new address waiting at a
+time. Changing the password, signing out everywhere and a password reset
+cancel it. If the mail to the new address cannot be sent, the answer is
+`503` and nothing changes. Without `SMTP_HOST` the address changes at once,
+as before.
+
+### API tokens
+
 A script does not have to log in. A personal API token from Settings goes in
 the same header:
 
@@ -1351,6 +1433,8 @@ still work and offers to revoke them all in one click
 (`DELETE /auth/tokens`). A password reset by mail does revoke them all. A
 token also ends when it is revoked by itself or the account is deleted. An
 account can have 20 of them.
+
+### Shared notes
 
 A shared note is read with `GET /public/notes/:token`, without a login. Three
 things can come back besides the note:
@@ -1411,6 +1495,8 @@ becomes `Private plan`, with `links: {}`.
 whose live link makes the note or notebook public, or `null`: the notebook
 itself or the nearest one it is inside, however far up.
 
+### Attachments and imports
+
 A note's files are uploaded with `POST /notes/:id/attachments`, one per
 request, as `file`. The type is read from the bytes and has to be PNG, JPEG,
 GIF, WebP, PDF or plain UTF-8 text. SVG, HTML and anything else is a `400`,
@@ -1456,16 +1542,19 @@ its own, or uses an entity beyond XML's five, is refused. Front matter is
 read as YAML with the core schema only (no custom tags, no aliases); a block
 that is not clean YAML stays at the top of the note as text.
 
+### Endpoints for scripts
+
 The endpoints a script is most likely to want. The rest is in `/api/docs`.
 
-| Method & path                                | What it does                              |
-| -------------------------------------------- | ----------------------------------------- |
-| `POST /auth/login`                           | Returns `{ token, user }`                 |
-| `GET /notes?notebookId=&tag=&sort=&page=`    | Note list (`notebookId=none` for unfiled) |
-| `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)       |
-| `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes   |
-| `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`    |
-| `GET /export/backup`, `POST /import/backup`  | The JSON backup, and its restore          |
-| `GET/POST /notes/:id/attachments`            | A note's files, upload one as `file`      |
-| `DELETE /attachments/:id`                    | Remove a file                             |
-| `POST /import`                               | Markdown, text, `.enex` or zip, `files`   |
+| Method & path                                | What it does                                |
+| -------------------------------------------- | ------------------------------------------- |
+| `POST /auth/login`                           | `{ token, user }`, or `{ twoStep, ticket }` |
+| `POST /auth/login/code`                      | The ticket and a code, returns a token      |
+| `GET /notes?notebookId=&tag=&sort=&page=`    | Note list (`notebookId=none` for unfiled)   |
+| `POST /notes`, `GET/PATCH/DELETE /notes/:id` | Notes (`DELETE` moves to the trash)         |
+| `GET /search?q=&notebookId=&tag=&page=`      | Full-text search, `"phrases"` in quotes     |
+| `GET /export`, `GET /notes/:id/export`       | Everything as a zip, one note as `.md`      |
+| `GET /export/backup`, `POST /import/backup`  | The JSON backup, and its restore            |
+| `GET/POST /notes/:id/attachments`            | A note's files, upload one as `file`        |
+| `DELETE /attachments/:id`                    | Remove a file                               |
+| `POST /import`                               | Markdown, text, `.enex` or zip, `files`     |

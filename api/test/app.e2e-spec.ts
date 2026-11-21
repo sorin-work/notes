@@ -220,10 +220,15 @@ describe('account', () => {
       .set(auth)
       .send({ email: email.toUpperCase(), currentPassword: 'password123' })
       .expect(200);
-    expect(moved.body).toMatchObject({ name: 'Grace', email });
+    // With mail set up the new address waits for the link mailed to it.
+    expect(moved.body).toMatchObject({ name: 'Grace', pendingEmail: email });
+    expect(moved.body.email).not.toBe(email);
+    const link = /#token=([\w-]+)/.exec((await mailTo(email)).text)?.[1] ?? '';
+    await request(server).post('/api/auth/email/confirm').send({ token: link }).expect(204);
 
     // The token still works, and the new address is the login name.
-    await request(server).get('/api/auth/me').set(auth).expect(200);
+    const after = await request(server).get('/api/auth/me').set(auth).expect(200);
+    expect(after.body).toMatchObject({ email, pendingEmail: null });
     await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);
 
     const other = await signUp();
@@ -734,10 +739,17 @@ describe('api tokens', () => {
       'MembersController.list',
       'MembersController.remove',
       'MembersController.revoke',
+      'TwoStepController.disable',
+      'TwoStepController.enable',
+      'TwoStepController.recoveryCodes',
+      'TwoStepController.setup',
+      'TwoStepController.status',
     ]);
     expect(names(routes.filter((route) => route.isPublic))).toEqual([
       'AttachmentsController.file',
+      'AuthController.confirmEmail',
       'AuthController.login',
+      'AuthController.loginWithCode',
       'AuthController.register',
       'HealthController.check',
       'PasswordResetController.confirm',

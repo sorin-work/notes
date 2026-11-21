@@ -2,16 +2,20 @@ import { useQuery } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { passwordResetEnabled } from '../api/auth';
+import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useDiscardOthersQuestion } from '../components/DiscardOthersQuestion';
-import { ErrorMessage } from '../components/States';
+import { ErrorMessage, focusOnce } from '../components/States';
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, loginWithCode } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Set once the password was right and the account asks for a code.
+  const [ticket, setTicket] = useState<string | null>(null);
+  const [code, setCode] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDiscard, discardQuestion] = useDiscardOthersQuestion();
@@ -19,22 +23,99 @@ export function LoginPage() {
   // and if it never comes, the link stays hidden.
   const canReset = useQuery({ queryKey: ['password-reset-enabled'], queryFn: passwordResetEnabled, retry: false });
 
+  const done = () => {
+    const from = (location.state as { from?: string } | null)?.from;
+    navigate(from && from !== '/login' ? from : '/notes', { replace: true });
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      if (!(await login(email, password, confirmDiscard))) {
+      const result = await login(email, password, confirmDiscard);
+      if (typeof result === 'object') {
+        setTicket(result.ticket);
+        setPassword('');
         setBusy(false);
         return;
       }
-      const from = (location.state as { from?: string } | null)?.from;
-      navigate(from && from !== '/login' ? from : '/notes', { replace: true });
+      if (!result) {
+        setBusy(false);
+        return;
+      }
+      done();
     } catch (err) {
       setError(err);
       setBusy(false);
     }
   };
+
+  const submitCode = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!ticket) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (await loginWithCode(ticket, code.trim(), confirmDiscard)) {
+        done();
+        return;
+      }
+    } catch (err) {
+      setError(err);
+      // A ticket that is used up or too old: back to the password.
+      if (err instanceof ApiError && (err.status === 401 || err.status === 429)) setTicket(null);
+    }
+    setCode('');
+    setBusy(false);
+  };
+
+  if (ticket) {
+    return (
+      <main className="auth-page">
+        <form className="auth-card form" onSubmit={submitCode}>
+          <h1>Enter your code</h1>
+          <p className="muted">Open the authenticator app and type the six digits it shows for Notes.</p>
+          <label className="field">
+            <span>Code</span>
+            <input
+              autoComplete="one-time-code"
+              inputMode="text"
+              spellCheck={false}
+              maxLength={40}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              aria-describedby="code-hint"
+              required
+              // The form takes the place of the password form, where the focus was.
+              ref={focusOnce}
+            />
+          </label>
+          <p className="muted" id="code-hint">
+            Without the phone, a recovery code works too, once each.
+          </p>
+          {error !== null && <ErrorMessage error={error} />}
+          <button type="submit" className="button button-primary wide" disabled={busy}>
+            {busy ? 'Checking…' : 'Sign in'}
+          </button>
+          <p className="muted">
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => {
+                setTicket(null);
+                setCode('');
+                setError(null);
+              }}
+            >
+              Back to the password
+            </button>
+          </p>
+        </form>
+        {discardQuestion}
+      </main>
+    );
+  }
 
   return (
     <main className="auth-page">

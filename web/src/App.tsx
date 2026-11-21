@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { lazyPage } from './components/LazyPage';
 import { UpdateBanner } from './components/UpdateBanner';
 import { CapturePage } from './pages/CapturePage';
+import { ConfirmEmailPage } from './pages/ConfirmEmailPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { InvitePage } from './pages/InvitePage';
 import { LoginPage } from './pages/LoginPage';
@@ -52,6 +53,7 @@ function AppRoutes() {
       {/* Open to everyone: someone who forgot the password can still be signed in somewhere. */}
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/confirm-email" element={<ConfirmEmailPage />} />
       {/* Open to everyone: the page itself asks to sign in with the invited address. */}
       <Route path="/invites" element={<InvitePage />} />
       <Route path="/s/:token" element={<SharedNotePage />} />
