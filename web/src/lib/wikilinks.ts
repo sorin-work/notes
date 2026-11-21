@@ -1,5 +1,9 @@
-/** Kept in step with api/src/links/wikilinks.ts. */
-const LINK = /\[\[([^[\]\n|#]+)(?:#[^[\]\n|]*)?(?:\|([^[\]\n]+))?\]\]/g;
+/**
+ * Kept in step with api/src/links/wikilinks.ts, with one difference: here the
+ * title may be left out, as in [[#Heading]], a link to a heading of the same
+ * note. The API reads no link there, since it leads to no other note.
+ */
+const LINK = /\[\[([^[\]\n|#]*)(?:#([^[\]\n|]*))?(?:\|([^[\]\n]+))?\]\]/g;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const INLINE_CODE = /(`+)([\s\S]*?[^`])\1(?!`)/g;
 
@@ -47,9 +51,12 @@ function countCarriageReturns(text: string): number {
   return text.split('\r').length - 1;
 }
 
+const collapse = (text: string) => text.trim().replace(/\s+/g, ' ');
+
 /**
- * Rewrites [[Title]] and [[Title|text]] as Markdown links with a wiki: URL so
- * the preview can render them as in-app links. Code is left alone.
+ * Rewrites [[Title]], [[Title|text]], [[Title#Heading]] and [[#Heading]] as
+ * Markdown links with a wiki: URL so the preview can render them as in-app
+ * links. Code is left alone.
  *
  * The result has the same line endings as the input, in the same number: the
  * preview finds a clicked task box in the source by its line number. A link
@@ -59,23 +66,39 @@ function countCarriageReturns(text: string): number {
 export function linkifyWikiLinks(markdown: string): string {
   return mapProseLines(markdown, (line) =>
     outsideInlineCode(line, (text) =>
-      text.replace(LINK, (match, title: string, alias?: string) => {
-        const target = title.trim().replace(/\s+/g, ' ');
-        const label = (alias ?? target).trim().replace(/[[\]]/g, '\\$&');
-        const link = `[${label}](${WIKI_PROTOCOL}${encodeURIComponent(target)})`;
-        // Trimming, collapsing spaces and dropping the #heading lose any \r that
-        // was in the link. They go back in front of the link, not after it,
-        // where one could join a following \n into a single \r\n.
+      text.replace(LINK, (match, title: string, heading?: string, alias?: string) => {
+        const target = collapse(title);
+        const part = heading === undefined ? '' : collapse(heading);
+        // [[]], [[|text]] and [[#]] lead nowhere.
+        if (!target && !part) return match;
+        const shown = target && part ? `${target} › ${part}` : target || part;
+        const label = (alias === undefined ? shown : alias.trim()).replace(/[[\]]/g, '\\$&');
+        const url = `${WIKI_PROTOCOL}${encodeURIComponent(target)}${part ? `#${encodeURIComponent(part)}` : ''}`;
+        const link = `[${label}](${url})`;
+        // Trimming and collapsing spaces lose any \r that was in the link. They
+        // go back in front of the link, not after it, where one could join a
+        // following \n into a single \r\n.
         return '\r'.repeat(countCarriageReturns(match) - countCarriageReturns(link)) + link;
       }),
     ),
   );
 }
 
-export function wikiTarget(href: string | undefined): string | null {
+/**
+ * Where a wiki: href leads: a note by its title, and maybe a heading in it.
+ * An empty title is the note the link is in.
+ */
+export interface WikiTarget {
+  title: string;
+  heading: string | null;
+}
+
+export function wikiTarget(href: string | undefined): WikiTarget | null {
   if (!href?.startsWith(WIKI_PROTOCOL)) return null;
+  // Both parts are encoded, so the first # is the one between them.
+  const [title = '', heading] = href.slice(WIKI_PROTOCOL.length).split('#', 2);
   try {
-    return decodeURIComponent(href.slice(WIKI_PROTOCOL.length));
+    return { title: decodeURIComponent(title), heading: heading ? decodeURIComponent(heading) : null };
   } catch {
     return null;
   }

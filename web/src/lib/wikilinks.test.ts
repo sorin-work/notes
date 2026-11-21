@@ -10,8 +10,24 @@ describe('linkifyWikiLinks', () => {
     expect(linkifyWikiLinks('[[Atlas data model|the model]]')).toBe('[the model](wiki:Atlas%20data%20model)');
   });
 
-  it('drops the heading part of the target', () => {
-    expect(linkifyWikiLinks('[[Recipes#Bread]]')).toBe('[Recipes](wiki:Recipes)');
+  it('keeps the heading part of the target', () => {
+    expect(linkifyWikiLinks('[[Recipes#Bread  rolls]]')).toBe('[Recipes › Bread rolls](wiki:Recipes#Bread%20rolls)');
+    expect(linkifyWikiLinks('[[Recipes#Bread|bread]]')).toBe('[bread](wiki:Recipes#Bread)');
+    expect(linkifyWikiLinks('[[Recipes#]]')).toBe('[Recipes](wiki:Recipes)');
+  });
+
+  it('reads [[#Heading]] as a link within the note', () => {
+    expect(linkifyWikiLinks('[[#Next steps]] and [[#Q&A|questions]]')).toBe(
+      '[Next steps](wiki:#Next%20steps) and [questions](wiki:#Q%26A)',
+    );
+    // A blank title is no title, as in the API, which leaves these alone too.
+    expect(linkifyWikiLinks('[[ #Goals]] [[  #Goals|the goals]]')).toBe(
+      '[Goals](wiki:#Goals) [the goals](wiki:#Goals)',
+    );
+  });
+
+  it('leaves links to nothing as they are', () => {
+    expect(linkifyWikiLinks('[[]] [[#]] [[|text]]')).toBe('[[]] [[#]] [[|text]]');
   });
 
   it('leaves fenced and inline code alone', () => {
@@ -44,7 +60,9 @@ describe('linkifyWikiLinks', () => {
 
 describe('wikiTarget', () => {
   it('decodes wiki: hrefs', () => {
-    expect(wikiTarget('wiki:Project%20Atlas')).toBe('Project Atlas');
+    expect(wikiTarget('wiki:Project%20Atlas')).toEqual({ title: 'Project Atlas', heading: null });
+    expect(wikiTarget('wiki:A%23B#C%23D')).toEqual({ title: 'A#B', heading: 'C#D' });
+    expect(wikiTarget('wiki:#Intro')).toEqual({ title: '', heading: 'Intro' });
   });
 
   it('ignores other links and broken encodings', () => {
