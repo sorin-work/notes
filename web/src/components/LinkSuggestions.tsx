@@ -63,3 +63,42 @@ export function suggestionAt(titles: { title: string }[], query: string, index: 
   if (index < titles.length) return titles[index]?.title ?? null;
   return newTitle(titles, query, taken);
 }
+
+/** A heading on offer after `[[Note#`: what the list shows, and what goes between the brackets. */
+export interface HeadingOption {
+  label: string;
+  depth: number;
+  insert: string;
+}
+
+/** The list shown under the editor while typing the #heading part of a link. */
+export function HeadingSuggestions({
+  options,
+  activeIndex,
+  onPick,
+}: {
+  options: HeadingOption[];
+  activeIndex: number;
+  onPick(insert: string): void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <ul id={SUGGESTIONS_ID} className="link-suggestions" role="listbox" aria-label="Link to heading">
+      {options.map((option, index) => (
+        <li
+          key={`${option.insert}-${index}`}
+          id={suggestionId(index)}
+          role="option"
+          aria-selected={index === activeIndex}
+          className={`heading-depth-${option.depth}${index === activeIndex ? ' active' : ''}`}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onPick(option.insert);
+          }}
+        >
+          {option.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
