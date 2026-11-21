@@ -161,20 +161,19 @@ describe('NotebookSelect', () => {
 });
 
 describe('NotebookOptions', () => {
-  it('lists every notebook for a select, in the order of the tree and indented by depth', () => {
+  it('lists every notebook for a select, in the order of the tree and named by its way there', () => {
     render(
       <select aria-label="Filter by notebook">
         <NotebookOptions notebooks={notebooks} />
       </select>,
     );
-    const step = '    ';
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'Personal',
       'Work',
-      `${step}Meetings`,
-      `${step}${step}One-to-ones`,
-      `${step}${step}${step}2026`,
-      `${step}Reading`,
+      'Work / Meetings',
+      'Work / Meetings / One-to-ones',
+      'Work / Meetings / One-to-ones / 2026',
+      'Work / Reading',
     ]);
   });
 });

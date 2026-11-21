@@ -5,7 +5,7 @@ import type { Notebook } from '../api/types';
 import { MAX_NOTEBOOK_DEPTH, possibleParents } from '../lib/notebooks';
 import { newlyPublicThrough } from '../lib/sharing';
 import { Modal } from './Modal';
-import { INDENT } from './NotebookSelect';
+import { NotebookOptions } from './NotebookSelect';
 import { ErrorMessage } from './States';
 
 interface Props {
@@ -69,12 +69,7 @@ export function NotebookDialog({ notebooks, notebook, parentId = null, onClose, 
               }}
             >
               <option value="">Top level</option>
-              {parents.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {INDENT.repeat(item.depth - 1)}
-                  {item.name}
-                </option>
-              ))}
+              <NotebookOptions notebooks={notebooks} only={parents} />
             </select>
           </label>
           {/* Beside the label, not in it, so that the select is called "Inside" and this is read after it. */}
