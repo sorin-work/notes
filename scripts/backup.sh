@@ -6,6 +6,7 @@
 #   backup.sh                  dump once a day until stopped (the compose service)
 #   backup.sh once             dump now and exit
 #   backup.sh restore <file>   replace the database with a dump
+#   backup.sh health           whether the last good dump is recent, for the healthcheck
 #
 # Dumps go to $BACKUP_DIR as notes-<UTC time>.dump in pg_dump's custom
 # format. After every dump only the newest $BACKUP_KEEP are kept.
@@ -21,6 +22,16 @@
 # at: on a network share they come from another machine's clock. Dumps
 # dated in the future are never removed and do not count towards
 # $BACKUP_KEEP. Every run names them in a warning.
+#
+# With BACKUP_ENCRYPT_TO set to one or more age public keys, the dump and the
+# files archive go through age as they are written and end in .age. No plain
+# copy is ever on disk. A restore of an .age file decrypts as it reads, with
+# the key in $BACKUP_IDENTITY_FILE. A plain and an encrypted file of the same
+# time are the same dump: they are counted, kept and pruned together.
+#
+# After every good dump the time is written to $BACKUP_DIR/.last-good-dump,
+# BACKUP_COPY_COMMAND (if set) gets the new files as arguments, and a failure
+# of either kind goes to BACKUP_ALERT_URL (if set) as a POST.
 set -eu
 
 dir=${BACKUP_DIR:-/backups}
@@ -28,6 +39,13 @@ files_dir=${ATTACHMENTS_DIR:-}
 ATTACHMENT_NAME='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 keep=${BACKUP_KEEP:-7}
 interval=${BACKUP_INTERVAL_SECONDS:-86400}
+encrypt_to=${BACKUP_ENCRYPT_TO:-}
+identity=${BACKUP_IDENTITY_FILE:-/run/secrets/backup-identity}
+copy_command=${BACKUP_COPY_COMMAND:-}
+copy_timeout=${BACKUP_COPY_TIMEOUT_SECONDS:-3600}
+alert_url=${BACKUP_ALERT_URL:-}
+marker="$dir/.last-good-dump"
+DUMP_NAME='^notes-[0-9]{8}T[0-9]{6}Z\.dump(\.age)?$'
 
 # A dump holds every note and the password hashes: owner only.
 umask 077
@@ -70,15 +88,84 @@ check_settings() {
   if [ -n "$files_dir" ] && [ ! -d "$files_dir" ]; then
     fail "ATTACHMENTS_DIR is set, but $files_dir is not a folder"
   fi
+  if [ -n "$encrypt_to" ]; then
+    command -v age >/dev/null || fail "BACKUP_ENCRYPT_TO is set, but there is no age here"
+    # A key that age does not take would otherwise only show at the first dump.
+    printf '' | seal /dev/null || fail "age does not take BACKUP_ENCRYPT_TO as public keys: '$encrypt_to'"
+  fi
+  if [ -n "$copy_command" ]; then
+    is_positive_integer "$copy_timeout" || fail "BACKUP_COPY_TIMEOUT_SECONDS must be a whole number above zero, got '$copy_timeout'"
+  fi
+  if [ -n "$alert_url" ]; then
+    command -v curl >/dev/null || fail "BACKUP_ALERT_URL is set, but there is no curl here"
+  fi
 }
 
-# File names of the finished dumps, newest first, going by the time in the
-# name.
+# Writes what comes in to the file $1, encrypted to every key in
+# $BACKUP_ENCRYPT_TO.
+seal() {
+  out=$1
+  set --
+  for key in $encrypt_to; do
+    set -- "$@" -r "$key"
+  done
+  age "$@" -o "$out"
+}
+
+# Runs the command "$2 ..." and seals what it prints into $1. Fails when
+# either the command or age fails, since a shell pipeline only reports the
+# last of them.
+sealed() {
+  target=$1
+  shift
+  { "$@"; echo $? >"$target.status"; } | seal "$target"
+  sealed_status=$?
+  made_status=$(cat "$target.status" 2>/dev/null || echo 1)
+  rm -f "$target.status"
+  [ "$sealed_status" = 0 ] && [ "$made_status" = 0 ]
+}
+
+# A POST to BACKUP_ALERT_URL with the text $2, at most once an hour for each
+# kind of failure $1 (dump or copy) while it keeps failing. The loop tries a
+# failed dump again every minute, and one message a minute is noise. Never
+# fails: an alert that does not go out is only logged.
+alert() {
+  [ -n "$alert_url" ] || return 0
+  alert_now=$(date +%s)
+  eval "alerted=\${alerted_$1:-}"
+  if [ -n "$alerted" ] && [ "$alerted" -le "$alert_now" ] && [ $((alert_now - alerted)) -lt 3600 ]; then
+    return 0
+  fi
+  eval "alerted_$1=$alert_now"
+  # The address is not logged: it often holds a token.
+  if ! curl -fsS -m 30 -X POST -H 'Title: notes backup' --data-binary "$2" "$alert_url" >/dev/null; then
+    log "could not send the alert to BACKUP_ALERT_URL" >&2
+  fi
+}
+
+# After a kind of failure is over, the next one is sent at once.
+alert_over() {
+  eval "alerted_$1="
+}
+
+# File names of the finished dumps, plain and encrypted, newest first,
+# going by the time in the name.
 dumps() {
-  ls -1 "$dir" | grep -E '^notes-[0-9]{8}T[0-9]{6}Z\.dump$' | sort -r
+  ls -1 "$dir" | grep -E "$DUMP_NAME" | sort -r
 }
 
-# The time in a dump's name as seconds since 1970. Prints nothing when the
+# A dump's name without .dump or .dump.age: notes-<time>.
+stem_of() {
+  echo "$1" | sed -E 's/\.dump(\.age)?$//'
+}
+
+# The dumps, one line per time, newest first. A plain and an encrypted file
+# of the same time are one dump.
+stems() {
+  dumps | sed -E 's/\.dump(\.age)?$//' | uniq
+}
+
+# The time in a dump's name, or in its stem, as seconds since 1970. Prints nothing when the
 # name does not hold a real date.
 #
 # Whether "date" refuses a day that does not exist depends on whose "date"
@@ -86,9 +173,10 @@ dumps() {
 # 3 March. So the seconds are turned back into a name, and the date counts
 # only when the name comes back as it was written.
 dump_time() {
-  written=$(echo "$1" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z\.dump$/\1-\2-\3 \4:\5:\6/')
+  timed=$(stem_of "$1")
+  written=$(echo "$timed" | sed -E 's/^notes-(....)(..)(..)T(..)(..)(..)Z$/\1-\2-\3 \4:\5:\6/')
   read_as=$(date -u -d "$written" +%s 2>/dev/null) || return 0
-  [ "$(date -u -d "@$read_as" +notes-%Y%m%dT%H%M%SZ.dump 2>/dev/null)" = "$1" ] || return 0
+  [ "$(date -u -d "@$read_as" +notes-%Y%m%dT%H%M%SZ 2>/dev/null)" = "$timed" ] || return 0
   echo "$read_as"
 }
 
@@ -104,9 +192,9 @@ future_dumps() {
   done
 }
 
-# The other dumps, newest first.
-present_dumps() {
-  dumps | while read -r candidate; do
+# The other dumps, newest first, by their stems.
+present_stems() {
+  stems | while read -r candidate; do
     made=$(dump_time "$candidate")
     if [ -n "$made" ] && [ "$made" -le "$1" ]; then
       echo "$candidate"
@@ -124,23 +212,35 @@ warn_about_future_dumps() {
   fi
 }
 
+# The files archive that goes with a dump: .files.tar beside a .dump, and
+# .files.tar.age beside a .dump.age.
+files_of() {
+  case $1 in
+    *.dump.age) echo "${1%.dump.age}.files.tar.age" ;;
+    *) echo "${1%.dump}.files.tar" ;;
+  esac
+}
+
 # Removes the oldest dumps until $keep are left. Two kinds are never removed:
 #
 #   - Dumps dated in the future. They sort first, so counting them would let
 #     a few stale files use up the quota while every new dump pushes out
 #     yesterday's. They do not count towards $keep either.
-#   - The dump that was just written ($1), whatever the clock makes of it.
-# The files archive that goes with a dump.
-files_of() {
-  echo "${1%.dump}.files.tar"
-}
-
+#   - The dump that was just written ($1, its stem), whatever the clock
+#     makes of it.
+#
+# Everything of an old dump goes together: the plain and the encrypted dump
+# and both kinds of archive.
 prune() {
   # Not "now": that is the loop's, which goes by when a dump was started.
   pruned_at=$(date +%s)
-  present_dumps "$pruned_at" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
-    rm -f "$dir/$old" "$dir/$(files_of "$old")"
-    log "removed $old"
+  present_stems "$pruned_at" | grep -v -x -F "$1" | tail -n +"$keep" | while read -r old; do
+    for suffix in .dump .dump.age .files.tar .files.tar.age; do
+      if [ -e "$dir/$old$suffix" ]; then
+        rm -f "$dir/$old$suffix"
+        log "removed $old$suffix"
+      fi
+    done
   done
   warn_about_future_dumps "$pruned_at"
 }
@@ -161,7 +261,11 @@ archive_files() {
     fi
   done
   status=0
-  tar -cf "$1" -C "$files_dir" --no-recursion . -T "$list" || status=$?
+  if [ -n "$encrypt_to" ]; then
+    sealed "$1" tar -cf - -C "$files_dir" --no-recursion . -T "$list" || status=1
+  else
+    tar -cf "$1" -C "$files_dir" --no-recursion . -T "$list" || status=$?
+  fi
   rm -f "$list"
   return "$status"
 }
@@ -173,8 +277,12 @@ archive_files() {
 # shows the file as missing, and the export and the JSON backup leave it out
 # and list it. Without stopping the API there is no moment at which both are
 # taken together; a dump of a stopped stack has no such gap.
+#
+# With BACKUP_ENCRYPT_TO, pg_dump and tar write into age, and only what age
+# writes reaches the disk. If either fails, the partial file goes.
 dump() {
-  name="notes-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  stem="notes-$(date -u +%Y%m%dT%H%M%SZ)"
+  name="$stem.dump${encrypt_to:+.age}"
   partial="$dir/.$name.partial"
   if [ -n "$files_dir" ]; then
     files_partial="$dir/.$(files_of "$name").partial"
@@ -185,10 +293,16 @@ dump() {
       return 1
     fi
   fi
-  if ! pg_dump --format=custom --file="$partial"; then
+  if [ -n "$encrypt_to" ]; then
+    sealed "$partial" pg_dump --format=custom && dumped=0 || dumped=1
+  else
+    pg_dump --format=custom --file="$partial" && dumped=0 || dumped=1
+  fi
+  if [ "$dumped" != 0 ]; then
     rm -f "$partial" "$files_partial"
     partial=''
     files_partial=''
+    log "pg_dump${encrypt_to:+ or age} failed" >&2
     return 1
   fi
   # Docker runs this as root. Give the dump to whoever owns the folder, so
@@ -204,7 +318,31 @@ dump() {
   mv "$partial" "$dir/$name" || return 1
   partial=''
   log "wrote $name ($(wc -c <"$dir/$name") bytes)"
-  prune "$name"
+  # For the healthcheck. The time of the dump, by the clock it was named with.
+  echo "$(date +%s) $name" >"$marker.partial" && mv "$marker.partial" "$marker" || log "could not write $marker" >&2
+  prune "$stem"
+  if [ -n "$files_dir" ]; then
+    copy_off_site "$dir/$name" "$dir/$(files_of "$name")"
+  else
+    copy_off_site "$dir/$name"
+  fi
+}
+
+# Runs BACKUP_COPY_COMMAND with the files of the dump just written as its
+# arguments, in "$@". A copy that fails or takes longer than
+# BACKUP_COPY_TIMEOUT_SECONDS is not a failed dump: the dump is there and
+# counts. It is logged and alerted, and the next dump is copied as usual.
+copy_off_site() {
+  [ -n "$copy_command" ] || return 0
+  copied=0
+  timeout "$copy_timeout" sh -c "$copy_command" copy "$@" || copied=$?
+  if [ "$copied" = 0 ]; then
+    log "copied $(basename "$1") off site"
+    alert_over copy
+  else
+    log "BACKUP_COPY_COMMAND failed (exit $copied) for $(basename "$1"). The dump itself is fine." >&2
+    alert copy "notes backup: the copy of $(basename "$1") failed (exit $copied). The dump itself was written."
+  fi
 }
 
 # When the newest dump was made, as seconds since 1970, for a clock that
@@ -212,7 +350,7 @@ dump() {
 # they were made, so they say nothing about the age of the newest real one.
 # Prints nothing when no dump is left to go by.
 newest_dump_time() {
-  dumps | while read -r candidate; do
+  stems | while read -r candidate; do
     made=$(dump_time "$candidate")
     if [ -n "$made" ] && [ "$made" -le "$1" ]; then
       echo "$made"
@@ -246,8 +384,8 @@ run() {
   trap 'rm -f "$partial" "$files_partial"; log "stopping"; exit 0' TERM INT
   step=$((interval < 60 ? interval : 60))
   # Left behind if the last run was killed in the middle of a dump.
-  rm -f "$dir"/.notes-*.partial
-  log "dumping $PGDATABASE to $dir every ${interval}s, keeping the newest $keep"
+  rm -f "$dir"/.notes-*.partial "$dir"/.notes-*.partial.status
+  log "dumping $PGDATABASE to $dir every ${interval}s, keeping the newest $keep${encrypt_to:+, encrypted with age}"
 
   now=$(date +%s)
   warn_about_future_dumps "$now"
@@ -255,6 +393,10 @@ run() {
   if [ -z "$last" ] && [ -n "$(dumps | head -n 1)" ]; then
     log "every dump in $dir is dated in the future, counting the newest as made now"
     last=$now
+  fi
+  # Dumps from before there was a marker count for the healthcheck too.
+  if [ ! -f "$marker" ] && [ -n "$last" ]; then
+    echo "$last" >"$marker"
   fi
 
   while true; do
@@ -274,11 +416,40 @@ run() {
       log "$PGDATABASE has no tables yet, looking again in ${step}s"
     elif dump; then
       last=$now
+      alert_over dump
     else
       log "dump failed, trying again in ${step}s"
+      alert dump "notes backup: a dump of $PGDATABASE failed. It is tried again every ${step}s, see docker compose logs backup."
     fi
     nap "$step"
   done
+}
+
+# For the healthcheck of the compose service: healthy when the last good
+# dump is at most an interval and a bit old. The bit is a twelfth of the
+# interval, two hours for a day, and at least five minutes, which leaves a
+# failed dump time for a few more tries before anyone is told. A time ahead
+# of the clock counts as now, the same as in the loop.
+health() {
+  is_positive_integer "$interval" || fail "BACKUP_INTERVAL_SECONDS must be a whole number above zero, got '$interval'"
+  if [ ! -f "$marker" ]; then
+    echo "no good dump yet: there is no $marker"
+    exit 1
+  fi
+  made=$(cut -d ' ' -f 1 <"$marker")
+  if ! is_positive_integer "$made"; then
+    echo "$marker does not hold a time"
+    exit 1
+  fi
+  checked_at=$(date +%s)
+  grace=$((interval / 12 > 300 ? interval / 12 : 300))
+  [ "$made" -le "$checked_at" ] || made=$checked_at
+  since=$((checked_at - made))
+  if [ "$since" -gt $((interval + grace)) ]; then
+    echo "the last good dump is ${since}s old, more than ${interval}s and ${grace}s to spare"
+    exit 1
+  fi
+  echo "the last good dump is ${since}s old"
 }
 
 # dropdb without the notice it prints when there is nothing to drop.
@@ -338,10 +509,20 @@ archive_is_clean() {
 }
 
 # Unpacks the files archive $1 into $files_dir/.restoring, next to the files
-# in use, after checking it. Nothing in use is touched yet.
+# in use, after checking it. Nothing in use is touched yet. An encrypted
+# archive is decrypted on the way in, so its plain copy is only ever in the
+# folder the files go back to, and only until they are unpacked.
 stage_files() {
   check="$files_dir/.checking.tar"
-  cp "$1" "$check"
+  case $1 in
+    *.age)
+      if ! age -d -i "$identity" -o "$check" "$1"; then
+        rm -f "$check"
+        fail "could not decrypt $(basename "$1") with $identity. Nothing was restored."
+      fi
+      ;;
+    *) cp "$1" "$check" ;;
+  esac
   if ! archive_is_clean "$check"; then
     rm -f "$check"
     fail "$(basename "$1") holds something other than attachment files. Nothing was restored."
@@ -397,6 +578,24 @@ swap_failed() {
   exit 1
 }
 
+# Loads the dump $1 into the database $2. An encrypted dump is decrypted as
+# pg_restore reads it, through a pipe, so no plain copy is written. Fails
+# when age or pg_restore does.
+load() {
+  case $1 in
+    *.age)
+      # Not in the backup folder: a restore needs no folder it can write to.
+      work_status=$(mktemp)
+      { age -d -i "$identity" "$1"; echo $? >"$work_status"; } | pg_restore --exit-on-error --no-owner --dbname="$2"
+      restored=$?
+      decrypted=$(cat "$work_status" 2>/dev/null || echo 1)
+      rm -f "$work_status"
+      [ "$restored" = 0 ] && [ "$decrypted" = 0 ]
+      ;;
+    *) pg_restore --exit-on-error --no-owner --dbname="$2" "$1" ;;
+  esac
+}
+
 # Replaces $PGDATABASE with a dump, in an order that never leaves the server
 # without a database of that name:
 #
@@ -420,6 +619,12 @@ restore() {
   fi
   [ -f "$file" ] || file="$dir/$file"
   [ -f "$file" ] || fail "no such dump: $1"
+  case $file in
+    *.age)
+      command -v age >/dev/null || fail "$(basename "$file") is encrypted, and there is no age here"
+      [ -r "$identity" ] || fail "$(basename "$file") is encrypted. Mount the age key that can read it at $identity (or set BACKUP_IDENTITY_FILE). Nothing was restored."
+      ;;
+  esac
 
   # The files of attachments, when there are some to restore. They are
   # checked and unpacked aside first, and only put in place once the
@@ -452,7 +657,7 @@ restore() {
   fi
 
   createdb "$incoming"
-  if ! pg_restore --exit-on-error --no-owner --dbname="$incoming" "$file"; then
+  if ! load "$file" "$incoming"; then
     drop "$incoming"
     [ -z "$files" ] || rm -rf "$incoming_files"
     fail "could not restore $(basename "$file"), $PGDATABASE was left as it was"
@@ -497,14 +702,20 @@ case ${1:-run} in
     ;;
   once)
     check_settings
-    dump || fail "dump failed"
+    if ! dump; then
+      alert dump "notes backup: a dump of $PGDATABASE failed (backup.sh once)."
+      fail "dump failed"
+    fi
+    ;;
+  health)
+    health
     ;;
   restore)
     shift
     restore "$@"
     ;;
   *)
-    echo "usage: backup.sh [run | once | restore <file>]" >&2
+    echo "usage: backup.sh [run | once | restore <file> | health]" >&2
     exit 1
     ;;
 esac
