@@ -33,6 +33,14 @@ describe('MentionsService', () => {
   pool.deadline = 2_000;
   pool.totalDeadline = 10_000;
   afterAll(() => pool.onModuleDestroy());
+  // The app starts the workers with the server; here they start with the
+  // first test. Loading the parser and its first parse can take more than the
+  // second the service gives a lookup on a busy CI machine, so they are
+  // warmed first rather than counted against that second.
+  beforeAll(async () => {
+    await pool.ready();
+    await pool.run({ text: 'Warm up with [[a link]].', title: 'a link' });
+  }, 30_000);
   let prisma: PrismaMock;
   let links: jest.Mocked<Pick<LinksService, 'sync' | 'titleTaken'>>;
   let versions: jest.Mocked<Pick<VersionsService, 'snapshot'>>;
