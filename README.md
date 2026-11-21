@@ -462,9 +462,13 @@ put its `rclone.conf` in `./backup-config`:
 BACKUP_COPY_COMMAND='for file; do rclone --config /config/rclone.conf copy "$file" offsite:notes || exit 1; done'
 ```
 
-The single quotes keep `"$@"` from being read when `.env` is. A copy that
-fails, or takes longer than `BACKUP_COPY_TIMEOUT_SECONDS`, is not a failed
-dump: the dump is there and counts. It is logged and alerted, and the next
+The single quotes keep `"$@"` from being read when `.env` is. The command
+runs in a session of its own. When it takes longer than
+`BACKUP_COPY_TIMEOUT_SECONDS`, the whole session is stopped, the loop and
+every rclone, rsync or ssh it started, and whatever the command leaves
+running when it ends is stopped too. So a copy never runs on beside the next
+one, or while old dumps are pruned. A copy that fails or is stopped is not
+a failed dump: the dump is there and counts. It is logged and alerted, and the next
 dump is copied as usual. Only the new files are copied, so a dump whose copy
 failed is not sent again later. Pruning old copies on the other side is up
 to the other side.
