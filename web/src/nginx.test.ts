@@ -14,12 +14,34 @@ function code(text: string): string {
   return text.replace(/#.*$/gm, '');
 }
 
-/** Each `location` block of nginx.conf: what it matches and what is in it. None of them nest. */
-function locations(): { match: string; body: string }[] {
-  return [...code(config).matchAll(/location\s+([^{]+?)\s*\{([^}]*)\}/g)].map(([, match = '', body = '']) => ({
-    match,
-    body,
-  }));
+interface Location {
+  match: string;
+  /** Everything between its braces, nested blocks included. */
+  body: string;
+  /** How many blocks it is inside of, the server block not counted. */
+  depth: number;
+}
+
+/**
+ * Each `location` block of nginx.conf, found by counting braces, so that a
+ * location inside another one is found too and its body is all of it.
+ */
+function locations(): Location[] {
+  const text = code(config);
+  const found: Location[] = [];
+  const opened: number[] = [];
+  for (let at = 0; at < text.length; at++) {
+    if (text[at] === '{') opened.push(at);
+    if (text[at] !== '}') continue;
+    const start = opened.pop();
+    if (start === undefined) throw new Error(`a } without its { at ${at}`);
+    const head = /location\s+([^;{}]+?)\s*$/.exec(text.slice(0, start));
+    if (head) {
+      found.push({ match: head[1] ?? '', body: text.slice(start + 1, at), depth: opened.length - 1 });
+    }
+  }
+  if (opened.length > 0) throw new Error('a { without its }');
+  return found;
 }
 
 function isApi(match: string): boolean {
@@ -49,6 +71,14 @@ describe('nginx.conf', () => {
     expect(matches).toEqual(expect.arrayContaining(['/', '= /index.html', '/assets/', '= /sw.js', '/api/']));
   });
 
+  it('has no location inside another, where the include of the outer one would be dropped', () => {
+    expect(
+      locations()
+        .filter((location) => location.depth > 0)
+        .map((location) => location.match),
+    ).toEqual([]);
+  });
+
   it('includes the security headers in every location outside /api/', () => {
     const missing = locations()
       .filter((location) => !isApi(location.match) && !location.body.includes(`include ${INCLUDE};`))
@@ -68,7 +98,8 @@ describe('nginx.conf', () => {
   });
 
   it('puts no headers on the server block, where a location would drop them unseen', () => {
-    const outside = code(config).replace(/location\s+[^{]+\{[^}]*\}/g, '');
+    let outside = code(config);
+    for (const location of locations()) outside = outside.replace(location.body, '');
     expect(outside).not.toMatch(/add_header/);
   });
 
