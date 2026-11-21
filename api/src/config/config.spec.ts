@@ -1,4 +1,4 @@
-import { ConfigError, loadConfig, logLevelsFrom } from './config';
+import { ConfigError, loadConfig, logLevelsFrom, sampleSecretsInUse } from './config';
 
 const base = {
   DATABASE_URL: 'postgresql://notes:notes@localhost:5441/notes',
@@ -27,6 +27,16 @@ describe('loadConfig', () => {
       twoStepKey: null,
     });
     expect(config.logLevels).toEqual(['error', 'warn', 'log']);
+  });
+
+  it('names the settings that still have the sample value from the repository', () => {
+    const sample = loadConfig({
+      ...base,
+      JWT_SECRET: 'local-development-secret-change-me-0123456789',
+      TWO_STEP_KEY: '6c6f63616c2d646576656c6f706d656e742d6b65792d6368616e67652d6d6521',
+    });
+    expect(sampleSecretsInUse(sample)).toEqual(['JWT_SECRET', 'TWO_STEP_KEY']);
+    expect(sampleSecretsInUse(loadConfig({ ...base, TWO_STEP_KEY: 'ab'.repeat(32) }))).toEqual([]);
   });
 
   it('reads TWO_STEP_KEY as hex or base64, and refuses a key of the wrong size', () => {

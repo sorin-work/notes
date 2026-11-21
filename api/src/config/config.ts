@@ -154,6 +154,24 @@ function twoStepKeyFrom(value: string | undefined): Buffer | null {
   return key;
 }
 
+/** The values in docker-compose.yml and .env.example, which anyone can read. */
+export const SAMPLE_JWT_SECRET = 'local-development-secret-change-me-0123456789';
+export const SAMPLE_TWO_STEP_KEY = Buffer.from('local-development-key-change-me!');
+
+/**
+ * The settings that still have the sample value from the repository. With
+ * the sample JWT_SECRET anyone can make login tokens, and with the sample
+ * TWO_STEP_KEY anyone with a dump can read the two-step secrets. main.ts
+ * warns about each at start, loudly, rather than refusing: they are what the
+ * Compose stack starts with for trying it out.
+ */
+export function sampleSecretsInUse(config: Pick<AppConfig, 'jwtSecret' | 'twoStepKey'>): string[] {
+  const found: string[] = [];
+  if (config.jwtSecret === SAMPLE_JWT_SECRET) found.push('JWT_SECRET');
+  if (config.twoStepKey?.equals(SAMPLE_TWO_STEP_KEY)) found.push('TWO_STEP_KEY');
+  return found;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) {
