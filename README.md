@@ -136,7 +136,7 @@ Markdown import/export.
   stop for Tab, and the arrow keys move inside it. The arrow keys also move
   through the notebooks in the sidebar and in the notebook picker of a note,
   and fold and unfold them. On a phone, opening the menu puts the focus in
-  it, and Escape closes it again. The notebook selects name each notebook by
+  it, Tab stays in it, and Escape closes it again. The notebook selects name each notebook by
   its whole way, such as "Work / Meetings", rather than by indenting.
   Colours meet WCAG AA contrast in both themes, and nothing spins or slides
   when the system asks for reduced motion. See
@@ -177,7 +177,7 @@ Markdown import/export.
 The tests run axe over every page and dialog, and check the keys above, but
 neither stands in for a person with a screen reader. This is the list to go
 through with NVDA and Firefox on Windows and with VoiceOver and Safari on a
-Mac. It has not been gone through yet: nothing below has been heard in a
+Mac. It has not been gone through yet (roadmap item 34): nothing below has been heard in a
 real screen reader.
 
 - Sign in, then Tab from the top of a note page: the skip links come first
@@ -188,8 +188,11 @@ real screen reader.
   count; the fold buttons say "Fold" or "Unfold" and whether they are
   expanded; the arrow keys work in focus mode (NVDA) and with VoiceOver's
   keys passed through.
-- The notebook picker of a note: the button says where the note is, the list
-  is a group, and Escape puts the focus back on the button.
+- The notebook picker of a note: the button says where the note is, opening
+  it puts the focus on the choice that stands, the list is a group, and
+  Escape puts the focus back on the button.
+- Folding with Left and Right: the notebook itself is read as expanded or
+  collapsed.
 - The filter selects and "Inside" in the notebook dialog: options are read
   with their whole way.
 - Typing `[[` in a note: the suggestions are read as they change, and Enter
@@ -198,7 +201,7 @@ real screen reader.
 - A dialog: the focus starts inside it, Tab stays inside, and Escape returns
   the focus.
 - On a phone-sized window: the menu button, the focus moving into the menu,
-  and Escape.
+  Tab staying in it, and Escape.
 
 ### Saving a page from the browser
 

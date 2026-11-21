@@ -56,10 +56,32 @@ couple of weekends, **L** several weeks of spare time.
 | 31  | Embedding one note in another                       | Maybe   | both     | M    | 21         |
 | 32  | A graph that copes with more notes                  | Maybe   | frontend | M    | -          |
 | 33  | Thumbnails, object storage and Evernote attachments | Maybe   | both     | L    | -          |
+| 34  | Screen reader pass with NVDA and VoiceOver          | Next    | frontend | S    | 23         |
 
 ## Next
 
-Nothing at the moment: items 19 to 23 have shipped.
+### 34. Screen reader pass with NVDA and VoiceOver
+
+Improves item 23. The keys and names it added are tested in jsdom and were
+checked in a headless browser, but nobody has heard them in a real screen
+reader. The list is in the README under "Checking with a screen reader".
+
+- NVDA with Firefox and VoiceOver with Safari, each through the list.
+- Browse mode: NVDA and VoiceOver take the arrow keys for themselves. Check
+  that the trees and the note list work in focus mode (NVDA) or with the
+  keys passed through (VoiceOver), and that nothing is lost in browse mode.
+- Folding: a fold made with Left or Right is announced on the notebook, as
+  "collapsed" or "expanded", not only on its fold button.
+- The note list as one stop: Tab reaches it once and leaves it with the next
+  press, and the open note is read as the current page.
+- Option names: the filter selects, the daily note select and "Inside" read
+  each notebook with its whole way.
+- The menu on a phone-sized window: the focus moves into it, Tab stays in it,
+  and Escape gives the focus back to its button.
+- The notebook picker of a note: the focus lands on the choice that stands,
+  the list is read as a group with its name, and Escape returns the focus.
+- Whatever the pass finds is fixed in the same item, and the README list
+  records when and with what it was gone through.
 
 ## Later
 
@@ -890,14 +912,17 @@ the notebook trees of `Sidebar` (own and shared) and `NotebookSelect` the
 keys of the ARIA tree pattern: Up, Down, Home, End, Right to unfold or go
 in, Left to fold or go up. On the other open point the trees stay nested
 lists of links and buttons without `role="tree"`, for the reason the design
-gave, and each notebook link stays its own Tab stop. On a narrow screen the
-menu button puts the focus on the first link of the menu, and Escape closes
-it and gives the focus back, unless a dialog is open and takes the key.
+gave, and each notebook link stays its own Tab stop, with `aria-expanded` on
+it so that a fold is announced where the focus is. The notebook picker puts
+the focus on the choice that stands when it opens. On a narrow screen the
+menu button puts the focus on the first link of the menu, Tab goes round
+the menu and its button as in a dialog, and Escape closes it and gives the
+focus back, unless a dialog is open and takes the keys.
 `FilterSelects`, the daily note select in Settings and the "Inside" select of
 `NotebookDialog` stay native and name every option by its whole way
 ("Work / Meetings"), all through `NotebookOptions`. Not done: the pass with
 NVDA and Firefox and with VoiceOver and Safari. I could not run a screen
 reader where this was built, so the README has the checklist under
 "Checking with a screen reader", marked as not gone through yet, and
-nothing on it has been heard in a real screen reader. That pass is still
-open, together with whatever it finds.
+nothing on it has been heard in a real screen reader. That pass is item 34,
+together with whatever it finds.
