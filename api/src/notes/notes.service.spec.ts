@@ -662,7 +662,8 @@ describe('NotesService', () => {
         noteIds: [],
       });
       await expect(service.orphanedLinkCount(USER, 'n1', 'Atlas')).resolves.toBe(0);
-      expect(prisma.note.findMany).not.toHaveBeenCalled();
+      // Only the ids of the notes to lock are read, never the notes to rewrite.
+      for (const [args] of prisma.note.findMany.mock.calls) expect(args).toMatchObject({ select: { id: true } });
       expect(prisma.note.updateMany).not.toHaveBeenCalled();
     });
 
