@@ -32,7 +32,8 @@ describe('ConfirmEmailPage', () => {
     expect(await screen.findByLabelText('address')).toHaveTextContent(/^\/confirm-email$/);
     // Opening the page sends nothing, so a scanner that follows links does not confirm.
     expect(calls).toEqual([]);
-    await expectNoAxeViolations();
+    // The address bar of the test sits outside the page's landmarks.
+    await expectNoAxeViolations({ part: true });
 
     await userEvent.click(screen.getByRole('button', { name: 'Confirm the address' }));
     expect(await screen.findByRole('heading', { name: 'Email address changed' })).toBeInTheDocument();

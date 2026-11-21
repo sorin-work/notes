@@ -5,7 +5,7 @@ import { passwordResetEnabled } from '../api/auth';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useDiscardOthersQuestion } from '../components/DiscardOthersQuestion';
-import { ErrorMessage } from '../components/States';
+import { ErrorMessage, focusOnce } from '../components/States';
 
 export function LoginPage() {
   const { login, loginWithCode } = useAuth();
@@ -87,7 +87,8 @@ export function LoginPage() {
               onChange={(event) => setCode(event.target.value)}
               aria-describedby="code-hint"
               required
-              autoFocus
+              // The form takes the place of the password form, where the focus was.
+              ref={focusOnce}
             />
           </label>
           <p className="muted" id="code-hint">
