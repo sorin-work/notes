@@ -14,6 +14,7 @@ import { ApiTokensStillWorking } from '../components/ApiTokensStillWorking';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { NotebookOptions } from '../components/NotebookSelect';
 import { ErrorMessage } from '../components/States';
+import { TwoStepSettings } from '../components/TwoStepSettings';
 import { Theme, useTheme } from '../hooks/useTheme';
 import { formatRelative } from '../lib/dates';
 import { DATE_FORMATS, formatDay, localDay } from '../lib/days';
@@ -27,6 +28,7 @@ export function SettingsPage() {
         <h2>Account</h2>
         {user && <ProfileForm user={user} />}
         <PasswordForm />
+        <TwoStepSettings />
         <SessionsSection />
         {user && <DeleteAccountSection user={user} />}
       </section>
@@ -97,8 +99,14 @@ function ProfileForm({ user }: { user: User }) {
           />
         </label>
       )}
+      {user.pendingEmail && (
+        <p className="muted" role="status">
+          A link to confirm {user.pendingEmail} went to that address, and a notice to {user.email}. Until the link is
+          opened, you sign in with {user.email}. The link works for an hour.
+        </p>
+      )}
       {save.error && <ErrorMessage error={save.error} />}
-      {save.isSuccess && !changed && <p className="success">Saved.</p>}
+      {save.isSuccess && !changed && !user.pendingEmail && <p className="success">Saved.</p>}
       <div className="form-actions start">
         <button type="submit" className="button button-primary" disabled={!changed || save.isPending}>
           Save
@@ -631,7 +639,9 @@ function TagsSection() {
 }
 
 function ApiTokensSection() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [code, setCode] = useState('');
   const tokens = useQuery({ queryKey: ['api-tokens'], queryFn: listApiTokens });
   const [name, setName] = useState('');
   const [readOnly, setReadOnly] = useState(false);
@@ -642,13 +652,14 @@ function ApiTokensSection() {
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['api-tokens'] });
   const create = useMutation({
-    mutationFn: () => createApiToken(name, readOnly, password),
+    mutationFn: () => createApiToken(name, readOnly, password, user?.twoStep ? code.trim() : undefined),
     onSuccess: (token) => {
       setCreated(token);
       setCopied(false);
       setName('');
       setReadOnly(false);
       setPassword('');
+      setCode('');
       refresh();
     },
   });
@@ -679,7 +690,7 @@ function ApiTokensSection() {
         token can read and change notes, or only read them if it is read-only. It cannot change the account or manage
         tokens. Tokens do not expire. Signing out everywhere and changing the password leave them alone, and only a
         password reset by mail revokes them all, so revoke the ones you no longer use. Making one takes your password,
-        because it outlives every login.
+        and a code with two-step sign-in on, because it outlives every login.
       </p>
       {tokens.error && <ErrorMessage error={tokens.error} />}
       {tokens.data?.length === 0 && <p className="muted">No tokens yet.</p>}
@@ -753,6 +764,19 @@ function ApiTokensSection() {
             required
           />
         </label>
+        {user?.twoStep && (
+          <label className="field">
+            <span>Code from the authenticator app, or a recovery code</span>
+            <input
+              autoComplete="one-time-code"
+              spellCheck={false}
+              maxLength={40}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              required
+            />
+          </label>
+        )}
         {create.error && <ErrorMessage error={create.error} />}
         <div className="form-actions start">
           <button type="submit" className="button button-primary" disabled={create.isPending}>

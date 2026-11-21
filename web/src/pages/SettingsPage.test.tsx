@@ -14,6 +14,7 @@ const loaded = {
   'GET /api/auth/me': { body: user },
   'GET /api/tags': { body: [] },
   'GET /api/auth/tokens': { body: [] },
+  'GET /api/auth/two-step': { body: { available: true, on: false, recoveryCodesLeft: 0 } },
 };
 
 function renderSettings() {
@@ -314,6 +315,55 @@ describe('SettingsPage', () => {
     expect(await screen.findByText(/read-only · made/)).toHaveTextContent('never used');
     expect(screen.getByLabelText('Token name')).toHaveValue('');
     expect(screen.getByLabelText('Password, to create the token')).toHaveValue('');
+  });
+
+  it('asks for a code too before making a token when two-step sign-in is on', async () => {
+    const calls = mockFetch({
+      ...loaded,
+      'GET /api/auth/me': { body: { ...user, twoStep: true } },
+      'GET /api/auth/two-step': { body: { available: true, on: true, recoveryCodesLeft: 10 } },
+      'POST /api/auth/tokens': {
+        status: 201,
+        body: {
+          id: 't1',
+          name: 'cron',
+          readOnly: false,
+          lastUsedAt: null,
+          createdAt: '2026-01-01T00:00:00Z',
+          token: 'nt_x',
+        },
+      },
+    });
+    renderSettings();
+
+    await userEvent.type(await screen.findByLabelText('Token name'), 'cron');
+    await userEvent.type(screen.getByLabelText('Password, to create the token'), 'demo-password');
+    await userEvent.type(screen.getByLabelText('Code from the authenticator app, or a recovery code'), '123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
+    expect(await screen.findByLabelText('New API token')).toHaveValue('nt_x');
+    expect(calls.find((call) => call.url === '/api/auth/tokens' && call.method === 'POST')?.body).toEqual({
+      name: 'cron',
+      readOnly: false,
+      currentPassword: 'demo-password',
+      code: '123456',
+    });
+  });
+
+  it('says that a new email waits for its link', async () => {
+    mockFetch({
+      ...loaded,
+      'PATCH /api/auth/me': { body: { ...user, pendingEmail: 'new@example.com' } },
+    });
+    renderSettings();
+
+    const email = await screen.findByLabelText('Email');
+    await userEvent.clear(email);
+    await userEvent.type(email, 'new@example.com');
+    await userEvent.type(screen.getByLabelText('Password, to confirm the new email'), 'demo-password');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]!);
+    expect(await screen.findByText(/A link to confirm new@example.com went to that address/)).toBeInTheDocument();
+    // The account keeps its address until then.
+    expect(screen.getByLabelText('Email')).toHaveValue(user.email);
   });
 
   it('revokes an API token after asking', async () => {
