@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { capRows, type DiffLine, diffLines, foldUnchanged, MAX_EDITS } from './diff';
+import {
+  capRows,
+  type DiffLine,
+  diffLines,
+  diffWords,
+  foldUnchanged,
+  type LinePart,
+  markWords,
+  MAX_EDITS,
+  MAX_WORD_SPAN,
+} from './diff';
 
 /** One character per line: a space for unchanged, - for removed, + for added. */
 function signs(before: string, after: string): string | null {
@@ -147,5 +157,68 @@ describe('capRows', () => {
   it('keeps everything when the rest holds no change', () => {
     expect(capRows(rows, 7)).toEqual({ rows, more: 0 });
     expect(capRows(rows, 100)).toEqual({ rows, more: 0 });
+  });
+});
+
+describe('foldUnchanged and the lines it hides', () => {
+  it('keeps the hidden lines with the row that stands for them', () => {
+    const lines =
+      diffLines(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].join('\n'), 'a\nb\nc\nd\ne\nf\ng\nh\nX') ?? [];
+    const skipped = foldUnchanged(lines).find((row) => row.type === 'skipped');
+    expect(skipped).toEqual({
+      type: 'skipped',
+      count: 5,
+      lines: ['a', 'b', 'c', 'd', 'e'].map((text) => ({ type: 'same', text })),
+    });
+  });
+});
+
+/** A side of a word diff with the changed parts in brackets. */
+const marked = (parts: LinePart[]) => parts.map((part) => (part.changed ? `[${part.text}]` : part.text)).join('');
+
+describe('diffWords', () => {
+  it('marks the words that differ on each side', () => {
+    const words = diffWords('The release is at the end of Q2.', 'The first release is at the end of Q3.');
+    expect(words && marked(words.removed)).toBe('The release is at the end of [Q2].');
+    expect(words && marked(words.added)).toBe('The [first ]release is at the end of [Q3].');
+  });
+
+  it('marks neighbouring changed words as one stretch, spaces included', () => {
+    const words = diffWords('one two three four', 'one six seven four');
+    expect(words && marked(words.removed)).toBe('one [two three] four');
+  });
+
+  it('shows lines whole that have little in common', () => {
+    expect(diffWords('Buy milk and eggs', 'Call the plumber today')).toBeNull();
+  });
+
+  it('shows a very long line whole when much of it changed, and marks a small change in it', () => {
+    const long = (word: string) => Array.from({ length: MAX_WORD_SPAN }, (_, index) => `${word}${index}`).join(' ');
+    expect(diffWords(long('a'), long('b'))).toBeNull();
+    const words = diffWords(`${long('a')} end`, `${long('a')} END`);
+    expect(words?.added.at(-1)).toEqual({ text: 'END', changed: true });
+  });
+});
+
+describe('markWords', () => {
+  const line = (type: DiffLine['type'], text: string): DiffLine => ({ type, text });
+
+  it('pairs removed lines with the added lines after them, in order, and leaves the rest whole', () => {
+    const lines = markWords([
+      line('same', 'Intro'),
+      line('removed', 'Ship on Monday'),
+      line('removed', 'Ask Priya first'),
+      line('added', 'Ship on Tuesday'),
+      line('same', 'End'),
+      line('added', 'A new line'),
+    ]);
+    expect(lines.map((one) => (one.parts ? marked(one.parts) : null))).toEqual([
+      null,
+      'Ship on [Monday]',
+      null,
+      'Ship on [Tuesday]',
+      null,
+      null,
+    ]);
   });
 });
