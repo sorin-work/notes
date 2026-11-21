@@ -58,13 +58,41 @@ describe('VersionHistoryDialog', () => {
 
     await userEvent.click(changes);
     expect(changes).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('Ship in March').closest('.diff-line')).toHaveClass('diff-removed');
-    expect(screen.getByText('Ship in April').closest('.diff-line')).toHaveClass('diff-added');
+    // One word changed, so the lines are paired and that word is marked in each.
+    expect(screen.getByText('March').closest('del')?.closest('.diff-line')).toHaveClass('diff-removed');
+    expect(screen.getByText('April').closest('ins')?.closest('.diff-line')).toHaveClass('diff-added');
     expect(screen.getByText(/The title changed/)).toHaveTextContent('from “Plan” to “Plan for spring”');
 
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
-    expect(screen.queryByText('Ship in April')).not.toBeInTheDocument();
+    expect(screen.queryByText('April')).not.toBeInTheDocument();
+  });
+
+  it('compares two versions, from the older to the newer whichever is picked first', async () => {
+    const versions = [
+      { id: 'v3', title: 'Plan', characters: 20, createdAt: '2026-01-03T10:00:00Z' },
+      { id: 'v2', title: 'Plan', characters: 20, createdAt: '2026-01-02T10:00:00Z' },
+      { id: 'v1', title: 'Plan', characters: 5, createdAt: '2026-01-01T10:00:00Z' },
+    ];
+    mockFetch({
+      'GET /api/notes/n1/versions': { body: versions },
+      'GET /api/notes/n1/versions/v3': { body: { ...versions[0], content: 'Ship in May' } },
+      'GET /api/notes/n1/versions/v2': { body: { ...versions[1], content: 'Ship in April' } },
+      'GET /api/notes/n1/versions/v1': { body: { ...versions[2], content: 'Ship in March' } },
+    });
+    renderWithProviders(<VersionHistoryDialog noteId="n1" current={current} onClose={vi.fn()} onRestored={vi.fn()} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Changes' }));
+    const compare = screen.getByRole('combobox', { name: 'Compare with' });
+    expect(compare).toHaveDisplayValue('The note now');
+    // The newest version is selected; compared with the oldest, the oldest comes first.
+    await userEvent.selectOptions(compare, screen.getByRole('option', { name: /Jan 1, 2026/ }));
+    expect(await screen.findByText(/From the version of .* to the one of/)).toBeInTheDocument();
+    expect(screen.getByText('March').closest('del')).toBeInTheDocument();
+    expect(screen.getByText('May').closest('ins')).toBeInTheDocument();
+    // The selected version itself is not on offer.
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    await expectNoAxeViolations({ part: true });
   });
 
   it('explains when there are no versions yet', async () => {
