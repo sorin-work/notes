@@ -44,7 +44,7 @@ couple of weekends, **L** several weeks of spare time.
 | 19  | Security headers for the web app                    | Shipped | infra    | S    | -          |
 | 20  | Compare two versions with each other                | Next    | frontend | S    | -          |
 | 21  | Links to headings and an outline                    | Next    | both     | M    | -          |
-| 22  | Encrypted, off-site and watched backups             | Next    | infra    | M    | -          |
+| 22  | Encrypted, off-site and watched backups             | Shipped | infra    | M    | -          |
 | 23  | Keyboard and screen reader follow-ups               | Next    | frontend | M    | -          |
 | 24  | Tasks across notes                                  | Later   | both     | M    | -          |
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
@@ -112,37 +112,6 @@ top of the note. Long notes also have no outline to jump around in.
   column), which would let backlinks show which heading is linked and the
   preview mark links to headings that do not exist. Without it nothing
   changes in the API.
-
-### 22. Encrypted, off-site and watched backups
-
-Improves item 7. The dumps are not encrypted, stay on the same disk unless
-`BACKUP_DIR` points elsewhere, and a failed dump only shows in
-`docker compose logs backup`.
-
-- Encryption: with `BACKUP_ENCRYPT_TO` set to an `age` public key,
-  `scripts/backup.sh` encrypts each dump and its `.files.tar` as they are
-  written and keeps no plain copy. `restore` decrypts with a key file that is
-  mounted only for the restore. The `postgres:17-alpine` image has no `age`,
-  so the service either installs it on start or gets a small image of its own
-  built from that one.
-- Off-site copy: an optional `BACKUP_COPY_COMMAND` run after each good dump
-  with the new files as arguments, documented with `rsync` over SSH and
-  `rclone` (which reaches self-hosted S3-compatible storage too). Pruning
-  copies on the other side is left to the other side.
-- Watching: the service writes the time of the last good dump to a file, and
-  a `healthcheck` in `docker-compose.yml` turns it unhealthy when that is
-  more than a day and a bit old. An optional `BACKUP_ALERT_URL` gets a `POST`
-  on every failure, which works with a self-hosted ntfy or any webhook.
-- Tricky: `dumps()`, `prune()` and `newest_dump_time()` read the time from
-  file names. Encrypted files end in `.age` and have to be counted the same
-  way, a plain and an encrypted file of the same time are one dump, and the
-  future-dated rules still hold.
-- Tricky: a failed encryption must leave no plain file behind, a failed copy
-  is not a failed dump but still alerts, and `check-backup-loop.sh` needs
-  stand-ins for `age`, the copy and the alert to prove both.
-- Undecided: installing `age` on start (needs the network every time) or a
-  built image (one more thing to build). And whether the JSON backup in
-  Settings should offer a passphrase too.
 
 ### 23. Keyboard and screen reader follow-ups
 
@@ -923,3 +892,28 @@ nowhere for reports to go and the app shell has no inline script or style to
 find out about. Still open: blocking images from other sites, at least on
 shared pages, and `Strict-Transport-Security`, which belongs to whatever
 terminates TLS in front of nginx.
+
+### 22. Encrypted, off-site and watched backups
+
+The backup service has an image of its own, `scripts/backup.Dockerfile`:
+`postgres:17-alpine` with `age`, `curl`, rsync and ssh, chosen over
+installing on every start, which would need the network each time. rclone is
+over 100 MB, so it is only added when `BACKUP_COPY_PACKAGES` asks for it.
+With `BACKUP_ENCRYPT_TO`, `pg_dump` and `tar` write straight into `age`, so
+no plain file is ever on disk, and a failure removes the partial file. A
+restore decrypts the dump through a pipe into `pg_restore` and the archive
+into the attachments folder, with a key mounted only for that command. The
+name functions now work on the time in the name, so a `.dump` and a
+`.dump.age` of one time are one dump and are pruned together, and the rules
+for dates in the future hold for both. `BACKUP_COPY_COMMAND` gets the new
+files as `"$@"` and has a timeout. A failed copy leaves the dump counted but
+alerts. `BACKUP_ALERT_URL` gets a `POST` on every kind of failure, at most
+once an hour while the same kind goes on, which the design did not say but
+the retry every minute made necessary. `backup.sh health` reads
+`.last-good-dump` for the compose healthcheck. `check-backup-loop.sh` has
+stand-ins for `age`, the copy and `curl`, and CI runs `check-backup.sh` in
+the new image, with a real encrypted round trip. The JSON backup in Settings
+did not get a passphrase: it is a download to the person's own machine, and
+encrypting it in the browser is a feature of its own. Still open: a copy that
+failed is not sent again with the next dump, nothing is sent when a failure
+is over, and Docker only shows the health state, it does not tell anyone.
