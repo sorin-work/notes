@@ -141,4 +141,55 @@ describe('the sign-in and sign-up pages', () => {
     renderAuth('/register');
     await expectNoAxeViolations();
   });
+
+  it('asks for a code when the account has two-step sign-in, and goes back to the password when the ticket is spent', async () => {
+    const calls = mockFetch({
+      'POST /api/auth/login': { body: { twoStep: true, ticket: 'ticket-1' } },
+      'POST /api/auth/login/code': ({ body }) =>
+        (body as { code: string }).code === '123456'
+          ? { body: { token: 'tok-1', user: { ...user, twoStep: true } } }
+          : { status: 403, body: { statusCode: 403, message: 'That code is not right' } },
+    });
+    renderAuth('/login');
+    await userEvent.type(screen.getByLabelText('Email'), 'demo@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'demo-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    // No token yet: only the ticket.
+    const code = await screen.findByLabelText('Code');
+    expect(getToken()).toBeNull();
+    expect(code).toHaveFocus();
+    expect(code).toHaveAccessibleDescription('Without the phone, a recovery code works too, once each.');
+    await expectNoAxeViolations();
+
+    await userEvent.type(code, '000000');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That code is not right');
+    await userEvent.type(screen.getByLabelText('Code'), ' 123456 ');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('Your notes')).toBeInTheDocument();
+    expect(getToken()).toBe('tok-1');
+    expect(calls.filter((call) => call.url === '/api/auth/login/code').at(-1)?.body).toEqual({
+      ticket: 'ticket-1',
+      code: '123456',
+    });
+  });
+
+  it('starts over with the password when the code step answers that the ticket is used up', async () => {
+    mockFetch({
+      'POST /api/auth/login': { body: { twoStep: true, ticket: 'ticket-1' } },
+      'POST /api/auth/login/code': {
+        status: 429,
+        body: { statusCode: 429, message: 'Too many wrong codes. Sign in with your password again.' },
+      },
+    });
+    renderAuth('/login');
+    await userEvent.type(screen.getByLabelText('Email'), 'demo@example.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'demo-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(await screen.findByLabelText('Code'), '000000');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByLabelText('Password')).toHaveValue('');
+    expect(screen.getByRole('alert')).toHaveTextContent('Sign in with your password again');
+  });
 });
