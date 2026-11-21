@@ -15,6 +15,7 @@ import { SearchModule } from './search/search.module';
 import { SeedModule } from './seed/seed.module';
 import { SharesModule } from './shares/shares.module';
 import { TagsModule } from './tags/tags.module';
+import { TasksModule } from './tasks/tasks.module';
 import { TransferModule } from './transfer/transfer.module';
 import { TrashModule } from './trash/trash.module';
 import { VersionsModule } from './versions/versions.module';
@@ -33,6 +34,7 @@ import { VersionsModule } from './versions/versions.module';
     TagsModule,
     VersionsModule,
     MentionsModule,
+    TasksModule,
     TrashModule,
     SearchModule,
     SharesModule,
