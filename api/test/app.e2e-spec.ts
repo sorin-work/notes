@@ -3103,8 +3103,27 @@ describe('tasks across notes', () => {
   it('says how many notes it could not read', async () => {
     const { auth } = await signUp();
     await post(auth, '/api/notes', { title: 'Brackets', content: `- [ ] lost\n${']'.repeat(2_500)}` });
+    // Too long to parse, which is told without loading the text. Longer than a request body may be, so written directly.
+    const long = await post(auth, '/api/notes', { title: 'Long' });
+    await app
+      .get(PrismaService)
+      .note.update({ where: { id: long.id }, data: { content: `- [ ] lost too\n${'word '.repeat(21_000)}` } });
     const list = await tasks(auth);
-    expect(list).toMatchObject({ notes: [], unreadable: 1, unread: 0 });
+    expect(list).toMatchObject({ notes: [], unreadable: 2, unread: 0 });
+  });
+
+  it('leaves a note unread, not unreadable, when the parser runs out of time or is busy', async () => {
+    const { auth } = await signUp();
+    await post(auth, '/api/notes', { title: 'Slow', content: '- [ ] wait for it' });
+    const pool = app.get(ParsePool);
+    const run = jest.spyOn(pool, 'run').mockResolvedValueOnce('timeout').mockResolvedValueOnce('busy');
+    try {
+      expect(await tasks(auth)).toMatchObject({ notes: [], unreadable: 0, unread: 1 });
+      expect(await tasks(auth)).toMatchObject({ notes: [], unreadable: 0, unread: 1 });
+    } finally {
+      run.mockRestore();
+    }
+    expect(summary(await tasks(auth))).toEqual([['Slow', ['1:wait for it']]]);
   });
 
   it('shows a member the tasks of a shared notebook, and lets only an editor tick them', async () => {
