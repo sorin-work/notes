@@ -25,7 +25,7 @@ export function confirmEmailMail(to: string, link: string): OutgoingMail {
     text: [
       'Hello,',
       '',
-      'Someone asked to use this address for their Notes account. To confirm it, open this link:',
+      'Someone asked to use this address for their Notes account. To confirm it, open this link and press "Confirm the address":',
       '',
       link,
       '',
