@@ -42,7 +42,7 @@ couple of weekends, **L** several weeks of spare time.
 | 17  | Notebooks shared with other accounts                | Shipped | both     | L    | 8          |
 | 18  | Graph view and unlinked mentions                    | Shipped | both     | M    | -          |
 | 19  | Security headers for the web app                    | Next    | infra    | S    | -          |
-| 20  | Compare two versions with each other                | Next    | frontend | S    | -          |
+| 20  | Compare two versions with each other                | Shipped | frontend | S    | -          |
 | 21  | Links to headings and an outline                    | Shipped | both     | M    | -          |
 | 22  | Encrypted, off-site and watched backups             | Next    | infra    | M    | -          |
 | 23  | Keyboard and screen reader follow-ups               | Next    | frontend | M    | -          |
@@ -96,30 +96,6 @@ to refuse showing the app inside a frame on another site.
   that show images from the web today. Also whether to start with
   `Content-Security-Policy-Report-Only` for a while, which needs somewhere
   for the reports to go.
-
-### 20. Compare two versions with each other
-
-Improves item 2. The Changes view compares a version with the text in the
-editor, and that is all: two old versions cannot be compared, a line that
-changed by one word shows as a whole line removed and a whole line added, and
-folded lines stay folded.
-
-- `VersionHistoryDialog` gets a second choice next to the selected version:
-  compare with the current text, as now, or with another version. Both texts
-  come from `GET /notes/:id/versions/:versionId`, so no API change.
-- Changes inside a line: when a block of removed lines faces a block of
-  added lines, pair them up and mark the words that differ with `<del>` and
-  `<ins>`. `diffLines` in `web/src/lib/diff.ts` can run over words as well as
-  lines.
-- A folded stretch gets a "Show N lines" button that unfolds it.
-  `foldUnchanged` has to say which lines it hid.
-- Tricky: a single line can be very long (a pasted table, a line of minified
-  code), so the word diff needs its own cut-off like `MAX_EDITS`, past which
-  the line is shown whole. Most screen readers do not announce `del` and
-  `ins`, so the marks need words for them too.
-- Undecided: whether the older version is always on the left, or the one
-  picked first. And how to pair lines when the two blocks are not the same
-  length.
 
 ### 22. Encrypted, off-site and watched backups
 
@@ -908,6 +884,22 @@ hand, links have no arrowheads, and above 300 notes only the filters show the
 rest. The dots are not tab stops, and two fingers on a touch screen do not
 zoom: the buttons do. The layout still runs on the main thread, for about a
 third of a second at 300 notes.
+
+### 20. Compare two versions with each other
+
+Built as designed, with no API change. A "Compare with" select in the
+Changes view offers the note now or any other version, and two versions are
+always compared from the older to the newer, whichever was picked first.
+`markWords` in `web/src/lib/diff.ts` pairs a block of removed lines with the
+block of added lines after it in order, line for line, and runs the same
+Myers search over words, spaces and single punctuation marks. Lines left over
+when the blocks differ in length stay whole, as do pairs with under a third
+of their text in common. The cut-offs are 200 edits or a changed stretch of
+2,000 words and spaces per pair, and 100,000 words and spaces per view. Marks
+are `<del>` and `<ins>`, struck through or underlined as well as coloured,
+with hidden words for screen readers. `foldUnchanged` keeps the lines it hid,
+and a "Show" button puts them back 500 at a time. Still open: pairing by
+similarity instead of by order, and a side-by-side view.
 
 ### 21. Links to headings and an outline
 
