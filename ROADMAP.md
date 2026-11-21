@@ -49,7 +49,7 @@ couple of weekends, **L** several weeks of spare time.
 | 24  | Tasks across notes                                  | Later   | both     | M    | -          |
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
 | 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
-| 27  | Two-step sign-in and verified email changes         | Later   | both     | M    | -          |
+| 27  | Two-step sign-in and verified email changes         | Shipped | both     | M    | -          |
 | 28  | Select several notes at once                        | Later   | both     | M    | -          |
 | 29  | Live change notices in open notes                   | Later   | both     | M    | -          |
 | 30  | Tests in a real browser                             | Later   | infra    | M    | -          |
@@ -164,32 +164,6 @@ study or planning.
 - The colours of the highlighting need both themes in `styles.css` and the
   pairs in `styles.contrast.test.ts`. Shared pages and print render the same.
 - Undecided: whether diagrams are worth mermaid's weight, or come later.
-
-### 27. Two-step sign-in and verified email changes
-
-Improves item 11. A password is the only thing between the internet and every
-note, a new email address is taken without checking that it works, and a
-mail that could not be sent shows only in the API log.
-
-- One-time codes from an authenticator app (TOTP, RFC 6238), built on
-  `node:crypto`. Settings shows a QR code and the secret, the first code
-  turns it on, and ten recovery codes are shown once and kept as hashes.
-- `POST /auth/login` answers with a short-lived ticket instead of a token
-  when codes are on, and `POST /auth/login/code` takes the ticket and a code.
-  Throttled per account as well as per address (`AccountThrottlerGuard`), so
-  the million codes cannot be tried.
-- A new email address: `PATCH /auth/me` keeps it pending and mails a link to
-  it, under the password reset's rules (hashed, once, an hour). The old
-  address gets a notice. Without SMTP the change goes through as today.
-- Tricky: a password reset by mail must still ask for the code afterwards,
-  or the reset becomes the way around it. Turning codes off takes the
-  password and a code. A code is accepted once, with one step of clock drift
-  either side.
-- Tricky: the secret is stored encrypted with a key from the environment,
-  stays out of the JSON backup, and a restore of the database dump keeps it.
-  API tokens keep working, but making one should ask for a code too.
-- Undecided: WebAuthn passkeys instead of or beside TOTP. They need no
-  shared secret but are more work in the browser and in tests.
 
 ### 28. Select several notes at once
 
@@ -926,3 +900,30 @@ reader where this was built, so the README has the checklist under
 "Checking with a screen reader", marked as not gone through yet, and
 nothing on it has been heard in a real screen reader. That pass is item 34,
 together with whatever it finds.
+
+### 27. Two-step sign-in and verified email changes
+
+Codes from an authenticator app (TOTP, RFC 6238, on `node:crypto`), turned
+on in Settings with a QR code, the key in text and the first code. Ten
+recovery codes are shown once and kept as SHA-256 hashes. With codes on,
+`POST /auth/login` answers a ticket, and `POST /auth/login/code` takes it
+with a code or a recovery code. A code is taken once, one step of drift
+either side. The secret is encrypted with AES-256-GCM under `TWO_STEP_KEY`
+and bound to its account, stays out of the JSON backup, and comes back with a
+dump restored under the same key. Differences from the design: wrong codes
+are counted per address and per account and address, and per ticket (five),
+but not per account alone, which would let anyone with the password lock the
+owner out from everywhere. The owner gets a mail instead, at most once an
+hour, when the right password comes with a wrong code. Turning codes on ends
+the other sessions, turning them off and new recovery codes take the
+password and a code, and making an API token takes a code. A password reset
+by mail leaves codes on, so the next sign-in still asks. The QR code is
+drawn from `qrcode-generator`, the one new dependency. A new email address
+waits in `email_changes` until the link mailed to it is opened and its page's
+button pressed, under the reset link's rules, and the old address gets a
+notice. A new password, signing out everywhere and a reset cancel it.
+Without SMTP the address changes at once. Still open: passkeys (WebAuthn),
+left out as the bigger piece of work; a way back for someone who lost the
+phone and the recovery codes other than the database; codes for the other
+account changes, which still take the password only; and the mails are
+plain text in English.
