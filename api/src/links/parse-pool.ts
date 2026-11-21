@@ -2,12 +2,17 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
-import type { ParsedNote } from './prose';
+import type { ParsedNote, TaskItem } from './prose';
 import type { Mention } from './wikilinks';
 
-/** What a worker is asked: find the mention of `title` in `text` that can be linked, or the one at `at`. */
+/**
+ * What a worker is asked: find the mention of `title` in `text` that can be
+ * linked, or the one at `at`. With `kind: 'tasks'`, read the task list items
+ * of `text` instead.
+ */
 export interface ParseJob {
   id: number;
+  kind?: 'mention' | 'tasks';
   text: string;
   title: string;
   at?: { offset: number; text: string };
@@ -20,6 +25,8 @@ export interface ParseAnswer {
   id: number;
   parsed: ParsedNote | null;
   mention: (Mention & { linked: string }) | null;
+  /** For a tasks job: the tasks, or null when the note cannot be parsed. */
+  tasks?: TaskItem[] | null;
 }
 
 /** How many workers parse at the same time. */

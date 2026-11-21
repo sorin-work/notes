@@ -1,4 +1,4 @@
-import { MAX_PARSED_NOTE_LENGTH, parseNote, proseSpans, verbatimParts } from './prose';
+import { MAX_PARSED_NOTE_LENGTH, MAX_TASK_TEXT, parseNote, parseTasks, proseSpans, verbatimParts } from './prose';
 
 const texts = (markdown: string) => proseSpans(markdown).map((span) => markdown.slice(span.from, span.to));
 
@@ -169,5 +169,39 @@ describe('verbatimParts', () => {
       'code:    more code',
       'definition:[r]: ./r.md',
     ]);
+  });
+});
+
+describe('parseTasks', () => {
+  it('reads task items with their lines, ticked or not, and leaves code and plain list items out', () => {
+    const text = [
+      '# Week',
+      '',
+      '- [ ] Draft the **permissions** proposal',
+      '- [x] Alert on CDC lag',
+      '- plain item',
+      '',
+      '```',
+      '- [ ] in code',
+      '```',
+      '',
+      '> 1. [X] in a quote',
+      '- [ ] parent',
+      '  - [ ] child with `code`',
+    ].join('\r\n');
+    expect(parseTasks(text)).toEqual([
+      { line: 3, text: 'Draft the permissions proposal', done: false },
+      { line: 4, text: 'Alert on CDC lag', done: true },
+      { line: 11, text: 'in a quote', done: true },
+      { line: 12, text: 'parent', done: false },
+      { line: 13, text: 'child with code', done: false },
+    ]);
+  });
+
+  it('cuts long tasks and gives up on notes past the limits', () => {
+    const [task] = parseTasks(`- [ ] ${'word '.repeat(200)}`) ?? [];
+    expect(task?.text).toHaveLength(MAX_TASK_TEXT);
+    expect(task?.text.endsWith('…')).toBe(true);
+    expect(parseTasks(`- [ ] x\n${']'.repeat(3_000)}`)).toBeNull();
   });
 });

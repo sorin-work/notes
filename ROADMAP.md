@@ -46,7 +46,7 @@ couple of weekends, **L** several weeks of spare time.
 | 21  | Links to headings and an outline                    | Shipped | both     | M    | -          |
 | 22  | Encrypted, off-site and watched backups             | Shipped | infra    | M    | -          |
 | 23  | Keyboard and screen reader follow-ups               | Shipped | frontend | M    | -          |
-| 24  | Tasks across notes                                  | Later   | both     | M    | -          |
+| 24  | Tasks across notes                                  | Shipped | both     | M    | -          |
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
 | 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
 | 27  | Two-step sign-in and verified email changes         | Shipped | both     | M    | -          |
@@ -84,35 +84,6 @@ reader. The list is in the README under "Checking with a screen reader".
   records when and with what it was gone through.
 
 ## Later
-
-### 24. Tasks across notes
-
-Task boxes can be ticked in the preview (item 1), but open tasks spread over
-twenty meeting notes have no list of their own.
-
-- A Tasks page with every unticked `- [ ]` in the notes, grouped by note,
-  newest note first, with the notebook and tag selects of `FilterSelects`.
-  A click on the text opens the note at that line.
-- Where they come from: a `NoteTask` table kept in step on every save the
-  way `LinksService.sync` keeps `NoteLink`, with note, line, text and done.
-  The server parser (`parseNote` in `api/src/links/prose.ts`, micromark with
-  GFM) already knows task items, so they are read in the parse pool with its
-  limits. A migration or a start-up step fills in the notes that exist.
-- Ticking a box on the page: `POST /notes/:id/tasks` with the line, the
-  state the box showed and the note's revision, written through
-  `writeNoteText` the way the mention "Link" is, and only when that line
-  still holds a box in that state (the rule of `toggleTask` in
-  `web/src/lib/tasks.ts`). A note that changed meanwhile is a conflict, not
-  an overwrite.
-- Members of a shared notebook see its tasks only, through `AccessService`.
-  Editors tick, readers do not.
-- Tricky: templates (`workingNotes`), the trash and notes past the parser's
-  limits stay out, and the page says when some notes could not be read.
-  Line numbers move when a note changes, which the revision check covers.
-- Undecided: due dates. A plain convention such as `due:2026-11-30` after a
-  task would let the page sort and show what is late. A reminder by mail
-  would need a scheduler and SMTP and is a step further; I would leave it
-  out.
 
 ### 25. Search syntax, several tags and saved searches
 
@@ -900,6 +871,35 @@ reader where this was built, so the README has the checklist under
 "Checking with a screen reader", marked as not gone through yet, and
 nothing on it has been heard in a real screen reader. That pass is item 34,
 together with whatever it finds.
+
+### 24. Tasks across notes
+
+A Tasks page in the sidebar lists every unticked box, grouped by note, the
+note edited last first, with the notebook and tag selects of
+`FilterSelects`. A click on a task opens the note with the cursor on its line,
+or in "Preview" with its item in view. `NoteTask` holds note, line, text and
+done, and `NoteTaskRead` the revision they were read from and whether the
+parser could read the note. Unlike the design, they are not written on every
+save: the list reads again every note whose revision moved on, in the parse
+pool (`parseTasks` beside `parseNote`, micromark with GFM) with a budget of
+1,000,000 characters or two seconds per request. So no write path can forget
+them, saves never wait for the parser, and the notes that exist are filled in
+the first time the page is opened, with no start-up step. Notes without a box,
+and notes too long to parse, are found in SQL and written in bulk without
+loading their text. A parse that runs out of time leaves the note for the
+next request. The counts, the revisions and the tasks are read in one
+snapshot, so a tick always names the revision its line came from. Tasks read from an older revision are not shown, because
+their lines may have moved. `POST /notes/:id/tasks` takes the line, the state
+the box showed and the revision, flips the box by the rule of `toggleTask`
+(a copy of it lives in `api/src/tasks`), and saves through the normal update,
+which writes with `writeNoteText` and keeps versions and links as a save
+does. A changed note or a line in another state is a `409`. Members see a
+shared notebook's tasks with that notebook selected, and only editors tick.
+The parse pool is now one for the app, shared by mentions and tasks. Due
+dates: `due:YYYY-MM-DD` after a task is shown, and marked late once past, in
+the browser only. The list is not sorted by it, and there are no reminders by
+mail. Still open: sorting by due day, and a count of open tasks in the
+sidebar.
 
 ### 27. Two-step sign-in and verified email changes
 

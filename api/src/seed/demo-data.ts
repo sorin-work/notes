@@ -128,7 +128,7 @@ const atlasSync = `# Atlas weekly sync
 
 - [x] Alert when CDC lag is over 15 minutes (Tomás)
 - [ ] Draft the permissions proposal (me)
-- [ ] Collect five example reports from ops (Priya)
+- [ ] Collect five example reports from ops (Priya) due:2026-12-15
 
 ## The week before
 

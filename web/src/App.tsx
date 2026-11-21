@@ -20,6 +20,7 @@ import { TrashPage } from './pages/TrashPage';
 // The graph brings a layout library that no other page needs, so it is only fetched when the page is opened.
 // A fetch can fail, in a tab left open across an update or without a connection. lazyPage keeps that inside the page.
 const GraphPage = lazyPage(() => import('./pages/GraphPage').then((module) => module.GraphPage));
+const TasksPage = lazyPage(() => import('./pages/TasksPage').then((module) => module.TasksPage));
 
 export function App() {
   return (
@@ -69,6 +70,7 @@ function AppRoutes() {
         <Route path="/notes/:noteId" element={<NotesPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/graph" element={<GraphPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
         <Route path="/trash" element={<TrashPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/capture" element={<CapturePage />} />

@@ -426,6 +426,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="sidebar-bottom">
+        <NavLink to="/tasks" className="nav-item" onClick={onNavigate}>
+          Tasks
+        </NavLink>
         <NavLink to="/graph" className="nav-item" onClick={onNavigate}>
           Graph
         </NavLink>

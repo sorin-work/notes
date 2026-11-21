@@ -28,7 +28,7 @@ const NUL = '\0';
 /** About 500 pages of text. */
 export const MAX_CONTENT_LENGTH = 1_000_000;
 /** The largest number the revision column can hold. */
-const MAX_REVISION = 2_147_483_647;
+export const MAX_REVISION = 2_147_483_647;
 
 /** Longest text a placeholder is filled with. A date or a time needs far less. */
 const MAX_PLACEHOLDER_LENGTH = 100;

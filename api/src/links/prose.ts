@@ -175,3 +175,64 @@ export function proseSpans(text: string): Span[] {
 export function verbatimParts(text: string): string[] {
   return parseNote(text)?.verbatim ?? [];
 }
+
+/** A task list item of a note: the line it starts on (counted from 1), its words, and whether it is ticked. */
+export interface TaskItem {
+  line: number;
+  text: string;
+  done: boolean;
+}
+
+/** How much of the words of a task is kept. The rest of a long one is cut off with "…". */
+export const MAX_TASK_TEXT = 300;
+
+/** The words of a task item as the preview shows them, without the lists nested in it. */
+function taskText(item: Nodes): string {
+  const parts: string[] = [];
+  const stack: Nodes[] = [item];
+  while (stack.length) {
+    const node = stack.pop()!;
+    if (node.type === 'text' || node.type === 'inlineCode') parts.push(node.value);
+    else if (node.type === 'image') parts.push(node.alt ?? '');
+    else if (node.type === 'break') parts.push(' ');
+    else if ('children' in node) {
+      for (let index = node.children.length - 1; index >= 0; index--) {
+        const child = node.children[index];
+        // A nested list holds tasks of its own, and a paragraph after the first one starts on a line of its own.
+        if (child.type !== 'list') stack.push(child);
+      }
+      if (node.type === 'paragraph') parts.push(' ');
+    }
+  }
+  const text = parts.join('').replace(/\s+/g, ' ').trim();
+  return text.length > MAX_TASK_TEXT ? `${text.slice(0, MAX_TASK_TEXT - 1)}…` : text;
+}
+
+/**
+ * The task list items of a note, ticked or not, in order, read with the
+ * same parser and limits as parseNote: a `- [ ]` in code is no task. Null for
+ * a note the parser would take too long on or fails on.
+ */
+export function parseTasks(text: string): TaskItem[] | null {
+  if (!parseable(text)) return null;
+  let tree: Nodes;
+  try {
+    tree = fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  } catch {
+    return null;
+  }
+  const tasks: TaskItem[] = [];
+  const stack: Nodes[] = [tree];
+  while (stack.length) {
+    const node = stack.pop()!;
+    if (node.type === 'listItem' && typeof node.checked === 'boolean') {
+      const line = node.position?.start.line;
+      if (line === undefined) return null;
+      tasks.push({ line, text: taskText(node), done: node.checked });
+    }
+    if ('children' in node) {
+      for (let index = node.children.length - 1; index >= 0; index--) stack.push(node.children[index]);
+    }
+  }
+  return tasks;
+}
