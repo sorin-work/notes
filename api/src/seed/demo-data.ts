@@ -64,7 +64,7 @@ the operations team. Target for the first release is **end of Q2**.
 
 ## Open questions
 
-1. Do we need row-level permissions for the first release? See [[Atlas data model]].
+1. Do we need row-level permissions for the first release? See [[Atlas data model#Row-level permissions]].
 2. Which charts are must-haves? Priya is collecting examples.
 
 Decisions so far are in [[Atlas decision log]].`;
@@ -91,7 +91,8 @@ CREATE POLICY region_only ON fact_orders
   USING (warehouse_id = ANY (current_setting('atlas.warehouses')::uuid[]));
 \`\`\`
 
-We agreed to leave this out of the first release, see [[Atlas decision log]].
+We agreed to leave this out of the first release, see
+[[Atlas decision log#No row-level permissions in v1]].
 
 Related: [[Project Atlas]]`;
 
@@ -418,6 +419,8 @@ A few things to try:
   edit, split and preview with the buttons above the editor (or Ctrl+E).
 - **Link notes** by typing \`[[\` and choosing a title, for example
   [[Project Atlas]]. Notes that link here show up under *Backlinks*.
+  Add \`#\` and a heading to go straight to it, as in [[Project Atlas#Goals]].
+  *Outline* lists the headings of the open note.
 - **Organise** with notebooks (nested up to four levels), tags, pins and
   favourites.
 - **Search** everything from the search box. Words match as prefixes,

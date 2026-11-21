@@ -68,7 +68,45 @@ describe('MarkdownPreview', () => {
     const onWikiLink = vi.fn();
     render(<MarkdownPreview content="See [[Project Atlas|the project]]" onWikiLink={onWikiLink} />);
     await userEvent.click(screen.getByRole('link', { name: 'the project' }));
-    expect(onWikiLink).toHaveBeenCalledWith('Project Atlas');
+    expect(onWikiLink).toHaveBeenCalledWith('Project Atlas', null);
+  });
+
+  it('gives headings ids with a prefix, numbering repeats, only when asked', () => {
+    const text = '# Main\n\n## Notes\n\n## Notes\n\nDone\n---';
+    const { unmount } = render(<MarkdownPreview content={text} headingIds />);
+    expect(screen.getAllByRole('heading').map((heading) => heading.id)).toEqual([
+      'h-main',
+      'h-notes',
+      'h-notes-1',
+      'h-done',
+    ]);
+    unmount();
+    render(<MarkdownPreview content={text} />);
+    expect(screen.getByRole('heading', { name: 'Main' })).not.toHaveAttribute('id');
+  });
+
+  it('follows links to headings, and marks those within the note that lead nowhere', async () => {
+    const onWikiLink = vi.fn();
+    render(
+      <MarkdownPreview
+        content={'# Next steps\n\n[[#Next steps]] [[#Gone]] [[Atlas#Plan]]'}
+        onWikiLink={onWikiLink}
+        headingIds
+      />,
+    );
+    const here = screen.getByRole('link', { name: 'Next steps' });
+    expect(here).toHaveAttribute('href', '#h-next-steps');
+    expect(here).not.toHaveClass('wikilink-missing');
+    expect(screen.getByRole('link', { name: 'Gone' })).toHaveClass('wikilink-missing');
+    await userEvent.click(screen.getByRole('link', { name: 'Atlas › Plan' }));
+    expect(onWikiLink).toHaveBeenCalledWith('Atlas', 'Plan');
+    await userEvent.click(here);
+    expect(onWikiLink).toHaveBeenLastCalledWith('', 'Next steps');
+  });
+
+  it('leaves a link within the note as text where headings have no ids', () => {
+    render(<MarkdownPreview content={'# A\n\n[[#A]]'} onWikiLink={vi.fn()} />);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('marks links to notes that do not exist', () => {

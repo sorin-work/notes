@@ -1,13 +1,24 @@
 import { ComponentProps, createContext, memo, MouseEvent, useContext } from 'react';
 import ReactMarkdown, { defaultUrlTransform, ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Pluggable } from 'unified';
+import { headingId, remarkHeadingIds, slugify } from '../lib/headings';
 import { countLines } from '../lib/tasks';
 import { linkifyWikiLinks, normalizeTitle, WIKI_PROTOCOL, wikiTarget } from '../lib/wikilinks';
 
 interface MarkdownPreviewProps {
   content: string;
-  /** Called when a [[link]] is clicked. Without it, links render as plain text. */
-  onWikiLink?: (title: string) => void;
+  /**
+   * Called when a [[link]] is clicked, with the title and the #heading part
+   * if it has one. The title is empty for [[#Heading]], a link within this
+   * note. Without it, links render as plain text.
+   */
+  onWikiLink?: (title: string, heading: string | null) => void;
+  /**
+   * Gives headings their ids (`h-` and a slug), for links to them and the
+   * outline. Only one preview on a page should, or the ids repeat.
+   */
+  headingIds?: boolean;
   /** Normalised titles of links that point at no note, shown as broken. */
   missingTitles?: Set<string>;
   /**
@@ -30,8 +41,6 @@ interface MarkdownPreviewProps {
 }
 
 type HastElement = NonNullable<ExtraProps['node']>;
-
-const remarkPlugins = [remarkGfm];
 
 const ATTACHMENT_PROTOCOL = 'attachment:';
 
@@ -107,6 +116,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   linkedTitles,
   onToggleTask,
   attachmentUrls,
+  headingIds = false,
 }: MarkdownPreviewProps) {
   if (!content.trim()) {
     return <p className="preview-empty">Nothing to preview yet.</p>;
@@ -115,6 +125,9 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   // Boxes are found in the source by line number, and the parser reads the
   // linkified text. Should the two ever differ in their lines, boxes stay read-only.
   const sameLines = onToggleTask !== undefined && countLines(linkified) === countLines(content);
+  // Filled by the plugin while the text is parsed, which is done before any link below is rendered.
+  const slugs = new Set<string>();
+  const remarkPlugins = headingIds ? [remarkGfm, [remarkHeadingIds, { slugs }] satisfies Pluggable] : [remarkGfm];
   return (
     <div className="markdown">
       <ToggleTaskContext value={sameLines ? onToggleTask : undefined}>
@@ -132,18 +145,32 @@ export const MarkdownPreview = memo(function MarkdownPreview({
                   </a>
                 );
               }
-              if (!onWikiLink || (linkedTitles && !linkedTitles.has(normalizeTitle(target)))) {
+              const { title, heading } = target;
+              const here = title === '';
+              const allowed = here ? headingIds : !linkedTitles || linkedTitles.has(normalizeTitle(title));
+              if (!onWikiLink || !allowed) {
                 return <span className="wikilink wikilink-static">{children}</span>;
               }
-              const missing = missingTitles?.has(normalizeTitle(target));
+              // Whether a heading of another note is there is only known once it is opened.
+              const slug = slugify(heading ?? '');
+              const missing = here ? !slugs.has(slug) : missingTitles?.has(normalizeTitle(title));
+              const hint = here
+                ? missing
+                  ? `There is no heading “${heading}” in this note.`
+                  : (heading ?? '')
+                : missing
+                  ? `“${title}” does not exist yet. Click to create it.`
+                  : heading
+                    ? `${title}, at “${heading}”`
+                    : title;
               return (
                 <a
-                  href={`#${encodeURIComponent(target)}`}
+                  href={here ? `#${headingId(slug)}` : `#${encodeURIComponent(title)}`}
                   className={missing ? 'wikilink wikilink-missing' : 'wikilink'}
-                  title={missing ? `“${target}” does not exist yet. Click to create it.` : target}
+                  title={hint}
                   onClick={(event: MouseEvent) => {
                     event.preventDefault();
-                    onWikiLink(target);
+                    onWikiLink(title, heading);
                   }}
                 >
                   {children}

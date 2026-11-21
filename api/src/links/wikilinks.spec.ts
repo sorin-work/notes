@@ -23,6 +23,10 @@ describe('extractWikiLinks', () => {
     expect(extractWikiLinks('[[Recipes#Bread]]')).toEqual([{ title: 'Recipes', alias: null }]);
   });
 
+  it('reads no link to another note in [[#Heading]], which the web app reads as a heading of the same note', () => {
+    expect(extractWikiLinks('[[#Bread]] and [[#Bread|the bread]] and [[ #Bread]] and [[ \t|x]]')).toEqual([]);
+  });
+
   it('lists each target once, matching case-insensitively', () => {
     expect(extractWikiLinks('[[Ideas]] then [[ideas]] and [[ Ideas ]]')).toEqual([{ title: 'Ideas', alias: null }]);
   });
@@ -615,6 +619,11 @@ describe('unlinkExcept', () => {
     );
     expect(text).toBe('a plan and Secret plan and numbers');
     expect(text).not.toContain('Budget 2026');
+  });
+
+  it('keeps links to a heading of the note itself, which lead nowhere else', () => {
+    const text = '[[#Method]], [[ #Method]], [[  #Method|how]] and [[Starter#Feeding]]';
+    expect(unlinkExcept(text, shared)).toBe(text);
   });
 
   it('does not touch code, and copes with a note that has no links', () => {

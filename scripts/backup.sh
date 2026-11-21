@@ -318,8 +318,7 @@ dump() {
   mv "$partial" "$dir/$name" || return 1
   partial=''
   log "wrote $name ($(wc -c <"$dir/$name") bytes)"
-  # For the healthcheck. The time of the dump, by the clock it was named with.
-  echo "$(date +%s) $name" >"$marker.partial" && mv "$marker.partial" "$marker" || log "could not write $marker" >&2
+  mark_good "$(dump_time "$stem")" "$name"
   prune "$stem"
   if [ -n "$files_dir" ]; then
     copy_off_site "$dir/$name" "$dir/$(files_of "$name")"
@@ -328,21 +327,67 @@ dump() {
   fi
 }
 
+# For the healthcheck: the time of the dump $2, by the clock it was named
+# with ($1, as in its name), and its name, so that the check can tell when
+# the file has gone.
+mark_good() {
+  { echo "$1 $2" >"$marker.partial" && mv "$marker.partial" "$marker"; } || log "could not write $marker" >&2
+}
+
 # Runs BACKUP_COPY_COMMAND with the files of the dump just written as its
 # arguments, in "$@". A copy that fails or takes longer than
 # BACKUP_COPY_TIMEOUT_SECONDS is not a failed dump: the dump is there and
 # counts. It is logged and alerted, and the next dump is copied as usual.
+#
+# The copy runs in a session of its own, and so does the watchdog that stops
+# it. A command is often more than one process (a loop over the files, rsync
+# and its ssh), and killing only the shell that runs it would leave the rest
+# going, beside the next copy and while old dumps are pruned. So a timeout
+# signals the whole session, and so does the end of the copy, for anything
+# it left behind.
 copy_off_site() {
   [ -n "$copy_command" ] || return 0
+  setsid sh -c "$copy_command" copy "$@" &
+  copy_pid=$!
+  # The watchdog leaves a file behind when it fires, to tell a timeout from a failure.
+  fired=$(mktemp)
+  rm -f "$fired"
+  setsid sh -c 'sleep "$1" && : >"$3" && kill -TERM -"$2" 2>/dev/null' watchdog "$copy_timeout" "$copy_pid" "$fired" &
+  watchdog_pid=$!
   copied=0
-  timeout "$copy_timeout" sh -c "$copy_command" copy "$@" || copied=$?
-  if [ "$copied" = 0 ]; then
+  wait "$copy_pid" || copied=$?
+  # The session, and the process itself in case it has not made its session
+  # yet: a copy that is done at once can be quicker than that.
+  kill -TERM -"$watchdog_pid" 2>/dev/null || true
+  kill -TERM "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  stop_session "$copy_pid"
+  if [ -e "$fired" ]; then
+    rm -f "$fired"
+    log "BACKUP_COPY_COMMAND took longer than ${copy_timeout}s for $(basename "$1") and was stopped. The dump itself is fine." >&2
+    alert copy "notes backup: the copy of $(basename "$1") took longer than ${copy_timeout}s and was stopped. The dump itself was written."
+  elif [ "$copied" = 0 ]; then
     log "copied $(basename "$1") off site"
     alert_over copy
   else
     log "BACKUP_COPY_COMMAND failed (exit $copied) for $(basename "$1"). The dump itself is fine." >&2
     alert copy "notes backup: the copy of $(basename "$1") failed (exit $copied). The dump itself was written."
   fi
+}
+
+# Ends whatever is left in the session $1, and waits until it is gone: up
+# to ten seconds after TERM, then KILL.
+stop_session() {
+  kill -TERM -"$1" 2>/dev/null || return 0
+  tries=0
+  while kill -0 -"$1" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 10 ]; then
+      kill -KILL -"$1" 2>/dev/null || true
+      return 0
+    fi
+    sleep 1
+  done
 }
 
 # When the newest dump was made, as seconds since 1970, for a clock that
@@ -396,7 +441,13 @@ run() {
   fi
   # Dumps from before there was a marker count for the healthcheck too.
   if [ ! -f "$marker" ] && [ -n "$last" ]; then
-    echo "$last" >"$marker"
+    newest=$(present_stems "$now" | head -n 1)
+    if [ -n "$newest" ]; then
+      newest=$(dumps | grep -F "$newest." | head -n 1)
+    else
+      newest=$(dumps | head -n 1)
+    fi
+    mark_good "$last" "$newest"
   fi
 
   while true; do
@@ -437,8 +488,13 @@ health() {
     exit 1
   fi
   made=$(cut -d ' ' -f 1 <"$marker")
-  if ! is_positive_integer "$made"; then
-    echo "$marker does not hold a time"
+  made_name=$(cut -s -d ' ' -f 2 <"$marker")
+  if ! is_positive_integer "$made" || [ -z "$made_name" ]; then
+    echo "$marker does not hold a time and a dump"
+    exit 1
+  fi
+  if [ ! -f "$dir/$made_name" ]; then
+    echo "the last good dump, $made_name, is no longer in $dir"
     exit 1
   fi
   checked_at=$(date +%s)
