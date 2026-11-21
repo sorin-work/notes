@@ -890,8 +890,11 @@ does Move to, Add tag, Remove tag, Pin, Unpin and Move to trash through
 order, access decided note by note with `AccessService.notes` (the
 memberships read once), and an answer that lists changed, unchanged and
 skipped notes with a reason. A move answers with where each note was, and its
-notice offers Undo for 15 seconds, which moves each note back. A move into a
-notebook shared with a link asks first, as for one note. The bar needs a
+notice offers Undo for 15 seconds: one `moveBack` request that leaves a note
+moved again since where it is. A move that changes who can read the notes,
+into or out of a notebook shared with a link or with members, asks first and
+says who gains or loses them. `renameLinks` now locks its notes in id order
+too, so it cannot deadlock with a bulk action. The bar needs a
 connection and says so, and notes made offline that are not on the server
 yet are left out and counted. "Select all" means the loaded rows; the action
 does not take the filters. Still open: favouriting in bulk, and selecting

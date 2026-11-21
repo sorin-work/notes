@@ -9,24 +9,26 @@ const notebooks = [
   notebook({ id: 'w', name: 'Work' }),
   notebook({ id: 'm', name: 'Meetings', parentId: 'w' }),
   notebook({ id: 'r', name: 'Recipes', shared: true, sharedThrough: { id: 'r', name: 'Recipes' } }),
+  notebook({ id: 'k', name: 'Kitchen', memberCount: 2 }),
 ];
 
-function renderBar(selected = ['a', 'b']) {
+function renderBar(ids = ['a', 'b'], from: string | null = null) {
+  const selected = ids.map((id) => ({ id, notebookId: from }));
   return renderWithProviders(
     <SelectionBar selected={selected} loaded={3} notebooks={notebooks} onSelectAll={vi.fn()} onClear={vi.fn()} />,
   );
 }
 
 describe('SelectionBar', () => {
-  it('moves the selected notes in one request, and undoes the move note by note', async () => {
+  it('moves the selected notes in one request, and undoes the move in one more', async () => {
     const calls = mockFetch({
       'POST /api/notes/bulk': ({ body }: { body: unknown }) => {
-        const { ids, notebookId } = body as { ids: string[]; notebookId: string | null };
+        const { ids, action } = body as { ids: string[]; action: string };
         return {
           body:
-            notebookId === 'm'
+            action === 'move'
               ? { changed: ids, unchanged: [], skipped: [], previous: { a: null, b: 'w' } }
-              : { changed: ids, unchanged: [], skipped: [] },
+              : { changed: ['a'], unchanged: [], skipped: [{ id: 'b', reason: 'moved_since' }] },
         };
       },
     });
@@ -38,23 +40,44 @@ describe('SelectionBar', () => {
     expect(calls[0]?.body).toEqual({ ids: ['a', 'b'], action: 'move', notebookId: 'm' });
 
     await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(await screen.findByText('Moved 2 notes back.')).toBeInTheDocument();
-    const back = calls.slice(1).map((call) => call.body);
-    expect(back).toEqual(
-      expect.arrayContaining([
-        { ids: ['a'], action: 'move', notebookId: null },
-        { ids: ['b'], action: 'move', notebookId: 'w' },
-      ]),
+    expect(
+      await screen.findByText('Moved back 1 note. 1 note was moved again since, and stayed where it is.'),
+    ).toBeInTheDocument();
+    // Where each note goes back to, and where they are all expected to be now.
+    expect(calls.slice(1).map((call) => call.body)).toEqual([
+      { ids: ['a', 'b'], action: 'moveBack', back: { a: null, b: 'w' }, expectedNotebookId: 'm' },
+    ]);
+  });
+
+  it('says who gains and who loses the notes when a move crosses a notebook shared with members', async () => {
+    const calls = mockFetch({ 'POST /api/notes/bulk': { body: { changed: ['a'], unchanged: [], skipped: [] } } });
+    const { unmount } = renderBar(['a']);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Kitchen');
+    expect(await screen.findByRole('dialog', { name: 'Change who can read these notes?' })).toHaveTextContent(
+      '“Kitchen” is shared with 2 other accounts, who will see the notes moved there.',
     );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(calls).toHaveLength(0);
+    unmount();
+
+    renderBar(['a'], 'k');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Work');
+    expect(await screen.findByRole('dialog')).toHaveTextContent(
+      'The 2 other accounts that “Kitchen” is shared with will no longer see the notes moved out of it.',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Move to “Work”' }));
+    await waitFor(() => expect(calls).toHaveLength(1));
   });
 
   it('asks before a move into a notebook shared with a link', async () => {
     const calls = mockFetch({ 'POST /api/notes/bulk': { body: { changed: ['a'], unchanged: [], skipped: [] } } });
     renderBar(['a']);
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'Recipes');
-    expect(await screen.findByRole('dialog', { name: 'Make these notes public?' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Change who can read these notes?' })).toHaveTextContent(
+      'shared with a link',
+    );
     expect(calls).toHaveLength(0);
-    await userEvent.click(screen.getByRole('button', { name: 'Move them' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Move to “Recipes”' }));
     await waitFor(() => expect(calls).toHaveLength(1));
   });
 

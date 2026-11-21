@@ -3082,6 +3082,36 @@ describe('notes in bulk', () => {
     expect(again.body.skipped).toEqual([{ id: a.id, reason: 'in_trash' }]);
   });
 
+  it('undoes a move in one request, leaving a note that moved again where it is', async () => {
+    const { auth } = await signUp();
+    const work = await post(auth, '/api/notebooks', { name: 'Work' });
+    const home = await post(auth, '/api/notebooks', { name: 'Home' });
+    const a = await post(auth, '/api/notes', { title: 'A' });
+    const b = await post(auth, '/api/notes', { title: 'B', notebookId: home.id });
+    const c = await post(auth, '/api/notes', { title: 'C' });
+    const moved = await bulk(auth, { ids: [a.id, b.id, c.id], action: 'move', notebookId: work.id }).expect(200);
+    // Moved on before the undo.
+    await bulk(auth, { ids: [c.id], action: 'move', notebookId: home.id }).expect(200);
+
+    const undone = await bulk(auth, {
+      ids: [a.id, b.id, c.id],
+      action: 'moveBack',
+      back: moved.body.previous,
+      expectedNotebookId: work.id,
+    }).expect(200);
+    expect(undone.body).toEqual({
+      changed: [a.id, b.id],
+      unchanged: [],
+      skipped: [{ id: c.id, reason: 'moved_since' }],
+    });
+    const where = async (id: string) =>
+      (await request(server()).get(`/api/notes/${id}`).set(auth).expect(200)).body.notebookId;
+    expect([await where(a.id), await where(b.id), await where(c.id)]).toEqual([null, home.id, home.id]);
+
+    // Every note needs a place to go back to.
+    await bulk(auth, { ids: [a.id], action: 'moveBack', back: {}, expectedNotebookId: null }).expect(400);
+  });
+
   it('refuses requests it cannot carry out at all', async () => {
     const { auth } = await signUp();
     const note = await post(auth, '/api/notes', { title: 'A' });
@@ -3095,6 +3125,10 @@ describe('notes in bulk', () => {
     const other = await signUp();
     const theirs = await post(other.auth, '/api/notebooks', { name: 'Theirs' });
     await bulk(auth, { ids: [note.id], action: 'move', notebookId: theirs.id }).expect(404);
+    // A notebook that is gone is a 404 as well, not a failed write.
+    const gone = await post(auth, '/api/notebooks', { name: 'Gone' });
+    await request(server()).delete(`/api/notebooks/${gone.id}`).set(auth).expect(200);
+    await bulk(auth, { ids: [note.id], action: 'move', notebookId: gone.id }).expect(404);
   });
 
   it('lets an editor of a shared notebook tag its notes, and nothing more', async () => {

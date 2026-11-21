@@ -68,26 +68,34 @@ export function NotesPage() {
   // "Select" turns a click on a box, and Space, into choosing notes. A click on a note still opens it.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [anchor, setAnchor] = useState<string | null>(null);
+  // Where a range starts, and what was selected before it: a range is drawn
+  // again from these on every step, so Shift with the other arrow shrinks it.
+  const [range, setRange] = useState<{ anchor: string; base: ReadonlySet<string> } | null>(null);
   // Only notes in the list are selected: a note that left it, by a filter or an action, drops out.
-  const inList = items.filter((note) => selected.has(note.id)).map((note) => note.id);
-  const toggle = (id: string, range: boolean) => {
-    const from = anchor === null ? -1 : items.findIndex((note) => note.id === anchor);
-    const to = items.findIndex((note) => note.id === id);
-    if (range && from !== -1 && to !== -1) {
-      const [start, end] = from < to ? [from, to] : [to, from];
-      setSelected(new Set([...inList, ...items.slice(start, end + 1).map((note) => note.id)]));
-    } else {
-      const next = new Set(inList);
+  const inList = items.filter((note) => selected.has(note.id));
+  const inListIds = new Set(inList.map((note) => note.id));
+  const toggle = (id: string, extend: boolean, from?: string) => {
+    if (!extend) {
+      const next = new Set(inListIds);
       if (!next.delete(id)) next.add(id);
       setSelected(next);
+      setRange({ anchor: id, base: next });
+      return;
     }
-    setAnchor(id);
+    // Shift with no range yet starts one at the note the focus came from, or at this one.
+    const start =
+      range && items.some((note) => note.id === range.anchor) ? range : { anchor: from ?? id, base: inListIds };
+    const a = items.findIndex((note) => note.id === start.anchor);
+    const b = items.findIndex((note) => note.id === id);
+    if (a === -1 || b === -1) return;
+    const [low, high] = a < b ? [a, b] : [b, a];
+    setSelected(new Set([...start.base, ...items.slice(low, high + 1).map((note) => note.id)]));
+    setRange(start);
   };
   const stopSelecting = () => {
     setSelecting(false);
     setSelected(new Set());
-    setAnchor(null);
+    setRange(null);
   };
   const total = notes.data?.pages[0]?.total ?? 0;
 
@@ -142,11 +150,14 @@ export function NotesPage() {
         />
         {selecting && (
           <SelectionBar
-            selected={inList}
+            selected={inList.map((note) => ({ id: note.id, notebookId: note.notebookId }))}
             loaded={items.length}
             notebooks={notebooks.data ?? []}
             onSelectAll={() => setSelected(new Set(items.map((note) => note.id)))}
-            onClear={() => setSelected(new Set())}
+            onClear={() => {
+              setSelected(new Set());
+              setRange(null);
+            }}
           />
         )}
         <div className="list-scroll">
@@ -170,7 +181,7 @@ export function NotesPage() {
           <NoteList
             notes={items}
             activeId={noteId}
-            selection={selecting ? { selected: new Set(inList), onToggle: toggle } : undefined}
+            selection={selecting ? { selected: inListIds, onToggle: toggle } : undefined}
           />
           {notes.hasNextPage && (
             <button
