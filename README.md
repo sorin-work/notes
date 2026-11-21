@@ -28,6 +28,14 @@ Markdown import/export.
   be renamed, merged and deleted in Settings.
 - **Pinned notes** stay at the top of every list; **favourites** have their
   own view.
+- **Several notes at once**: "Select" above the note list puts a box in
+  front of each note. Shift with a click selects a range, and from the
+  keyboard Space selects the note with the focus and Shift with the arrow
+  keys selects while it moves. The bar above the list moves the selected notes
+  to a notebook, adds or removes a tag, pins or unpins them, or moves them to
+  the trash, in one request, and says what it left out. A move can be undone
+  from its notice for 15 seconds. "Select the loaded" takes the notes the list
+  has loaded so far, not every page. A click on a note still opens it.
 - **Templates**: "Template" in a note's toolbar turns it into a template.
   Templates have a list of their own and stay out of the other lists, the
   search, the quick switcher, link suggestions and backlinks. Choose one in
@@ -1222,6 +1230,19 @@ carries the note as it is now:
 The check only applies when `title` or `content` is sent, and a request
 without `revision` is never refused. With `"keepVersion": true` the text that
 a save replaces is kept as a version whatever the usual interval.
+
+`POST /notes/bulk` with `{"ids": [...], "action": "move", "notebookId": "..."}`
+does one action for up to 500 notes: `move` (with `notebookId`, or `null`
+for none), `addTag` and `removeTag` (with `tag`), `pin`, `unpin` and
+`trash`. It runs in one transaction that locks the notes in the order of
+their ids and decides access note by note, so a mixed selection is carried
+out in part. The answer lists the notes that `changed`, those that were
+`unchanged` because they were so already, and those `skipped` with a
+`reason`: `not_found` (also for a note the caller may not see),
+`not_allowed`, `in_trash` or `too_many_tags`. A move also returns the
+`previous` notebook of each note it moved. A member's editor role covers the
+tag actions only, as for a single note. None of these touch the title or the
+text, so the revision of a note stays as it was.
 
 `GET /tasks` lists the open tasks, grouped by note, with `notebookId` and
 `tag` as for the note list, and says how many notes it could not read

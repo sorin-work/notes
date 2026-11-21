@@ -50,7 +50,7 @@ couple of weekends, **L** several weeks of spare time.
 | 25  | Search syntax, several tags and saved searches      | Later   | both     | M    | -          |
 | 26  | Code highlighting, math and diagrams in the preview | Later   | frontend | M    | -          |
 | 27  | Two-step sign-in and verified email changes         | Later   | both     | M    | -          |
-| 28  | Select several notes at once                        | Later   | both     | M    | -          |
+| 28  | Select several notes at once                        | Shipped | both     | M    | -          |
 | 29  | Live change notices in open notes                   | Later   | both     | M    | -          |
 | 30  | Tests in a real browser                             | Later   | infra    | M    | -          |
 | 31  | Embedding one note in another                       | Maybe   | both     | M    | 21         |
@@ -161,30 +161,6 @@ mail that could not be sent shows only in the API log.
   API tokens keep working, but making one should ask for a code too.
 - Undecided: WebAuthn passkeys instead of or beside TOTP. They need no
   shared secret but are more work in the browser and in tests.
-
-### 28. Select several notes at once
-
-Moving twenty imported notes into a notebook, tagging a batch, or sending a
-batch to the trash is one note at a time today.
-
-- `NoteList` gets a selection: a box per row, Shift with a click for a range,
-  and a bar with Move to, Add tag, Remove tag, Pin and Move to trash.
-- `POST /notes/bulk` with the ids and one action, in one transaction, up to
-  500 ids, answering which notes changed and which were skipped. Each note
-  goes through `AccessService`, and a member's editor role only covers tags
-  (item 17), so a mixed selection is refused in part, and the answer says
-  which.
-- None of these touch title or content, so none can conflict (item 8). They
-  need a connection, like pins and tags offline (item 14), and say so.
-- Tricky: the list loads in pages (`useInfiniteQuery`), so "select all" can
-  only mean the loaded rows unless the action takes the filters instead of
-  ids. A move cannot be undone the way the trash can, so the bar wants an
-  "Undo" notice for a while.
-- Tricky: Space and Shift with the arrow keys should select from the
-  keyboard, which goes with the roving Tab stop of item 23. A screen reader
-  has to hear how many are selected.
-- Undecided: whether selecting replaces opening a note on click, or needs a
-  "Select" button first.
 
 ### 29. Live change notices in open notes
 
@@ -926,3 +902,22 @@ dates: `due:YYYY-MM-DD` after a task is shown, and marked late once past, in
 the browser only. The list is not sorted by it, and there are no reminders by
 mail. Still open: sorting by due day, and a count of open tasks in the
 sidebar.
+
+### 28. Select several notes at once
+
+"Select" above the note list turns on a box per row, so a click on a note
+still opens it; that settles the open point. Shift with a click selects a
+range, Space selects the note with the focus, and Shift with Up or Down
+selects while it moves, on top of the roving Tab stop of item 23. The count is
+said in a status line, and each note says whether it is selected. The bar
+does Move to, Add tag, Remove tag, Pin, Unpin and Move to trash through
+`POST /notes/bulk`: up to 500 ids, one transaction, the notes locked in id
+order, access decided note by note with `AccessService.notes` (the
+memberships read once), and an answer that lists changed, unchanged and
+skipped notes with a reason. A move answers with where each note was, and its
+notice offers Undo for 15 seconds, which moves each note back. A move into a
+notebook shared with a link asks first, as for one note. The bar needs a
+connection and says so, and notes made offline that are not on the server
+yet are left out and counted. "Select all" means the loaded rows; the action
+does not take the filters. Still open: favouriting in bulk, and selecting
+every page of a long list.
