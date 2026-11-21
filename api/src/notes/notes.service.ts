@@ -392,12 +392,28 @@ export class NotesService {
   async renameLinks(userId: string, id: string, from: string): Promise<RenamedLinks> {
     return this.prisma.$transaction(
       async (tx) => {
-        // The note is held until the transaction ends, and read only then. A
-        // title that is saved in the meantime has to wait, so the links
-        // cannot be pointed at a title the note has just lost.
-        await tx.$queryRaw`SELECT id FROM notes WHERE id = ${id}::uuid AND user_id = ${userId}::uuid FOR UPDATE`;
+        // The note and the notes that link to the old title are held until
+        // the transaction ends, and read only then. A title that is saved in
+        // the meantime has to wait, so the links cannot be pointed at a title
+        // the note has just lost. They are locked in the order of their ids,
+        // as a bulk action locks its notes, so the two cannot deadlock.
+        const candidates = await tx.note.findMany({
+          where: {
+            userId,
+            deletedAt: null,
+            id: { not: id },
+            outgoingLinks: { some: { targetKey: normalizeTitle(from) } },
+          },
+          select: { id: true },
+        });
+        const locked = [id, ...candidates.map((candidate) => candidate.id)];
+        await tx.$queryRaw`SELECT id FROM notes WHERE id = ANY(${locked}::uuid[]) AND user_id = ${userId}::uuid ORDER BY id FOR UPDATE`;
         const note = await this.findActive(userId, id, tx);
-        const { linking, rewrites } = await this.linkRewrites(tx, userId, note, from);
+        const found = await this.linkRewrites(tx, userId, note, from);
+        const held = new Set(locked);
+        // A note that came to link to the old title after the lock is left as it is, and counted as skipped.
+        const rewrites = found.rewrites.filter(({ source }) => held.has(source.id));
+        const { linking } = found;
 
         const now = new Date();
         const noteIds: string[] = [];
