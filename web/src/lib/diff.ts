@@ -37,8 +37,15 @@ export const MAX_ROWS = 2_000;
 export const MAX_WORD_EDITS = 200;
 export const MAX_WORD_SPAN = 2_000;
 
-/** How many words and spaces markWords compares over a whole diff before it shows the rest of the lines whole. */
-export const MAX_WORD_WORK = 100_000;
+/**
+ * How much work markWords does over a whole diff before it shows the rest of
+ * the lines whole: every word and space it reads, and every step of the
+ * search, for the pairs it marks and for those it gives up on alike.
+ */
+export const MAX_WORD_WORK = 1_000_000;
+
+/** A pair of lines longer than this in all, in characters, is shown whole without being read. */
+export const MAX_WORD_LINE = 100_000;
 
 function splitLines(text: string): string[] {
   const lines = text.split(/\r\n?|\n/);
@@ -193,19 +200,34 @@ const solid = (text: string) => text.replace(/\s+/g, '').length;
  * The words that differ between a removed line and the added line it faces.
  * Returns null when the lines should be shown whole: past the cut-offs, or
  * when they have so little in common, under a third of the longer one, that
- * marks would cover nearly everything. `work` is how many words and spaces
- * were compared, for the budget of markWords.
+ * marks would cover nearly everything.
  */
-export function diffWords(
+export function diffWords(before: string, after: string): { removed: LinePart[]; added: LinePart[] } | null {
+  return compareWords(before, after).words;
+}
+
+/**
+ * diffWords, with the work it took. That is the characters read for a pair
+ * that is too long to read, else the words and spaces read plus the steps of
+ * the search: the changed stretch once for each round it ran, which for a
+ * search that gave up is every round it had.
+ */
+function compareWords(
   before: string,
   after: string,
-): { removed: LinePart[]; added: LinePart[]; work: number } | null {
+): { words: { removed: LinePart[]; added: LinePart[] } | null; work: number } {
+  if (before.length + after.length > MAX_WORD_LINE) return { words: null, work: before.length + after.length };
   const a = before.match(TOKEN) ?? [];
   const b = after.match(TOKEN) ?? [];
   const { edits, span } = diffItems(a, b, MAX_WORD_EDITS, MAX_WORD_SPAN);
-  if (edits === null) return null;
+  const read = a.length + b.length;
+  if (edits === null) {
+    return { words: null, work: read + (span > MAX_WORD_SPAN ? 0 : span * Math.min(span, MAX_WORD_EDITS)) };
+  }
+  const rounds = edits.filter((edit) => edit.type !== 'same').length + 1;
+  const work = read + span * rounds;
   const common = edits.filter((edit) => edit.type === 'same').reduce((sum, edit) => sum + solid(edit.text), 0);
-  if (common * 3 < Math.max(solid(before), solid(after))) return null;
+  if (common * 3 < Math.max(solid(before), solid(after))) return { words: null, work };
   const side = (type: 'removed' | 'added') =>
     joinParts(
       bridgeSpaces(
@@ -214,7 +236,7 @@ export function diffWords(
           .map((edit) => ({ text: edit.text, changed: edit.type !== 'same' })),
       ),
     );
-  return { removed: side('removed'), added: side('added'), work: span };
+  return { words: { removed: side('removed'), added: side('added') }, work };
 }
 
 /**
@@ -241,9 +263,10 @@ export function markWords(lines: DiffLine[]): DiffLine[] {
       const removed = marked[index + pair];
       const added = marked[removedEnd + pair];
       if (!removed || !added) break;
-      const words = diffWords(removed.text, added.text);
+      const { words, work: spent } = compareWords(removed.text, added.text);
+      // Charged whether or not anything is marked: giving up can take as long as succeeding.
+      work += spent;
       if (!words) continue;
-      work += words.work;
       removed.parts = words.removed;
       added.parts = words.added;
     }

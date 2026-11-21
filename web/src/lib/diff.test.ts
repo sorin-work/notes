@@ -221,4 +221,16 @@ describe('markWords', () => {
       null,
     ]);
   });
+
+  it('charges the pairs it gives up on to its budget, so many long ones end quickly', () => {
+    // Every other word differs, so each search runs out of edits and marks nothing.
+    const line = (word: string, row: number) =>
+      Array.from({ length: 600 }, (_, index) => (index % 2 ? `${word}${row}x${index}` : `same${index}`)).join(' ');
+    const removed = Array.from({ length: 1_000 }, (_, row) => ({ type: 'removed' as const, text: line('old', row) }));
+    const added = Array.from({ length: 1_000 }, (_, row) => ({ type: 'added' as const, text: line('new', row) }));
+    const started = performance.now();
+    const lines = markWords([...removed, ...added]);
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(lines.some((one) => one.parts)).toBe(false);
+  });
 });
