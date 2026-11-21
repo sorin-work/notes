@@ -879,7 +879,9 @@ block of added lines after it in order, line for line, and runs the same
 Myers search over words, spaces and single punctuation marks. Lines left over
 when the blocks differ in length stay whole, as do pairs with under a third
 of their text in common. The cut-offs are 200 edits or a changed stretch of
-2,000 words and spaces per pair, and 100,000 words and spaces per view. Marks
+2,000 words and spaces per pair, pairs over 100,000 characters are not read,
+and a view stops after about a million steps of work, pairs it gave up on
+included. Marks
 are `<del>` and `<ins>`, struck through or underlined as well as coloured,
 with hidden words for screen readers. `foldUnchanged` keeps the lines it hid,
 and a "Show" button puts them back 500 at a time. Still open: pairing by
