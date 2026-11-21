@@ -1,12 +1,13 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AccessService, Need } from '../access/access.service';
-import { NotebooksService } from '../notebooks/notebooks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeTagName } from '../tags/tag-name';
 import { BulkAction, BulkNotesDto } from './dto/bulk.dto';
 
 /** Why a note was left out of a bulk action. */
-export type SkipReason = 'not_found' | 'not_allowed' | 'in_trash' | 'too_many_tags';
+export type SkipReason = 'not_found' | 'not_allowed' | 'in_trash' | 'too_many_tags' | 'moved_since' | 'notebook_gone';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface BulkResult {
   /** The notes the action changed. */
@@ -29,6 +30,7 @@ const MAX_NOTE_TAGS = 20;
  */
 const NEED: Record<BulkAction, Need> = {
   move: 'owner',
+  moveBack: 'owner',
   pin: 'owner',
   unpin: 'owner',
   trash: 'owner',
@@ -41,7 +43,6 @@ export class BulkService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
-    private readonly notebooks: NotebooksService,
   ) {}
 
   /**
@@ -61,14 +62,33 @@ export class BulkService {
       throw new BadRequestException('That is not a tag');
     }
     const target = dto.action === 'move' ? (dto.notebookId ?? null) : null;
-    if (target) await this.notebooks.findOwned(userId, target);
+    const back = dto.action === 'moveBack' ? (dto.back ?? {}) : {};
+    if (dto.action === 'moveBack') {
+      const wrong = ids.some((id) => {
+        const to = back[id];
+        return to === undefined || (to !== null && (typeof to !== 'string' || !UUID.test(to)));
+      });
+      if (wrong) throw new BadRequestException('back must name a notebook id or null for every note');
+    }
 
     return this.prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM notes WHERE id = ANY(${ids}::uuid[]) ORDER BY id FOR UPDATE`;
         await tx.$queryRaw`SELECT notebook_id FROM notebook_members WHERE user_id = ${userId}::uuid FOR SHARE`;
-        // The notebook cannot go away under the move.
-        if (target) await tx.$queryRaw`SELECT id FROM notebooks WHERE id = ${target}::uuid FOR SHARE`;
+        // The notebooks cannot go away under the move. One that is gone, or not
+        // the caller's, is a 404 for a move and leaves its notes where they are
+        // for an undo.
+        const wanted = target ? [target] : [...new Set(Object.values(back).filter((to): to is string => to !== null))];
+        const there = new Set(
+          wanted.length === 0
+            ? []
+            : (
+                await tx.$queryRaw<{ id: string }[]>`
+                  SELECT id FROM notebooks WHERE id = ANY(${wanted}::uuid[]) AND user_id = ${userId}::uuid
+                  ORDER BY id FOR SHARE`
+              ).map((row) => row.id),
+        );
+        if (target && !there.has(target)) throw new NotFoundException('Notebook not found');
 
         const granted = await this.access.notes(userId, ids, NEED[dto.action], tx);
         const notes = await tx.note.findMany({
@@ -122,6 +142,30 @@ export class BulkService {
                 where: { id: { in: moved.map((note) => note.id) } },
                 data: { notebookId: target, updatedAt: now },
               });
+            }
+            break;
+          }
+          case 'moveBack': {
+            const expected = dto.expectedNotebookId ?? null;
+            const movable: typeof allowed = [];
+            for (const note of allowed) {
+              const to = back[note.id] ?? null;
+              if (note.notebookId !== expected) result.skipped.push({ id: note.id, reason: 'moved_since' });
+              else if (to !== null && !there.has(to)) result.skipped.push({ id: note.id, reason: 'notebook_gone' });
+              else movable.push(note);
+            }
+            result.changed = movable
+              .filter((note) => note.notebookId !== (back[note.id] ?? null))
+              .map((note) => note.id);
+            result.unchanged = movable.filter((note) => !result.changed.includes(note.id)).map((note) => note.id);
+            // One statement for each notebook the notes go back to.
+            const groups = new Map<string | null, string[]>();
+            for (const id of result.changed) {
+              const to = back[id] ?? null;
+              groups.set(to, [...(groups.get(to) ?? []), id]);
+            }
+            for (const [notebookId, group] of groups) {
+              await tx.note.updateMany({ where: { id: { in: group } }, data: { notebookId, updatedAt: now } });
             }
             break;
           }
