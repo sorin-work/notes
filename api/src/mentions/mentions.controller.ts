@@ -24,7 +24,7 @@ export class MentionsController {
     // A member sees mentions only in the notes of the notebooks shared with them.
     const granted = await this.access.note(user.id, noteId, 'read');
     const visible = await this.access.visibleNotebookIds(user.id, granted.ownerId);
-    return this.mentions.list(granted.ownerId, noteId, query, visible ? [...visible] : undefined);
+    return this.mentions.list(granted.ownerId, noteId, query, visible ? [...visible] : undefined, user.id);
   }
 
   /** Puts [[ ]] around one mention in the note `sourceId`. 409 when that note has changed since the list was made. */

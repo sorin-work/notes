@@ -110,13 +110,21 @@ export class MentionsService {
    * stems where a title has to match as written. For each note the first
    * mention that "Link" would accept is given, found with the same function
    * "Link" uses, so every mention listed can be linked.
-   */
-  /**
+   *
    * With `notebookIds`, only notes in those notebooks are read for mentions:
    * what a member of a shared notebook may see of its owner's notes.
+   * `callerId` is who asked, and holds the slot of the limit on lookups at
+   * once: a member reading the owner's notes uses up their own slots, never
+   * the owner's.
    */
-  async list(userId: string, noteId: string, page: PaginationQuery, notebookIds?: string[]): Promise<MentionPage> {
-    return this.oneAtATime(userId, () => this.listNow(userId, noteId, page, notebookIds));
+  async list(
+    userId: string,
+    noteId: string,
+    page: PaginationQuery,
+    notebookIds?: string[],
+    callerId: string = userId,
+  ): Promise<MentionPage> {
+    return this.oneAtATime(callerId, () => this.listNow(userId, noteId, page, notebookIds));
   }
 
   private async listNow(
