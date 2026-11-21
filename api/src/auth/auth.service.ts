@@ -23,7 +23,8 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { EmailChangeService } from './email-change.service';
 import { hashPassword, verifyPassword } from './password';
 import { Preferences, readPreferences } from './preferences';
-import { TwoStepService } from './two-step.service';
+import { looksLikeTotp } from './totp';
+import { TooManyCodes, TwoStepService } from './two-step.service';
 
 /** How long the ticket from the password step is good for the code step. */
 export const TICKET_TTL_SECONDS = 5 * 60;
@@ -146,13 +147,20 @@ export class AuthService {
     if (!user || user.tokenVersion !== payload.ver || !this.twoStep.isOn(user)) {
       throw expired;
     }
-    this.twoStep.attempts.take(user.id, address, payload.jti, (payload.exp ?? 0) * 1000, now.getTime());
+    const expires = (payload.exp ?? 0) * 1000;
+    const attempts = this.twoStep.attempts;
+    attempts.take(user.id, address, payload.jti, expires, now.getTime());
+    if (looksLikeTotp(code) && attempts.capped(user.id, now.getTime())) {
+      throw new TooManyCodes('Too many wrong codes for this account this hour. A recovery code still works.');
+    }
     if (!(await this.twoStep.check(user, code, now))) {
+      attempts.wrongCode(user.id, now.getTime());
       this.twoStep.warnOwner(user, now.getTime());
       // 403, not 401: the web app signs out on a 401, and the ticket may have codes left.
       throw new ForbiddenException('That code is not right');
     }
-    this.twoStep.attempts.giveBack(user.id, address);
+    // A ticket signs in once.
+    attempts.succeeded(user.id, address, payload.jti, expires);
     return this.issue(user);
   }
 

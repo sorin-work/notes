@@ -158,6 +158,8 @@ describe('two-step sign-in', () => {
       .send({ ticket: first.body.ticket, code: next })
       .expect(200);
     await request(server).get('/api/auth/me').set(bearer(signedIn.body.token)).expect(200);
+    // The ticket signed in once and makes no second token.
+    await request(server).post('/api/auth/login/code').send({ ticket: first.body.ticket, code: next }).expect(401);
 
     // The same code, with a fresh ticket, does not work twice.
     const second = await request(server).post('/api/auth/login').send({ email, password: 'password123' }).expect(200);

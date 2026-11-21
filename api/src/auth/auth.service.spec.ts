@@ -134,22 +134,28 @@ describe('AuthService', () => {
         where: { id: user.id, OR: [{ twoStepLastStep: null }, { twoStepLastStep: { lt: stepAt(now) } }] },
         data: { twoStepLastStep: stepAt(now) },
       });
-      // The same code again finds its step taken.
-      await expect(service.loginWithCode(ticket, code, '203.0.113.7', now)).rejects.toThrow('That code is not right');
+      // The ticket signed in once and is spent, whatever comes with it.
+      await expect(service.loginWithCode(ticket, code, '203.0.113.7', now)).rejects.toThrow('this sign-in is done');
+      // The same code with a new ticket finds its step taken.
+      const again = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      await expect(service.loginWithCode(again.ticket, code, '203.0.113.7', now)).rejects.toThrow(
+        'That code is not right',
+      );
     });
 
     it('takes the codes of one step before and after, and no further', async () => {
       prisma.user.findUnique.mockResolvedValue(withCodes);
       prisma.user.updateMany.mockResolvedValue({ count: 1 });
-      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      const ticket = async () =>
+        ((await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket).ticket;
       for (const offset of [-1, 1]) {
         await expect(
-          service.loginWithCode(ticket, codeAt(secret, stepAt(now) + offset), '203.0.113.7', now),
+          service.loginWithCode(await ticket(), codeAt(secret, stepAt(now) + offset), '203.0.113.7', now),
         ).resolves.toHaveProperty('token');
       }
-      await expect(service.loginWithCode(ticket, codeAt(secret, stepAt(now) + 2), '203.0.113.7', now)).rejects.toThrow(
-        'That code is not right',
-      );
+      await expect(
+        service.loginWithCode(await ticket(), codeAt(secret, stepAt(now) + 2), '203.0.113.7', now),
+      ).rejects.toThrow('That code is not right');
       expect(twoStep.warnOwner).toHaveBeenCalledTimes(1);
     });
 
@@ -212,8 +218,46 @@ describe('AuthService', () => {
       expect(prisma.recoveryCode.deleteMany).toHaveBeenCalledWith({
         where: { userId: user.id, codeHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
       });
-      await expect(service.loginWithCode(ticket, 'abcdefghjkmnpqrs', '203.0.113.7', now)).rejects.toThrow(
+      const reused = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      await expect(service.loginWithCode(reused.ticket, 'abcdefghjkmnpqrs', '203.0.113.7', now)).rejects.toThrow(
         'That code is not right',
+      );
+    });
+
+    it('refuses codes from the app after 20 wrong ones in an hour from anywhere, and still takes a recovery code', async () => {
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const ticket = async () =>
+        ((await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket).ticket;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await expect(service.loginWithCode(await ticket(), '000000', `198.51.100.${attempt}`, now)).rejects.toThrow(
+          'That code is not right',
+        );
+      }
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
+      await expect(
+        service.loginWithCode(await ticket(), codeAt(secret, stepAt(now)), '203.0.113.7', now),
+      ).rejects.toThrow('A recovery code still works');
+      prisma.recoveryCode.deleteMany.mockResolvedValue({ count: 1 });
+      await expect(
+        service.loginWithCode(await ticket(), 'abcd-efgh-jkmn-pqrs', '203.0.113.7', now),
+      ).resolves.toHaveProperty('token');
+      // An hour later the app's codes work again.
+      const later = new Date(now.getTime() + 61 * 60 * 1000);
+      await expect(
+        service.loginWithCode(await ticket(), codeAt(secret, stepAt(later)), '203.0.113.7', later),
+      ).resolves.toHaveProperty('token');
+    });
+
+    it('answers 503 for a key that does not fit, as for a missing one', async () => {
+      const other = new TwoStepService(asPrismaService(prisma), {
+        authThrottleLimit: 10,
+        twoStepKey: Buffer.alloc(32, 8),
+      } as AppConfig);
+      service = new AuthService(asPrismaService(prisma), jwt, undefined, other);
+      prisma.user.findUnique.mockResolvedValue(withCodes);
+      const { ticket } = (await service.login({ email: user.email, password: 'correct-horse' })) as TwoStepTicket;
+      await expect(service.loginWithCode(ticket, codeAt(secret, stepAt(now)), '203.0.113.7', now)).rejects.toThrow(
+        'cannot be checked on this server',
       );
     });
   });

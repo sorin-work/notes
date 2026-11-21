@@ -9,7 +9,9 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  OnApplicationBootstrap,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { APP_CONFIG, AppConfig } from '../config/config';
@@ -28,6 +30,10 @@ import {
 
 /** Wrong codes one ticket may take before it is used up and the password has to be given again. */
 export const CODES_PER_TICKET = 5;
+/** Wrong codes an account may take in an hour, from all addresses together, before codes from the app are refused. */
+export const WRONG_CODES_PER_HOUR = 20;
+const HOUR_MS = 60 * 60 * 1000;
+const NO_KEY = 'Codes from the app cannot be checked on this server (TWO_STEP_KEY). A recovery code still works.';
 const WINDOW_MS = 60_000;
 const SWEEP_ABOVE = 1000;
 /** The owner hears about wrong codes at most this often. */
@@ -46,32 +52,41 @@ export class TooManyCodes extends HttpException {
 }
 
 /**
- * Counts the codes tried at sign-in, in two ways, and never per account
- * alone:
+ * Counts the codes tried at sign-in:
  *
- * - Per account and client address, AUTH_THROTTLE_LIMIT a minute. Someone
- *   trying codes from one address cannot lock the owner out, who signs in
- *   from another one. A count per account across all addresses would do
- *   exactly that, so there is none.
- * - Per ticket, CODES_PER_TICKET in all. A ticket is what the right password
- *   gets, so each batch of guesses costs a sign-in with the password, which
- *   is throttled per address too.
+ * - Per account and client address, AUTH_THROTTLE_LIMIT a minute.
+ * - Per ticket, CODES_PER_TICKET in all, and a ticket that signed someone
+ *   in is spent: it cannot make a second token. A ticket is what the right
+ *   password gets, so each batch of guesses costs a sign-in with the
+ *   password, which is throttled per address too.
+ * - Per account from all addresses, WRONG_CODES_PER_HOUR wrong codes an
+ *   hour. Past that, codes from the app are refused for the rest of the
+ *   hour and recovery codes still work. This one could hold the owner up,
+ *   but only someone who has the password can use it up, and the owner is
+ *   mailed when that happens (TwoStepService.warnOwner).
  *
  * Six digits are a million codes, of which three are right at any moment.
- * Whoever tries has the password already, and the owner is told by mail
- * (TwoStepService.warnOwner). Kept in the memory of this process, like the
- * other throttles.
+ * With the cap, someone who has the password and guesses from many
+ * addresses gets 480 codes a day, about one chance in 700 a day, while the
+ * owner is mailed about it every hour. Kept in the memory of this
+ * process, like the other throttles.
  */
 export class CodeAttempts {
   private readonly windows = new Map<string, { used: number; until: number }>();
-  private readonly tickets = new Map<string, { used: number; until: number }>();
+  private readonly tickets = new Map<string, { used: number; until: number; spent?: boolean }>();
+  private readonly wrong = new Map<string, { used: number; until: number }>();
 
   constructor(private readonly limit: number) {}
 
-  /** Takes one attempt. Throws 429 when there is none left. */
+  /** Takes one attempt. Throws when the ticket is spent or used up, or the address has had its codes. */
   take(userId: string, address: string, ticketId: string, ticketExpires: number, now = Date.now()): void {
-    if (this.windows.size >= SWEEP_ABOVE || this.tickets.size >= SWEEP_ABOVE) this.sweep(now);
+    if (this.windows.size >= SWEEP_ABOVE || this.tickets.size >= SWEEP_ABOVE || this.wrong.size >= SWEEP_ABOVE) {
+      this.sweep(now);
+    }
     const ticket = this.tickets.get(ticketId) ?? { used: 0, until: ticketExpires };
+    if (ticket.spent) {
+      throw new UnauthorizedException('Sign in with your password again: this sign-in is done.');
+    }
     if (ticket.used >= CODES_PER_TICKET) {
       throw new TooManyCodes('Too many wrong codes. Sign in with your password again.');
     }
@@ -90,14 +105,36 @@ export class CodeAttempts {
     this.tickets.set(ticketId, ticket);
   }
 
-  /** The code was right: the attempt does not count against the address. The ticket is spent anyway. */
-  giveBack(userId: string, address: string): void {
+  /** Whether codes from the app are refused for the account this hour. Recovery codes are not. */
+  capped(userId: string, now = Date.now()): boolean {
+    const window = this.wrong.get(userId);
+    return !!window && window.until > now && window.used >= WRONG_CODES_PER_HOUR;
+  }
+
+  /** A wrong code, counted against the account from wherever it came. */
+  wrongCode(userId: string, now = Date.now()): void {
+    let window = this.wrong.get(userId);
+    if (!window || window.until <= now) {
+      window = { used: 0, until: now + HOUR_MS };
+      this.wrong.set(userId, window);
+    }
+    window.used++;
+  }
+
+  /**
+   * The code was right: the attempt does not count against the address, and
+   * the ticket is spent until it would have expired anyway.
+   */
+  succeeded(userId: string, address: string, ticketId: string, ticketExpires: number): void {
     const window = this.windows.get(`${userId}|${address}`);
     if (window && window.used > 0) window.used--;
+    const ticket = this.tickets.get(ticketId) ?? { used: 0, until: ticketExpires };
+    ticket.spent = true;
+    this.tickets.set(ticketId, ticket);
   }
 
   private sweep(now: number): void {
-    for (const map of [this.windows, this.tickets]) {
+    for (const map of [this.windows, this.tickets, this.wrong]) {
       for (const [key, entry] of map) if (entry.until <= now) map.delete(key);
     }
   }
@@ -134,7 +171,7 @@ export function wrongCodeMail(to: string): OutgoingMail {
 }
 
 @Injectable()
-export class TwoStepService {
+export class TwoStepService implements OnApplicationBootstrap {
   private readonly logger = new Logger(TwoStepService.name);
   readonly attempts: CodeAttempts;
   private readonly warned = new Map<string, number>();
@@ -149,6 +186,33 @@ export class TwoStepService {
 
   get available(): boolean {
     return this.config.twoStepKey !== null;
+  }
+
+  /**
+   * Says once, at start, when TWO_STEP_KEY is not the key the stored secrets
+   * were made with, as after a restore onto a server with another key. Each
+   * sign-in would otherwise only answer 503 without saying why.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    if (!this.config.twoStepKey) return;
+    let sample: { id: string; twoStepSecret: string | null } | null;
+    try {
+      sample = await this.prisma.user.findFirst({
+        where: { twoStepSecret: { not: null } },
+        select: { id: true, twoStepSecret: true },
+      });
+    } catch {
+      // The database is not there yet: nothing to check against.
+      return;
+    }
+    if (!sample?.twoStepSecret) return;
+    try {
+      decryptSecret(this.config.twoStepKey, sample.id, sample.twoStepSecret);
+    } catch {
+      this.logger.error(
+        'TWO_STEP_KEY does not decrypt the stored two-step secrets. Codes from the app will not work until the key they were made with is back. Recovery codes still do.',
+      );
+    }
   }
 
   isOn(user: Pick<User, 'twoStepSince'>): boolean {
@@ -198,18 +262,24 @@ export class TwoStepService {
     if (!user.twoStepSecret) {
       throw new BadRequestException('Start setting up two-step sign-in first');
     }
-    const step = looksLikeTotp(code) ? matchingStep(decryptSecret(key, userId, user.twoStepSecret), code, now) : null;
+    const step = looksLikeTotp(code) ? matchingStep(this.secretOf(key, user.id, user.twoStepSecret), code, now) : null;
     if (step === null) {
       throw new ForbiddenException('That code is not right. Check the time on the phone and try the next one.');
     }
     const codes = Array.from({ length: RECOVERY_CODE_COUNT }, newRecoveryCode);
     await this.prisma.$transaction(async (tx) => {
-      await tx.recoveryCode.deleteMany({ where: { userId } });
-      await tx.recoveryCode.createMany({ data: codes.map((one) => ({ userId, codeHash: hashRecoveryCode(one) })) });
-      await tx.user.update({
-        where: { id: userId },
+      // Only while codes are off, in the statement that turns them on: of two
+      // requests at once, the second finds them on, gets a 409, and its
+      // recovery codes are rolled back with it, so the first answer's stand.
+      const turned = await tx.user.updateMany({
+        where: { id: userId, twoStepSince: null },
         data: { twoStepSince: now, twoStepLastStep: step, tokenVersion: { increment: 1 } },
       });
+      if (turned.count !== 1) {
+        throw new ConflictException('Two-step sign-in is already on');
+      }
+      await tx.recoveryCode.deleteMany({ where: { userId } });
+      await tx.recoveryCode.createMany({ data: codes.map((one) => ({ userId, codeHash: hashRecoveryCode(one) })) });
     });
     return codes;
   }
@@ -245,7 +315,7 @@ export class TwoStepService {
   async check(user: User, code: string, now = new Date()): Promise<boolean> {
     if (looksLikeTotp(code)) {
       if (!user.twoStepSecret) return false;
-      const step = matchingStep(decryptSecret(this.key(), user.id, user.twoStepSecret), code, now);
+      const step = matchingStep(this.secretOf(this.key(), user.id, user.twoStepSecret), code, now);
       if (step === null) return false;
       const taken = await this.prisma.user.updateMany({
         where: { id: user.id, OR: [{ twoStepLastStep: null }, { twoStepLastStep: { lt: step } }] },
@@ -297,11 +367,18 @@ export class TwoStepService {
     });
   }
 
+  /** A key that does not fit answers like a missing one: the codes cannot be checked here. */
+  private secretOf(key: Buffer, userId: string, stored: string): Buffer {
+    try {
+      return decryptSecret(key, userId, stored);
+    } catch {
+      throw new ServiceUnavailableException(NO_KEY);
+    }
+  }
+
   private key(): Buffer {
     if (!this.config.twoStepKey) {
-      throw new ServiceUnavailableException(
-        'Two-step sign-in is not set up on this server (TWO_STEP_KEY). A recovery code still works.',
-      );
+      throw new ServiceUnavailableException(NO_KEY);
     }
     return this.config.twoStepKey;
   }

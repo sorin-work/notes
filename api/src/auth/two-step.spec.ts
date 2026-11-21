@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { AppConfig } from '../config/config';
 import { asPrismaService, createPrismaMock, PrismaMock } from '../testing/prisma-mock';
 import { base32Decode, base32Encode, codeAt, matchingStep, otpauthUri, stepAt } from './totp';
@@ -114,16 +114,43 @@ describe('TwoStepService', () => {
     expect(setup.uri).toContain(`secret=${setup.secret}`);
 
     prisma.user.findUnique.mockResolvedValue({ ...user, twoStepSecret: stored });
+    prisma.user.updateMany.mockResolvedValue({ count: 1 });
     await expect(service.enable(user.id, '000000', now)).rejects.toBeInstanceOf(ForbiddenException);
     const codes = await service.enable(user.id, codeAt(base32Decode(setup.secret), stepAt(now)), now);
     expect(codes).toHaveLength(10);
     const kept = prisma.recoveryCode.createMany.mock.calls[0][0].data as { codeHash: string }[];
     expect(kept.map((row) => row.codeHash)).toEqual(codes.map(hashRecoveryCode));
-    // Every other session was signed in without a code, so they end.
-    expect(prisma.user.update).toHaveBeenLastCalledWith({
-      where: { id: user.id },
+    // Only while codes are off. Every other session was signed in without a code, so they end.
+    expect(prisma.user.updateMany).toHaveBeenLastCalledWith({
+      where: { id: user.id, twoStepSince: null },
       data: { twoStepSince: now, twoStepLastStep: stepAt(now), tokenVersion: { increment: 1 } },
     });
+  });
+
+  it('gives the second of two enables at once a 409, and keeps the recovery codes of the first', async () => {
+    const stored = encryptSecret(key, user.id, RFC_SECRET);
+    prisma.user.findUnique.mockResolvedValue({ ...user, twoStepSecret: stored });
+    prisma.user.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.enable(user.id, codeAt(RFC_SECRET, stepAt(now)), now)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.recoveryCode.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.recoveryCode.createMany).not.toHaveBeenCalled();
+  });
+
+  it('says once at start when the key does not decrypt the stored secrets', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    prisma.user.findFirst.mockResolvedValue({
+      id: user.id,
+      twoStepSecret: encryptSecret(Buffer.alloc(32, 4), user.id, RFC_SECRET),
+    });
+    await service.onApplicationBootstrap();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('TWO_STEP_KEY does not decrypt'));
+    error.mockClear();
+    prisma.user.findFirst.mockResolvedValue({ id: user.id, twoStepSecret: encryptSecret(key, user.id, RFC_SECRET) });
+    await service.onApplicationBootstrap();
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it('does not start again while codes are on, and cannot start without a key', async () => {
