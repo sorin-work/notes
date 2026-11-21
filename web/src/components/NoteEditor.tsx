@@ -1,5 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChangeEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ChangeEvent,
+  KeyboardEvent,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError, getToken } from '../api/client';
@@ -30,6 +40,15 @@ import { useStoredState } from '../hooks/useStoredState';
 import { formatDateTime, formatRelative } from '../lib/dates';
 import { dropStash, readStash, stashDraft } from '../lib/draftStash';
 import { leavingTemplates, newNoteFor, readFilters } from '../lib/filters';
+import {
+  headingId,
+  headingLinkText,
+  lineOffset,
+  NoteHeading,
+  noteHeadings,
+  slugFromHash,
+  slugify,
+} from '../lib/headings';
 import { notify } from '../lib/notices';
 import {
   cannotReachServer,
@@ -54,10 +73,19 @@ import { AttachmentsPanel } from './AttachmentsPanel';
 import { BacklinksPanel } from './BacklinksPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { PinIcon } from './Icons';
-import { LinkSuggestions, suggestionAt, suggestionCount, suggestionId, SUGGESTIONS_ID } from './LinkSuggestions';
+import {
+  HeadingOption,
+  HeadingSuggestions,
+  LinkSuggestions,
+  suggestionAt,
+  suggestionCount,
+  suggestionId,
+  SUGGESTIONS_ID,
+} from './LinkSuggestions';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ConfirmDialog } from './Modal';
 import { NotebookSelect } from './NotebookSelect';
+import { NoteOutline } from './NoteOutline';
 import { ShareDialog } from './ShareDialog';
 import { ErrorMessage, Spinner } from './States';
 import { TagInput } from './TagInput';
@@ -66,6 +94,15 @@ import { VersionHistoryDialog } from './VersionHistoryDialog';
 const MODES = ['edit', 'split', 'preview'] as const;
 type Mode = (typeof MODES)[number];
 const MODE_LABELS: Record<Mode, string> = { edit: 'Edit', split: 'Split', preview: 'Preview' };
+const OUTLINE = ['shown', 'hidden'] as const;
+/** How many headings are offered after `[[Note#` at most. */
+const MAX_HEADING_OPTIONS = 30;
+
+/** What is typed after `[[`: a title, and the #heading part once there is a `#`. */
+function splitLinkQuery(query: string): { title: string; heading: string | null } {
+  const at = query.indexOf('#');
+  return at === -1 ? { title: query, heading: null } : { title: query.slice(0, at), heading: query.slice(at + 1) };
+}
 
 interface Draft {
   title: string;
@@ -124,6 +161,7 @@ function LoadedEditor({ note }: { note: Note }) {
   const [title, setTitle] = useState(queuedAtOpen?.title ?? note.title);
   const [content, setContent] = useState(queuedAtOpen?.content ?? note.content);
   const [mode, setMode] = useStoredState<Mode>('notes.editorMode', MODES, 'split');
+  const [outline, setOutline] = useStoredState('notes.outline', OUTLINE, 'hidden');
   const [dialog, setDialog] = useState<'history' | 'share' | 'delete' | 'conflict' | null>(null);
   // In "Edit" there is no preview on the page, and printing is about the preview. One is put
   // in for as long as the browser prints, and only then, so typing does not render it twice.
@@ -684,41 +722,144 @@ function LoadedEditor({ note }: { note: Note }) {
   );
 
   const linkQuery = useDebouncedValue(link?.query ?? null, 150);
+  const typed = linkQuery === null ? null : splitLinkQuery(linkQuery);
+  // Past a `#` the list offers the headings of the note before it, not titles.
+  const titleQuery = typed && typed.heading === null ? typed.title : null;
   const suggestions = useQuery({
-    queryKey: ['titles', linkQuery, linkScope],
-    queryFn: () => noteTitles(linkQuery ?? '', undefined, linkScope),
-    enabled: linkQuery !== null,
+    queryKey: ['titles', titleQuery, linkScope],
+    queryFn: () => noteTitles(titleQuery ?? '', undefined, linkScope),
+    enabled: titleQuery !== null,
   });
   const titleOptions = (suggestions.data ?? []).filter((item) => item.id !== note.id);
   // The suggestions leave templates out, but a link to a template's title
   // still leads to it, so "New note" is offered only for a title that leads
   // nowhere. Until that is known it is not offered.
   const linkTarget = useQuery({
-    queryKey: ['resolve', linkQuery === null ? null : normalizeTitle(linkQuery), linkScope],
+    queryKey: ['resolve', typed === null ? null : normalizeTitle(typed.title), linkScope],
     queryFn: async () => {
       try {
-        return (await resolveTitle(linkQuery ?? '', linkScope)).id;
+        return (await resolveTitle(typed?.title ?? '', linkScope)).id;
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) return null;
         throw error;
       }
     },
-    enabled: linkQuery !== null && linkQuery.trim() !== '',
+    enabled: typed !== null && typed.title.trim() !== '',
   });
   const titleTaken = !(linkTarget.isSuccess && linkTarget.data === null && linkQuery === (link?.query ?? null));
+
+  // [[#Heading]] is this note, [[Note#Heading]] the note the title leads to, read from its text.
+  const headingNoteId = typed?.heading == null ? null : typed.title.trim() === '' ? note.id : (linkTarget.data ?? null);
+  const headingNote = useQuery({
+    queryKey: ['note', headingNoteId],
+    queryFn: () => getNote(headingNoteId ?? ''),
+    enabled: headingNoteId !== null && headingNoteId !== note.id,
+  });
+  const showOutline = outline === 'shown';
+  // The outline and the headings of this note follow the text a little behind, so typing stays quick.
+  const deferredContent = useDeferredValue(content);
+  const ownHeadings = useMemo(
+    () => (showOutline || headingNoteId === note.id ? noteHeadings(deferredContent) : []),
+    [showOutline, headingNoteId, note.id, deferredContent],
+  );
+  const otherContent = headingNoteId !== note.id ? headingNote.data?.content : undefined;
+  const otherHeadings = useMemo(() => (otherContent === undefined ? [] : noteHeadings(otherContent)), [otherContent]);
+  const headingOptions = ((): HeadingOption[] | null => {
+    if (!typed || typed.heading === null || headingNoteId === null) return null;
+    const all = headingNoteId === note.id ? ownHeadings : otherHeadings;
+    const wanted = typed.heading.trim().toLowerCase();
+    const slug = slugify(wanted);
+    return all
+      .filter((heading) => !wanted || heading.text.toLowerCase().includes(wanted) || heading.slug.startsWith(slug))
+      .slice(0, MAX_HEADING_OPTIONS)
+      .map((heading) => ({
+        label: heading.text || '(empty heading)',
+        depth: heading.depth,
+        insert: `${typed.title.trim()}#${headingLinkText(heading, all)}`,
+      }));
+  })();
+
+  const optionCount = link
+    ? headingOptions
+      ? headingOptions.length
+      : typed?.heading == null
+        ? suggestionCount(titleOptions, link.query, titleTaken)
+        : 0
+    : 0;
+  const optionAt = (index: number): string | null => {
+    if (!link) return null;
+    if (headingOptions) return headingOptions[index]?.insert ?? null;
+    return typed?.heading == null ? suggestionAt(titleOptions, link.query, index, titleTaken) : null;
+  };
   const {
     activeIndex: activeSuggestion,
     setActiveIndex: setActiveSuggestion,
     onArrowKey,
-  } = useActiveOption(link ? suggestionCount(titleOptions, link.query, titleTaken) : 0);
-  const suggesting = link !== null && suggestionCount(titleOptions, link.query, titleTaken) > 0;
+  } = useActiveOption(optionCount);
+  const suggesting = link !== null && optionCount > 0;
+
+  const goToHeading = useCallback(
+    (slug: string, wanted?: string) => {
+      navigate(
+        { pathname: location.pathname, search: location.search, hash: `#${headingId(slug)}` },
+        { state: wanted ? { heading: wanted } : undefined },
+      );
+    },
+    [navigate, location.pathname, location.search],
+  );
+  /**
+   * Shows a heading: scrolled to and focused in the preview, and with the
+   * cursor on its line in the text, where the text is on screen. Without a
+   * preview the text takes the focus, and taking it scrolls to the cursor.
+   */
+  const showHeading = useEffectEvent((heading: NoteHeading) => {
+    if (mode !== 'edit') {
+      const element = document.getElementById(headingId(heading.slug));
+      element?.scrollIntoView?.({ block: 'start' });
+      element?.focus({ preventScroll: true });
+    }
+    const textarea = textareaRef.current;
+    if (!textarea || mode === 'preview') return;
+    const at = lineOffset(content, heading.line);
+    if (mode === 'edit') textarea.blur();
+    textarea.setSelectionRange(at, at);
+    if (mode === 'edit') textarea.focus();
+  });
+  // An address that ends in #h-<slug> goes to that heading, once for each
+  // time it is followed. A heading the note does not have is said, and the
+  // note stays at the top.
+  const addressSlug = slugFromHash(location.hash);
+  const [arrival, setArrival] = useState<{
+    key: string;
+    heading: NoteHeading | null;
+    wanted: string;
+    dismissed?: boolean;
+  } | null>(null);
+  if (addressSlug !== null && arrival?.key !== location.key) {
+    const heading = noteHeadings(content).find((found) => found.slug === addressSlug) ?? null;
+    const wanted = (location.state as { heading?: string } | null)?.heading ?? addressSlug;
+    setArrival({ key: location.key, heading, wanted });
+  }
+  useEffect(() => {
+    if (arrival?.heading) showHeading(arrival.heading);
+  }, [arrival]);
+  const missingHeading =
+    addressSlug !== null && arrival && !arrival.heading && !arrival.dismissed ? arrival.wanted : null;
 
   const openWikiLink = useCallback(
-    async (target: string) => {
+    async (target: string, heading: string | null) => {
+      if (target === '') {
+        if (heading) goToHeading(slugify(heading.trim()), heading);
+        return;
+      }
       await autosave.flush();
       try {
         const found = await resolveTitle(target, linkScope);
-        navigate({ pathname: `/notes/${found.id}`, search: location.search });
+        const hash = heading ? `#${headingId(slugify(heading.trim()))}` : '';
+        navigate(
+          { pathname: `/notes/${found.id}`, search: location.search, hash },
+          { state: heading ? { heading } : undefined },
+        );
       } catch (error) {
         if (!(error instanceof ApiError && error.status === 404)) throw error;
         const created = await createNote({ title: target, notebookId: note.notebookId });
@@ -727,7 +868,7 @@ function LoadedEditor({ note }: { note: Note }) {
         navigate({ pathname: `/notes/${created.id}`, search: location.search });
       }
     },
-    [autosave, navigate, location.search, note.notebookId, queryClient, refreshLists, linkScope],
+    [autosave, navigate, location.search, note.notebookId, queryClient, refreshLists, linkScope, goToHeading],
   );
 
   const updateLinkState = (text: string, cursor: number) => {
@@ -779,7 +920,7 @@ function LoadedEditor({ note }: { note: Note }) {
     } else if (onArrowKey(event)) {
       return;
     } else if (event.key === 'Enter' || event.key === 'Tab') {
-      const target = suggestionAt(titleOptions, link.query, activeSuggestion, titleTaken);
+      const target = optionAt(activeSuggestion);
       if (target) {
         event.preventDefault();
         insertLink(target);
@@ -875,6 +1016,15 @@ function LoadedEditor({ note }: { note: Note }) {
           onClick={() => updateMeta.mutate({ favorite: !note.favorite })}
         >
           {note.favorite ? '★' : '☆'}
+        </button>
+        <button
+          type="button"
+          className={showOutline ? 'button button-shared' : 'button'}
+          aria-pressed={showOutline}
+          title="The headings of this note"
+          onClick={() => setOutline(showOutline ? 'hidden' : 'shown')}
+        >
+          Outline
         </button>
         <button type="button" className="button" onClick={() => setDialog('history')}>
           History
@@ -1042,6 +1192,20 @@ function LoadedEditor({ note }: { note: Note }) {
         </div>
       )}
 
+      {missingHeading !== null && (
+        <div className="banner banner-info" role="status">
+          <span>There is no heading “{missingHeading}” in this note. It may have been renamed.</span>
+          <button
+            type="button"
+            className="button"
+            onClick={() => setArrival(arrival && { ...arrival, dismissed: true })}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {showOutline && <NoteOutline headings={ownHeadings} onPick={(heading) => goToHeading(heading.slug)} />}
+
       <div className="editor-panes">
         {mode !== 'preview' && (
           <div className="editor-source">
@@ -1075,15 +1239,20 @@ function LoadedEditor({ note }: { note: Note }) {
                 void attachFiles(files);
               }}
             />
-            {link && (
-              <LinkSuggestions
-                titles={titleOptions}
-                query={link.query}
-                taken={titleTaken}
-                activeIndex={activeSuggestion}
-                onPick={insertLink}
-              />
-            )}
+            {link &&
+              (headingOptions ? (
+                <HeadingSuggestions options={headingOptions} activeIndex={activeSuggestion} onPick={insertLink} />
+              ) : (
+                typed?.heading == null && (
+                  <LinkSuggestions
+                    titles={titleOptions}
+                    query={link.query}
+                    taken={titleTaken}
+                    activeIndex={activeSuggestion}
+                    onPick={insertLink}
+                  />
+                )
+              ))}
           </div>
         )}
         {mode === 'edit' && printing && (
@@ -1096,6 +1265,7 @@ function LoadedEditor({ note }: { note: Note }) {
             <MarkdownPreview
               content={content}
               onWikiLink={openWikiLink}
+              headingIds
               missingTitles={missingTitles}
               onToggleTask={readOnly ? undefined : onToggleTask}
               attachmentUrls={urls}

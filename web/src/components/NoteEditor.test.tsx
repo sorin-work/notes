@@ -1239,3 +1239,118 @@ describe('NoteEditor', () => {
     expect(await screen.findByText(/This note does not exist/)).toBeInTheDocument();
   });
 });
+
+describe('NoteEditor headings', () => {
+  const atlas = note({
+    id: 'a',
+    title: 'Atlas',
+    content: '# Intro\n\nSome words.\n\n## Plan\n\n### Week one\n\n## Risks',
+  });
+  const source = note({
+    id: 'b',
+    title: 'Source',
+    content: 'See [[Atlas#Plan]] and [[Atlas#Gone]] and [[#Here]].\n\n# Here',
+  });
+
+  function KeyedEditor() {
+    const { noteId = '' } = useParams();
+    return <NoteEditor key={noteId} noteId={noteId} />;
+  }
+
+  function renderNotes(route: string, mode = 'split') {
+    localStorage.setItem('notes.editorMode', mode);
+    return renderWithProviders(
+      <Routes>
+        <Route path="/notes/:noteId" element={<KeyedEditor />} />
+      </Routes>,
+      { route },
+    );
+  }
+
+  const routes = () => ({
+    'GET /api/notebooks': { body: [] },
+    'GET /api/tags': { body: [] },
+    'GET /api/notes/a': { body: atlas },
+    'GET /api/notes/b': { body: source },
+    'GET /api/notes/a/links': { body: [] },
+    'GET /api/notes/b/links': { body: [{ title: 'Atlas', noteId: 'a' }] },
+    'GET /api/notes/a/backlinks': { body: [] },
+    'GET /api/notes/b/backlinks': { body: [] },
+    'GET /api/notes/resolve': { body: { id: 'a', title: 'Atlas' } },
+    'GET /api/notes/titles': { body: [] },
+  });
+
+  it('opens a link to a heading at that heading, with the cursor on its line', async () => {
+    mockFetch(routes());
+    renderNotes('/notes/b');
+    fireEvent.click(await screen.findByRole('link', { name: 'Atlas › Plan' }));
+    const plan = await screen.findByRole('heading', { name: 'Plan' });
+    await waitFor(() => expect(plan).toHaveFocus());
+    expect(plan).toHaveAttribute('id', 'h-plan');
+    const textarea = screen.getByLabelText<HTMLTextAreaElement>('Note content');
+    expect(textarea.selectionStart).toBe(atlas.content.indexOf('## Plan'));
+  });
+
+  it('opens the top of the note and says so when the heading is gone', async () => {
+    mockFetch(routes());
+    renderNotes('/notes/b');
+    fireEvent.click(await screen.findByRole('link', { name: 'Atlas › Gone' }));
+    expect(await screen.findByText('There is no heading “Gone” in this note. It may have been renamed.')).toBeVisible();
+    expect(screen.getByLabelText('Title')).toHaveValue('Atlas');
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/There is no heading/)).not.toBeInTheDocument();
+  });
+
+  it('puts the cursor on the heading in "Edit"', async () => {
+    mockFetch(routes());
+    renderNotes('/notes/a#h-week-one', 'edit');
+    const textarea = await screen.findByLabelText<HTMLTextAreaElement>('Note content');
+    await waitFor(() => expect(textarea).toHaveFocus());
+    expect(textarea.selectionStart).toBe(atlas.content.indexOf('### Week one'));
+  });
+
+  it('follows a link within the note, and marks one to a heading it does not have', async () => {
+    mockFetch(routes());
+    renderNotes('/notes/b', 'preview');
+    expect(await screen.findByRole('link', { name: 'Atlas › Gone' })).not.toHaveClass('wikilink-missing');
+    fireEvent.click(screen.getByRole('link', { name: 'Here' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Here' })).toHaveFocus());
+  });
+
+  it('shows an outline that folds and goes to a heading', async () => {
+    mockFetch(routes());
+    renderNotes('/notes/a', 'preview');
+    await userEvent.click(await screen.findByRole('button', { name: 'Outline' }));
+    const outline = screen.getByRole('navigation', { name: 'Outline' });
+    expect(
+      within(outline)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Intro', 'Plan', 'Week one', 'Risks']);
+    await userEvent.click(within(outline).getByRole('button', { name: 'Fold Plan' }));
+    expect(within(outline).queryByRole('link', { name: 'Week one' })).not.toBeInTheDocument();
+    await userEvent.click(within(outline).getByRole('link', { name: 'Risks' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Risks' })).toHaveFocus());
+    await expectNoAxeViolations({ part: true });
+  });
+
+  it('suggests the headings of a note after [[Note#, and of this note after [[#', async () => {
+    mockFetch(routes());
+    renderNotes('/notes/b');
+    const textarea = await screen.findByLabelText('Note content');
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, '[[[[Atlas#pl');
+    const list = await screen.findByRole('listbox', { name: 'Link to heading' });
+    expect(
+      within(list)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Plan']);
+    await userEvent.keyboard('{Enter}');
+    expect(textarea).toHaveValue('[[Atlas#Plan]]');
+
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, '# Mine\n\n[[[[#');
+    expect(await screen.findByRole('option', { name: 'Mine' })).toBeInTheDocument();
+  });
+});
