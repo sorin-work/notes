@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { listNotebooks } from '../api/notebooks';
 import { createNote, listNotes, NoteFilters, NoteSort } from '../api/notes';
@@ -7,6 +7,7 @@ import { listTags } from '../api/tags';
 import { FilterSelects } from '../components/FilterSelects';
 import { NoteEditor } from '../components/NoteEditor';
 import { NoteList } from '../components/NoteList';
+import { SelectionBar } from '../components/SelectionBar';
 import { EmptyState, ErrorMessage, NeedsConnection, Spinner } from '../components/States';
 import { useStoredState } from '../hooks/useStoredState';
 import { newNoteFor, NO_NOTEBOOK, readFilters, withFilters } from '../lib/filters';
@@ -63,6 +64,31 @@ export function NotesPage() {
     getNextPageParam: (last) => (last.page * last.pageSize < last.total ? last.page + 1 : undefined),
   });
   const items = notes.data?.pages.flatMap((page) => page.items) ?? [];
+
+  // "Select" turns a click on a box, and Space, into choosing notes. A click on a note still opens it.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
+  // Only notes in the list are selected: a note that left it, by a filter or an action, drops out.
+  const inList = items.filter((note) => selected.has(note.id)).map((note) => note.id);
+  const toggle = (id: string, range: boolean) => {
+    const from = anchor === null ? -1 : items.findIndex((note) => note.id === anchor);
+    const to = items.findIndex((note) => note.id === id);
+    if (range && from !== -1 && to !== -1) {
+      const [start, end] = from < to ? [from, to] : [to, from];
+      setSelected(new Set([...inList, ...items.slice(start, end + 1).map((note) => note.id)]));
+    } else {
+      const next = new Set(inList);
+      if (!next.delete(id)) next.add(id);
+      setSelected(next);
+    }
+    setAnchor(id);
+  };
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+    setAnchor(null);
+  };
   const total = notes.data?.pages[0]?.total ?? 0;
 
   const newNote = useMutation({
@@ -93,6 +119,14 @@ export function NotesPage() {
             <h1>{heading}</h1>
             <span className="muted">{notes.isSuccess && `${total} ${total === 1 ? one : many}`}</span>
           </div>
+          <button
+            type="button"
+            className={selecting ? 'button button-shared' : 'button'}
+            aria-pressed={selecting}
+            onClick={() => (selecting ? stopSelecting() : setSelecting(true))}
+          >
+            Select
+          </button>
           <select aria-label="Sort notes" value={sort} onChange={(event) => setSort(event.target.value as NoteSort)}>
             <option value="updated">Last edited</option>
             <option value="created">Created</option>
@@ -106,6 +140,15 @@ export function NotesPage() {
           tag={tag}
           onChange={(next) => setParams((current) => withFilters(current, next))}
         />
+        {selecting && (
+          <SelectionBar
+            selected={inList}
+            loaded={items.length}
+            notebooks={notebooks.data ?? []}
+            onSelectAll={() => setSelected(new Set(items.map((note) => note.id)))}
+            onClear={() => setSelected(new Set())}
+          />
+        )}
         <div className="list-scroll">
           {notes.isPending && notes.fetchStatus === 'paused' && (
             <NeedsConnection>This list has not been loaded on this device, so it needs a connection.</NeedsConnection>
@@ -124,7 +167,11 @@ export function NotesPage() {
               </button>
             </EmptyState>
           )}
-          <NoteList notes={items} activeId={noteId} />
+          <NoteList
+            notes={items}
+            activeId={noteId}
+            selection={selecting ? { selected: new Set(inList), onToggle: toggle } : undefined}
+          />
           {notes.hasNextPage && (
             <button
               type="button"
