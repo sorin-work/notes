@@ -20,7 +20,7 @@ import { signedPath } from '../src/attachments/signed-url';
 import { ALLOW_API_TOKEN } from '../src/common/allow-api-token.decorator';
 import { IS_PUBLIC } from '../src/common/public.decorator';
 import { APP_CONFIG, AppConfig, loadConfig } from '../src/config/config';
-import { setupDocs } from '../src/docs';
+import { DOCS_POLICY, setupDocs } from '../src/docs';
 import { LinksService } from '../src/links/links.service';
 import { MAIL_TRANSPORT, MailTransport, OutgoingMail } from '../src/mail/mail.service';
 import { MAX_GRAPH_NODES } from '../src/links/links.service';
@@ -487,6 +487,20 @@ describe('api docs', () => {
       expect({ path, status: response.status }).toEqual({ path, status: 404 });
     }
     await request(server).get('/api/docs/').expect(200);
+  });
+
+  it('sends its own security policy with the page and its files, since nginx adds none under /api/', async () => {
+    const server = app.getHttpServer();
+    for (const path of ['/api/docs', '/api/docs/swagger-ui-bundle.js', '/api/docs/index.html']) {
+      const response = await request(server).get(path);
+      expect({ path, policy: response.headers['content-security-policy'] }).toEqual({ path, policy: DOCS_POLICY });
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+    }
+    // Swagger UI runs no inline script, so scripts stay limited to its own files.
+    const page = await request(server).get('/api/docs').expect(200);
+    expect(page.text).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/);
+    expect(DOCS_POLICY).toContain("script-src 'self';");
+    expect(DOCS_POLICY).toContain("frame-ancestors 'none'");
   });
 
   it('gives every operation a line on what it does, and the import its upload', async () => {
