@@ -177,8 +177,8 @@ Markdown import/export.
 The tests run axe over every page and dialog, and check the keys above, but
 neither stands in for a person with a screen reader. This is the list to go
 through with NVDA and Firefox on Windows and with VoiceOver and Safari on a
-Mac. It has not been gone through yet (roadmap item 34): nothing below has been heard in a
-real screen reader.
+Mac. It has not been gone through yet (roadmap item 34): nothing below has
+been heard in a real screen reader.
 
 - Sign in, then Tab from the top of a note page: the skip links come first
   and lead where they say.
