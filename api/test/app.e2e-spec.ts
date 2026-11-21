@@ -762,6 +762,7 @@ describe('api tokens', () => {
       'SearchController',
       'SharesController',
       'TagsController',
+      'TasksController',
       'TransferController',
       'TrashController',
       'VersionsController',
