@@ -14,6 +14,8 @@
   --danger-text: #ffffff;
   --success: #1f7a4d;
   --success-soft: #e3f3ea;
+  --danger-mark: #f5c4c1;
+  --success-mark: #b9e3c9;
   --mark: #fff1a8;
   --missing: #ac541a;
   --favourite: #ae7e00;
@@ -42,6 +44,8 @@
   --danger-text: #1f1211;
   --success: #6fcf97;
   --success-soft: #1d3528;
+  --danger-mark: #6b3532;
+  --success-mark: #2b5a3f;
   --mark: #5c5216;
   --missing: #e3a26b;
   --favourite: #e2a400;
@@ -66,6 +70,8 @@
     --danger-text: #1f1211;
     --success: #6fcf97;
     --success-soft: #1d3528;
+    --danger-mark: #6b3532;
+    --success-mark: #2b5a3f;
     --mark: #5c5216;
     --missing: #e3a26b;
     --favourite: #e2a400;
@@ -1715,6 +1721,12 @@ ul.error-box {
   overflow-y: auto;
 }
 
+/* What the changes view compares the version with. */
+.compare-with {
+  max-width: 22rem;
+  margin-bottom: 0.6rem;
+}
+
 .history-preview-header {
   display: flex;
   justify-content: space-between;
@@ -1793,7 +1805,26 @@ ul.error-box {
   background: var(--danger-soft);
 }
 
+/* The words that differ inside a changed line: a stronger colour, and struck through or underlined as well. */
+.diff-text del,
+.diff-text ins {
+  border-radius: 2px;
+}
+
+.diff-removed del {
+  background: var(--danger-mark);
+}
+
+.diff-added ins {
+  background: var(--success-mark);
+  text-decoration: underline;
+}
+
 .diff-skipped {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
   padding: 0.15rem 0.6rem;
   background: var(--surface-2);
   color: var(--muted);

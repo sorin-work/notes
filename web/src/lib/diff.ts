@@ -1,10 +1,22 @@
+/** A piece of a changed line, and whether it is only on that side. */
+export interface LinePart {
+  text: string;
+  changed: boolean;
+}
+
 export interface DiffLine {
   type: 'same' | 'added' | 'removed';
   text: string;
+  /**
+   * For a removed line paired with an added one, or the other way round: the
+   * line in pieces, with the words that differ marked. Not set where the line
+   * is shown whole.
+   */
+  parts?: LinePart[];
 }
 
-/** A line of a diff, or a run of unchanged lines that was left out. */
-export type DiffRow = DiffLine | { type: 'skipped'; count: number };
+/** A line of a diff, or a run of unchanged lines that was left out, with the lines it hides. */
+export type DiffRow = DiffLine | { type: 'skipped'; count: number; lines: DiffLine[] };
 
 /**
  * How many lines may be added plus removed before diffLines gives up. The
@@ -15,6 +27,28 @@ export const MAX_EDITS = 2_000;
 
 /** How many rows of a diff are shown. Building many more than this makes the page hang. */
 export const MAX_ROWS = 2_000;
+
+/**
+ * The cut-off for the words of one pair of lines, like MAX_EDITS for lines:
+ * past this many words and spaces added plus removed, or past MAX_WORD_SPAN
+ * of them between the first and the last that differ, the lines are shown
+ * whole. A pasted table or a line of minified code would take too long.
+ */
+export const MAX_WORD_EDITS = 200;
+export const MAX_WORD_SPAN = 2_000;
+
+/**
+ * How much work markWords does over a whole diff before it shows the rest of
+ * the lines whole: every word and space it reads, and every step of the
+ * search, for the pairs it marks and for those it gives up on alike.
+ */
+export const MAX_WORD_WORK = 1_000_000;
+
+/** What one word or space read counts for against MAX_WORD_WORK, where one step of the search counts 1. */
+const READ_COST = 10;
+
+/** A pair of lines longer than this in all, in characters, is shown whole without being read. */
+export const MAX_WORD_LINE = 100_000;
 
 function splitLines(text: string): string[] {
   const lines = text.split(/\r\n?|\n/);
@@ -98,17 +132,17 @@ function walkBack(a: string[], b: string[], rounds: Int32Array[]): DiffLine[] {
 }
 
 /**
- * Compares two texts line by line. Lines that are only in `before` come back
- * as removed and lines that are only in `after` as added. Line endings are
- * not compared. Returns null when more than `maxEdits` lines were added and
- * removed between the first and the last line that differ.
+ * The shortest edits between two lists, with the items that match at the
+ * start and at the end set aside first: most edits touch a small part of a
+ * text. `span` is how many items that part holds on both sides. `edits` is
+ * null past `maxEdits`, and without a search when the span is over `maxSpan`.
  */
-export function diffLines(before: string, after: string, maxEdits = MAX_EDITS): DiffLine[] | null {
-  const a = splitLines(before);
-  const b = splitLines(after);
-
-  // Most edits touch a small part of a note. The lines that match at the
-  // start and at the end are set aside, and only what lies between is compared.
+function diffItems(
+  a: string[],
+  b: string[],
+  maxEdits: number,
+  maxSpan = Infinity,
+): { edits: DiffLine[] | null; span: number } {
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let endA = a.length;
@@ -117,9 +151,132 @@ export function diffLines(before: string, after: string, maxEdits = MAX_EDITS): 
     endA--;
     endB--;
   }
+  const span = endA - start + (endB - start);
+  if (span > maxSpan) return { edits: null, span };
   const changed = shortestEdits(a.slice(start, endA), b.slice(start, endB), maxEdits);
-  if (changed === null) return null;
-  return [...a.slice(0, start).map(asLine('same')), ...changed, ...a.slice(endA).map(asLine('same'))];
+  if (changed === null) return { edits: null, span };
+  return {
+    edits: [...a.slice(0, start).map(asLine('same')), ...changed, ...a.slice(endA).map(asLine('same'))],
+    span,
+  };
+}
+
+/**
+ * Compares two texts line by line. Lines that are only in `before` come back
+ * as removed and lines that are only in `after` as added. Line endings are
+ * not compared. Returns null when more than `maxEdits` lines were added and
+ * removed between the first and the last line that differ.
+ */
+export function diffLines(before: string, after: string, maxEdits = MAX_EDITS): DiffLine[] | null {
+  return diffItems(splitLines(before), splitLines(after), maxEdits).edits;
+}
+
+/** Words, runs of spaces, and every other character on its own. */
+const TOKEN = /[\p{L}\p{M}\p{N}_]+|\s+|[^\p{L}\p{M}\p{N}_\s]/gu;
+
+/** Joins neighbouring pieces that are both changed or both not. */
+function joinParts(parts: LinePart[]): LinePart[] {
+  const joined: LinePart[] = [];
+  for (const part of parts) {
+    const last = joined.at(-1);
+    if (last && last.changed === part.changed) last.text += part.text;
+    else joined.push({ ...part });
+  }
+  return joined;
+}
+
+/**
+ * A space between two changed words is marked with them, so that "a b c" to
+ * "x y c" marks "a b" as one stretch and not as two words.
+ */
+function bridgeSpaces(parts: LinePart[]): LinePart[] {
+  return parts.map((part, index) =>
+    !part.changed && /^\s+$/.test(part.text) && parts[index - 1]?.changed && parts[index + 1]?.changed
+      ? { ...part, changed: true }
+      : part,
+  );
+}
+
+const solid = (text: string) => text.replace(/\s+/g, '').length;
+
+/**
+ * The words that differ between a removed line and the added line it faces.
+ * Returns null when the lines should be shown whole: past the cut-offs, or
+ * when they have so little in common, under a third of the longer one, that
+ * marks would cover nearly everything.
+ */
+export function diffWords(before: string, after: string): { removed: LinePart[]; added: LinePart[] } | null {
+  return compareWords(before, after).words;
+}
+
+/**
+ * diffWords, with the work it took: nothing for a pair too long to read,
+ * else the words and spaces read, READ_COST each, plus the steps of the
+ * search, the changed stretch once for each round it ran, which for a search
+ * that gave up is every round it had.
+ */
+function compareWords(
+  before: string,
+  after: string,
+): { words: { removed: LinePart[]; added: LinePart[] } | null; work: number } {
+  if (before.length + after.length > MAX_WORD_LINE) return { words: null, work: 0 };
+  const a = before.match(TOKEN) ?? [];
+  const b = after.match(TOKEN) ?? [];
+  const { edits, span } = diffItems(a, b, MAX_WORD_EDITS, MAX_WORD_SPAN);
+  // Reading a word costs a match, an allocation and a comparison, far more than one step of the search.
+  const read = (a.length + b.length) * READ_COST;
+  if (edits === null) {
+    return { words: null, work: read + (span > MAX_WORD_SPAN ? 0 : span * Math.min(span, MAX_WORD_EDITS)) };
+  }
+  const rounds = edits.filter((edit) => edit.type !== 'same').length + 1;
+  const work = read + span * rounds;
+  const common = edits.filter((edit) => edit.type === 'same').reduce((sum, edit) => sum + solid(edit.text), 0);
+  if (common * 3 < Math.max(solid(before), solid(after))) return { words: null, work };
+  const side = (type: 'removed' | 'added') =>
+    joinParts(
+      bridgeSpaces(
+        edits
+          .filter((edit) => edit.type === 'same' || edit.type === type)
+          .map((edit) => ({ text: edit.text, changed: edit.type !== 'same' })),
+      ),
+    );
+  return { words: { removed: side('removed'), added: side('added') }, work };
+}
+
+/**
+ * Marks the words that differ where a block of removed lines faces a block
+ * of added lines: the first removed line with the first added one, and so
+ * on. Lines left over when the blocks differ in length, and pairs diffWords
+ * shows whole, stay whole. Past MAX_WORD_WORK the rest of the lines are
+ * shown whole too.
+ */
+export function markWords(lines: DiffLine[]): DiffLine[] {
+  const marked = lines.map((line) => ({ ...line }));
+  let work = 0;
+  for (let index = 0; index < marked.length && work < MAX_WORD_WORK;) {
+    if (marked[index]?.type !== 'removed') {
+      index++;
+      continue;
+    }
+    let removedEnd = index;
+    while (marked[removedEnd]?.type === 'removed') removedEnd++;
+    let addedEnd = removedEnd;
+    while (marked[addedEnd]?.type === 'added') addedEnd++;
+    const pairs = Math.min(removedEnd - index, addedEnd - removedEnd);
+    for (let pair = 0; pair < pairs && work < MAX_WORD_WORK; pair++) {
+      const removed = marked[index + pair];
+      const added = marked[removedEnd + pair];
+      if (!removed || !added) break;
+      const { words, work: spent } = compareWords(removed.text, added.text);
+      // Charged whether or not anything is marked: giving up can take as long as succeeding.
+      work += spent;
+      if (!words) continue;
+      removed.parts = words.removed;
+      added.parts = words.added;
+    }
+    index = addedEnd;
+  }
+  return marked;
 }
 
 /**
@@ -135,7 +292,8 @@ export function foldUnchanged(lines: DiffLine[], context = 3): DiffRow[] {
     const tail = last ? 0 : context;
     const hidden = run.length - head - tail;
     if (hidden > 1) {
-      rows.push(...run.slice(0, head), { type: 'skipped', count: hidden }, ...run.slice(run.length - tail));
+      const lines = run.slice(head, run.length - tail);
+      rows.push(...run.slice(0, head), { type: 'skipped', count: hidden, lines }, ...run.slice(run.length - tail));
     } else {
       rows.push(...run);
     }
