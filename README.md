@@ -1298,8 +1298,9 @@ With codes on, `POST /auth/login` answers `{ "twoStep": true, "ticket": "..." }`
 for the right password, and no token. `POST /auth/login/code` with
 `{ ticket, code }` gives the token, for six digits from the app or a
 recovery code. The ticket is good for five minutes and five wrong codes, and
-stops working like a token when the password changes or every session ends.
-It is never a login token: the API refuses it as one.
+for one sign-in: once it has made a token it is spent. It stops working like a
+token when the password changes or every session ends. It is never a login
+token: the API refuses it as one.
 
 The codes are TOTP (RFC 6238): SHA-1, six digits, thirty seconds, which every
 authenticator app reads from the QR code. The API takes the codes of one
@@ -1308,12 +1309,18 @@ off, and each code once: the step of the last code taken is kept, and a code
 has to come after it. Recovery codes are 16 letters and digits each, kept as
 SHA-256 hashes, and deleted when used.
 
-Wrong codes are counted per client address, and per account and address,
-but never per account alone. Codes tried from one place therefore cannot
-lock the owner out from another one. What stops guessing instead is that
-every five codes cost a new sign-in with the password, which is throttled
-too, and that the owner gets a mail, at most once an hour, saying that
-someone gave the right password and a wrong code.
+Codes are counted per client address and per account and address
+(`AUTH_THROTTLE_LIMIT` a minute), five to a ticket, and every five cost a new
+sign-in with the password, which is throttled too. On top of that an account
+takes 20 wrong codes an hour from all addresses together. Past that, codes
+from the app are refused until the hour is over, and recovery codes still
+work. Only someone who has the password can use that allowance up, and the
+owner gets a mail, at most once an hour, saying that someone gave the right
+password and a wrong code. Six digits are a million codes with three right at
+any moment, so the cap leaves someone with the password, guessing from as
+many addresses as they like, 480 codes a day: about one chance in 700 a day.
+That is time to change the password after the first mail, which ends their
+tickets too.
 
 | Method & path                        | What it does                                                |
 | ------------------------------------ | ----------------------------------------------------------- |
@@ -1336,8 +1343,11 @@ the account it belongs to. Without the key the database holds nothing that
 makes codes. The JSON backup leaves it out, with the recovery codes. A dump
 of the database keeps both, so restoring it on a server with the same key
 keeps two-step sign-in working. Restored with another key, or with none,
-codes from the app no longer work and recovery codes still do. Without
-`TWO_STEP_KEY` the server offers no setup at all.
+codes from the app no longer work and recovery codes still do: a code from
+the app answers `503`, saying so, and the API logs at start when the key does
+not decrypt the stored secrets. Without `TWO_STEP_KEY` the server offers no
+setup at all. The API also warns at start when `TWO_STEP_KEY` or `JWT_SECRET`
+is still the sample value from `docker-compose.yml` and `.env.example`.
 
 ### Changing the email address
 

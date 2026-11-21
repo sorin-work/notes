@@ -910,11 +910,14 @@ recovery codes are shown once and kept as SHA-256 hashes. With codes on,
 with a code or a recovery code. A code is taken once, one step of drift
 either side. The secret is encrypted with AES-256-GCM under `TWO_STEP_KEY`
 and bound to its account, stays out of the JSON backup, and comes back with a
-dump restored under the same key. Differences from the design: wrong codes
-are counted per address and per account and address, and per ticket (five),
-but not per account alone, which would let anyone with the password lock the
-owner out from everywhere. The owner gets a mail instead, at most once an
-hour, when the right password comes with a wrong code. Turning codes on ends
+dump restored under the same key. A ticket signs in once. Codes are counted
+per address, per account and address, and per ticket (five), and an account
+takes 20 wrong codes an hour from all addresses, after which only recovery
+codes work until the hour is over. Only someone with the password can use
+that up, and the owner gets a mail, at most once an hour, when the right
+password comes with a wrong code. A key that does not fit answers like a
+missing one and is logged at start, and the sample keys of the repository
+are warned about. Turning codes on ends
 the other sessions, turning them off and new recovery codes take the
 password and a code, and making an API token takes a code. A password reset
 by mail leaves codes on, so the next sign-in still asks. The QR code is
