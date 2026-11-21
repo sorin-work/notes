@@ -5,7 +5,10 @@
  */
 const LINK = /\[\[([^[\]\n|#]*)(?:#([^[\]\n|]*))?(?:\|([^[\]\n]+))?\]\]/g;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-const INLINE_CODE = /(`+)([\s\S]*?[^`])\1(?!`)/g;
+/** A line that opens or closes a block of math: `$$` at its start and no second `$$` on it. */
+const MATH_FENCE = /^\s{0,3}\$\$(?!.*\$\$)/;
+/** Code, then math inside a line: `$$...$$`. Links are not read in either. */
+const INLINE_CODE = /(`+)([\s\S]*?[^`])\1(?!`)|\$\$(?:[^$]|\$(?!\$))+?\$\$/g;
 
 export const WIKI_PROTOCOL = 'wiki:';
 
@@ -13,12 +16,18 @@ export function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-/** Calls `fn` for each line that is not inside a fenced code block. */
+/** Calls `fn` for each line that is not inside a fenced code block or a block of math. */
 function mapProseLines(markdown: string, fn: (line: string) => string): string {
   let fence: string | null = null;
+  let inMath = false;
   return markdown
     .split('\n')
     .map((line) => {
+      if (fence === null && MATH_FENCE.test(line)) {
+        inMath = !inMath;
+        return line;
+      }
+      if (inMath) return line;
       const match = FENCE.exec(line);
       if (match) {
         const marker = match[1] ?? '';
@@ -36,7 +45,7 @@ function mapProseLines(markdown: string, fn: (line: string) => string): string {
     .join('\n');
 }
 
-/** Runs `fn` on the parts of a line that are not inline code. */
+/** Runs `fn` on the parts of a line that are not inline code or math. */
 function outsideInlineCode(line: string, fn: (text: string) => string): string {
   let result = '';
   let last = 0;

@@ -30,6 +30,13 @@ describe('linkifyWikiLinks', () => {
     expect(linkifyWikiLinks('[[]] [[#]] [[|text]]')).toBe('[[]] [[#]] [[|text]]');
   });
 
+  it('leaves math alone, in a line and in a block', () => {
+    expect(linkifyWikiLinks('Area $$[[A]] r^2$$ of [[Circle]]')).toBe('Area $$[[A]] r^2$$ of [Circle](wiki:Circle)');
+    expect(linkifyWikiLinks('$$\n[[x]]\n$$\n[[After]]')).toBe('$$\n[[x]]\n$$\n[After](wiki:After)');
+    // A single dollar is no math.
+    expect(linkifyWikiLinks('Costs $5 at [[Shop]], or $10')).toBe('Costs $5 at [Shop](wiki:Shop), or $10');
+  });
+
   it('leaves fenced and inline code alone', () => {
     const markdown = '```\n[[In code]]\n```\n`[[inline]]` and [[Real]]';
     expect(linkifyWikiLinks(markdown)).toBe('```\n[[In code]]\n```\n`[[inline]]` and [Real](wiki:Real)');
