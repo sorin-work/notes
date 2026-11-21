@@ -133,13 +133,14 @@ const PAGE_FILES = new Set([
 /**
  * nginx leaves the answers of the API alone, so the docs page brings its own
  * policy. Swagger UI loads only its files next to the page, but its page has
- * inline styles, and its icons are data: images.
+ * inline styles, its icons are data: images, and it previews images that
+ * an answer holds as blob: ones.
  */
 export const DOCS_POLICY = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  "img-src 'self' data: blob:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

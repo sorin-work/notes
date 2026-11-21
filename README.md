@@ -249,7 +249,8 @@ between it and a script that got into the page some other way. Images may
 also be `blob:` and `data:`, for a pasted image before its upload is done,
 and come from any `https:` site, because notes show images from the web. That
 also means an image in a shared note tells the site it comes from when
-someone reads the note.
+someone reads the note. An image linked over plain `http:` is blocked: the
+browser does not load it.
 
 `no-referrer` holds everywhere: the address of a `/s/<token>` page is the
 share link itself, and the other addresses name notes, so none of them goes
@@ -318,7 +319,8 @@ docker compose --profile backup up -d
 To have it start with every `docker compose up`, put `COMPOSE_PROFILES=backup`
 in `.env`.
 
-Dumps land in `./backups` as `notes-<UTC date and time>.dump`. When the
+Dumps land in `./backups` as `notes-<UTC date and time>.dump`, or
+`.dump.age` when they are encrypted. When the
 service starts it makes one, unless the newest dump is less than a day old,
 so restarting the stack does not add dumps. On a new stack it first waits for
 the API to create the tables. After that it makes one dump a day. It looks at
@@ -335,11 +337,23 @@ cannot push out the real ones. The same goes for a name with a day that does
 not exist, such as 31 February. Every run names them in a warning in the
 log, and deleting them is up to you.
 
-| Variable                  | Default     | Purpose                               |
-| ------------------------- | ----------- | ------------------------------------- |
-| `BACKUP_DIR`              | `./backups` | Folder on the host the dumps go to    |
-| `BACKUP_KEEP`             | `7`         | How many dumps to keep                |
-| `BACKUP_INTERVAL_SECONDS` | `86400`     | Seconds from one dump to the next one |
+| Variable                      | Default                        | Purpose                                               |
+| ----------------------------- | ------------------------------ | ----------------------------------------------------- |
+| `BACKUP_DIR`                  | `./backups`                    | Folder on the host the dumps go to                    |
+| `BACKUP_KEEP`                 | `7`                            | How many dumps to keep                                |
+| `BACKUP_INTERVAL_SECONDS`     | `86400`                        | Seconds from one dump to the next one                 |
+| `BACKUP_ENCRYPT_TO`           | (none)                         | age public keys to encrypt every dump to              |
+| `BACKUP_COPY_COMMAND`         | (none)                         | Run after every good dump, with the new files as `$@` |
+| `BACKUP_COPY_TIMEOUT_SECONDS` | `3600`                         | How long a copy may take before it is stopped         |
+| `BACKUP_COPY_PACKAGES`        | `rsync openssh-client`         | Alpine packages in the image for the copy command     |
+| `BACKUP_ALERT_URL`            | (none)                         | Gets a `POST` when a dump or a copy fails             |
+| `BACKUP_IDENTITY_FILE`        | `/run/secrets/backup-identity` | Where a restore looks for the key, in the container   |
+
+The service runs in an image of its own, `scripts/backup.Dockerfile`: the
+`postgres:17-alpine` image, whose `pg_dump` matches the server, with `age`,
+`curl` and the tools of the copy command added. Compose builds it the first
+time the service starts. After changing `BACKUP_COPY_PACKAGES`, build it
+again with `docker compose --profile backup build backup`.
 
 A dump right now, for example before an upgrade:
 
@@ -360,6 +374,20 @@ docker compose --profile backup start api backup
 Leave `backup` out of the first and the last line if you do not run the
 backup service.
 
+An encrypted dump needs the private key for the restore, and only then. Mount
+it for that one command:
+
+```bash
+docker compose --profile backup run --rm \
+  -v ~/notes-backup-key.txt:/run/secrets/backup-identity:ro \
+  backup restore notes-20261120T030000Z.dump.age
+```
+
+The dump is decrypted as `pg_restore` reads it, through a pipe, so no plain
+copy of it is written anywhere. The files archive is decrypted into the
+attachments folder, checked and unpacked there, and removed. A key that does
+not fit stops the restore before the database or the files are touched.
+
 `restore` without a file name lists the dumps. The restore replaces the whole
 database, so everything written after the dump is gone. It goes in three
 steps. The dump is loaded into a new database. Then, in one transaction, the
@@ -377,14 +405,12 @@ itself), then `docker compose up -d`.
 
 Good to know:
 
-- A dump holds every note and the password hashes, and it is not encrypted.
-  The files can only be read by their owner. On Linux that is the owner of
-  the folder they are in, not root.
-- The dumps sit on the same disk as the database unless `BACKUP_DIR` points
-  somewhere else. Copying them to another machine is up to you.
-- Nothing warns you when a dump fails. `docker compose logs backup` shows
-  every dump and every failure, and a failed dump is tried again a minute
-  later.
+- A dump holds every note and the password hashes. Unless
+  `BACKUP_ENCRYPT_TO` is set it is not encrypted. The files can only be read
+  by their owner. On Linux that is the owner of the folder they are in, not
+  root.
+- `docker compose logs backup` shows every dump and every failure, and a
+  failed dump is tried again a minute later.
 - `docker compose down -v` removes the database volume, not the dumps.
 - Beside each dump the files of attachments go into
   `notes-<time>.files.tar`, made just before the dump. A file deleted in
@@ -399,6 +425,83 @@ Good to know:
   to start while the API is connected, because the API writes and removes
   files as it goes. A dump without an archive, from before there were
   attachments, restores the database and leaves the files as they are.
+
+### Encryption, copies and alerts
+
+All three are off until their variable is set in `.env`.
+
+**Encryption.** Make a key pair with [age](https://age-encryption.org) and
+put the public key in `BACKUP_ENCRYPT_TO`:
+
+```bash
+age-keygen -o ~/notes-backup-key.txt   # prints the public key, age1...
+```
+
+Keep the key file away from the backups, on another machine or on paper. The
+service only ever sees the public key. `pg_dump` and `tar` write into `age`,
+and only what `age` writes reaches the disk, so there is no plain copy even
+for a moment. If `age` fails, the half-written file is removed and the dump
+counts as failed. Dumps made before encryption was switched on stay plain
+until they are pruned. A plain and an encrypted file with the same time in
+their names count as one dump, and go together when it is pruned. A key that
+`age` does not take stops the service when it starts.
+
+**A copy on another machine.** `BACKUP_COPY_COMMAND` runs after every good
+dump, with the new dump and its files archive as `"$@"`. It runs in the
+container, so whatever it needs to log in with has to be mounted there. A
+`docker-compose.override.yml` beside the main file does that:
+
+```yaml
+services:
+  backup:
+    volumes:
+      - ./backup-config:/config:ro
+```
+
+With rsync over SSH, a key and a `known_hosts` file in `./backup-config`, and
+a user on the other machine that may write to `notes/`:
+
+```bash
+BACKUP_COPY_COMMAND='rsync -t -e "ssh -i /config/id_ed25519 -o UserKnownHostsFile=/config/known_hosts" "$@" backup@nas.example.com:notes/'
+```
+
+With rclone, which also reaches S3-compatible storage of your own such as
+MinIO or Garage, add it to the image with `BACKUP_COPY_PACKAGES=rclone` and
+put its `rclone.conf` in `./backup-config`:
+
+```bash
+BACKUP_COPY_COMMAND='for file; do rclone --config /config/rclone.conf copy "$file" offsite:notes || exit 1; done'
+```
+
+The single quotes keep `"$@"` from being read when `.env` is. The command
+runs in a session of its own. When it takes longer than
+`BACKUP_COPY_TIMEOUT_SECONDS`, the whole session is stopped, the loop and
+every rclone, rsync or ssh it started, and whatever the command leaves
+running when it ends is stopped too. So a copy never runs on beside the next
+one, or while old dumps are pruned. A copy that fails or is stopped is not
+a failed dump: the dump is there and counts. It is logged and alerted, and the next
+dump is copied as usual. Only the new files are copied, so a dump whose copy
+failed is not sent again later. Pruning old copies on the other side is up
+to the other side.
+
+**Alerts.** `BACKUP_ALERT_URL` gets a `POST` with a line of text when a dump
+fails and when a copy fails. That is what a topic on a self-hosted
+[ntfy](https://ntfy.sh) takes, and any other webhook that reads the body. The
+loop tries a failed dump again every minute, so while one kind of failure
+goes on it is sent at most once an hour, and again at once if it comes back
+after a dump or a copy that worked. An alert that cannot be sent is logged,
+and the address itself is never logged, since it often holds a token.
+
+**Health.** After every good dump the service writes the time to
+`.last-good-dump` in the backup folder, and the healthcheck of the service
+runs `backup.sh health`, which reads it. The service turns `unhealthy` in
+`docker compose ps` once the last good dump is more than a day and two hours
+old (the interval and a twelfth of it). That catches what an alert cannot,
+such as a `pg_dump` that hangs or an alert address that does not answer.
+Docker only shows the state; to hear about it, point whatever watches the
+machine at `docker compose ps` or `docker inspect`. A service that is not
+running has no state at all. On a first start the service has ten minutes
+before a missing dump counts against it.
 
 ### The JSON backup
 
@@ -607,9 +710,16 @@ stand-ins for `pg_dump` and `sleep` and with dump files dated in the past and
 in the future, and fails if the loop makes more than one dump, makes two
 without a pause, or leaves fewer dumps behind than it should. It also walks
 a restore through its steps with stand-ins and fails if the database would
-be touched when the dump does not load or the swap is refused. With the real
-database the check then restores over a database that holds something else,
-tries a damaged dump, and tries with a second client connected.
+be touched when the dump does not load or the swap is refused. Stand-ins
+for `age`, the copy command and `curl` check that an encryption that fails
+leaves no file, that a plain and an encrypted file of one time are pruned as
+one dump, that a failed copy alerts without failing the dump, that a dump
+failing in every round alerts once, that a missing or wrong key touches
+nothing, and when the healthcheck passes. With the real database the check
+then restores over a database that holds something else, tries a damaged
+dump, tries with a second client connected, and makes an encrypted dump with
+a real key, restores it, and fails to with another key. That last part needs
+`age`, which is why CI runs the check in the image of the backup service.
 
 ## Project layout
 
@@ -646,7 +756,9 @@ web/
   nginx.conf            how the container serves the app and passes /api on
   security-headers.conf the headers every location of nginx.conf includes
 scripts/
-  backup.sh             the backup service: daily dumps, pruning and restore
+  backup.sh             the backup service: daily dumps, pruning and restore,
+                        encryption, copies, alerts and the healthcheck
+  backup.Dockerfile     its image: postgres with age, curl, rsync and ssh
   check-backup.sh       dumps, restores and compares row counts, run by CI
   check-backup-loop.sh  the daily loop and the pruning against made-up clocks
 backups/                where the dumps go by default, ignored by git

@@ -51,14 +51,17 @@ jobs:
 
       # Runs the backup loop against made-up clocks, then dumps the database
       # the end-to-end tests filled, restores the dump into a scratch
-      # database and compares the row counts. Uses the image the backup
-      # service runs in, since pg_dump has to match the server.
+      # database and compares the row counts, plain and encrypted. Uses the
+      # image the backup service runs in, since pg_dump has to match the
+      # server and the encrypted round trip needs age.
+      - name: Build the image of the backup service
+        run: docker build -t notes-backup -f ../scripts/backup.Dockerfile ../scripts
       - name: Check that a backup restores
         run: >-
           docker run --rm --network host
           -e PGHOST=localhost -e PGUSER=notes -e PGPASSWORD=notes -e PGDATABASE=notes_test
           -v "${{ github.workspace }}/scripts:/scripts:ro"
-          postgres:17-alpine sh /scripts/check-backup.sh
+          notes-backup sh /scripts/check-backup.sh
 
   web:
     runs-on: ubuntu-latest
@@ -86,4 +89,5 @@ jobs:
     needs: [api, web]
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose build
+      # The backup service is behind its profile, and has an image to build too.
+      - run: docker compose --profile backup build

@@ -14,12 +14,49 @@ function code(text: string): string {
   return text.replace(/#.*$/gm, '');
 }
 
-/** Each `location` block of nginx.conf: what it matches and what is in it. None of them nest. */
-function locations(): { match: string; body: string }[] {
-  return [...code(config).matchAll(/location\s+([^{]+?)\s*\{([^}]*)\}/g)].map(([, match = '', body = '']) => ({
-    match,
-    body,
-  }));
+interface Location {
+  match: string;
+  /** Everything between its braces, nested blocks included. */
+  body: string;
+  /** How many locations it is inside of: 0 for one right in the server block. */
+  depth: number;
+}
+
+/**
+ * Each `location` block of nginx.conf, found by counting braces, so that a
+ * location inside another one is found too and its body is all of it.
+ * Braces inside quotes are not counted: a header value or a regex may hold
+ * them.
+ */
+function locations(): Location[] {
+  const text = code(config);
+  const found: Location[] = [];
+  const opened: { at: number; match: string | null }[] = [];
+  let quote: string | null = null;
+  for (let at = 0; at < text.length; at++) {
+    const char = text[at];
+    if (quote) {
+      if (char === '\\') at++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '{') {
+      const head = /location\s+([^;{}]+?)\s*$/.exec(text.slice(0, at));
+      opened.push({ at, match: head ? (head[1] ?? '') : null });
+    } else if (char === '}') {
+      const block = opened.pop();
+      if (!block) throw new Error(`a } without its { at ${at}`);
+      if (block.match !== null) {
+        const depth = opened.filter((outer) => outer.match !== null).length;
+        found.push({ match: block.match, body: text.slice(block.at + 1, at), depth });
+      }
+    }
+  }
+  if (quote) throw new Error('a quote that is not closed');
+  if (opened.length > 0) throw new Error('a { without its }');
+  return found;
 }
 
 function isApi(match: string): boolean {
@@ -49,6 +86,14 @@ describe('nginx.conf', () => {
     expect(matches).toEqual(expect.arrayContaining(['/', '= /index.html', '/assets/', '= /sw.js', '/api/']));
   });
 
+  it('has no location inside another, where the include of the outer one would be dropped', () => {
+    expect(
+      locations()
+        .filter((location) => location.depth > 0)
+        .map((location) => location.match),
+    ).toEqual([]);
+  });
+
   it('includes the security headers in every location outside /api/', () => {
     const missing = locations()
       .filter((location) => !isApi(location.match) && !location.body.includes(`include ${INCLUDE};`))
@@ -68,7 +113,10 @@ describe('nginx.conf', () => {
   });
 
   it('puts no headers on the server block, where a location would drop them unseen', () => {
-    const outside = code(config).replace(/location\s+[^{]+\{[^}]*\}/g, '');
+    let outside = code(config);
+    // Outer locations first: their bodies hold the inner ones.
+    const outermost = locations().sort((a, b) => a.depth - b.depth);
+    for (const location of outermost) outside = outside.replace(location.body, '');
     expect(outside).not.toMatch(/add_header/);
   });
 
